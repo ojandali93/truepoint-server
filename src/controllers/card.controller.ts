@@ -4,6 +4,7 @@ import * as CardService from "../services/card.service";
 import * as CardIdentificationService from "../services/cardIdentification.service";
 import * as PricingService from "../services/pricing.service";
 import { cardMarketClient } from "../lib/cardMarketClient";
+import * as CardSyncService from "../services/cardSync.service";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -169,6 +170,44 @@ export const adminPurgeExpiredPrices = async (
       await import("../repositories/card.repository");
     await purgeExpiredPrices();
     res.json({ message: "Expired price cache purged" });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+export const adminGetSyncStatus = async (
+  _req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const status = await CardSyncService.getSyncStatus();
+    res.json({ data: status });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+export const adminBackfillCards = async (
+  _req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    res.json({ message: "Card backfill started in background" });
+    CardSyncService.backfillAllCards().catch((err) =>
+      console.error("[BackfillCards] Failed:", err?.message),
+    );
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+export const adminSyncSingleSet = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const count = await CardSyncService.syncSingleSet(req.params.setId);
+    res.json({ message: `Synced ${count} cards`, count });
   } catch (err) {
     handleError(res, err);
   }
