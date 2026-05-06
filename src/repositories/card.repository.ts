@@ -1,8 +1,7 @@
-import { supabase, supabaseAdmin } from "../lib/supabase";
+import { supabaseAdmin } from "../lib/supabase";
 import type { NormalizedPrice, PokemonSet } from "../types/pokemon.types";
 
 const PRICE_TABLE = "market_prices"; // matches your actual table
-const SET_TABLE = "sets";
 
 // ─── Price Cache ──────────────────────────────────────────────────────────────
 
