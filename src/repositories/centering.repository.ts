@@ -1,5 +1,5 @@
-import { supabase, supabaseAdmin } from "../lib/supabase";
-import { CenteringReport, BorderPositions } from "../types/centering.types";
+import { supabase } from "../lib/supabase";
+import { CenteringReport } from "../types/centering.types";
 
 type CenteringRow = {
   id: string;

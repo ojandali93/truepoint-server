@@ -64,7 +64,6 @@ export const calculatePercentages = (
 // Deviation from perfect (50) is penalized proportionally
 
 export const calculateTruepointScore = (p: CenteringPercentages): number => {
-  const perfectDeviation = 0;
   const worstPossible = 50; // max deviation from 50
 
   const lrDeviation = Math.abs(p.lrWorse - 50);
