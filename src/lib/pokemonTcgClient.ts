@@ -23,9 +23,15 @@ class PokemonTcgClient {
     this.client = axios.create({
       baseURL: "https://api.pokemontcg.io/v2",
       timeout: 15_000,
-      headers: process.env.POKEMON_TCG_API_KEY
-        ? { "X-Api-Key": process.env.POKEMON_TCG_API_KEY }
-        : {},
+    });
+
+    // Read the key at request time via interceptor, not at construction time
+    this.client.interceptors.request.use((config) => {
+      const key = process.env.POKEMON_TCG_API_KEY;
+      if (key) {
+        config.headers["X-Api-Key"] = key;
+      }
+      return config;
     });
   }
 
