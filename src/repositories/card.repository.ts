@@ -1,14 +1,14 @@
-import { supabase, supabaseAdmin } from '../lib/supabase';
-import type { NormalizedPrice, PokemonSet } from '../types/pokemon.types';
+import { supabase, supabaseAdmin } from "../lib/supabase";
+import type { NormalizedPrice, PokemonSet } from "../types/pokemon.types";
 
-const PRICE_TABLE = 'cached_card_prices';
-const SET_TABLE = 'pokemon_sets';
+const PRICE_TABLE = "market_prices"; // matches your actual table
+const SET_TABLE = "sets";
 
 // ─── Price Cache ──────────────────────────────────────────────────────────────
 
 type CachedRow = {
   card_id: string;
-  source: NormalizedPrice['source'];
+  source: NormalizedPrice["source"];
   variant: string | null;
   grade: string | null;
   low_price: number | null;
@@ -33,15 +33,15 @@ const rowToNormalized = (row: CachedRow): NormalizedPrice => ({
 
 export const findCachedPrices = async (
   cardId: string,
-  source?: NormalizedPrice['source']
+  source?: NormalizedPrice["source"],
 ): Promise<NormalizedPrice[]> => {
   let q = supabaseAdmin
     .from(PRICE_TABLE)
-    .select('*')
-    .eq('card_id', cardId)
-    .gt('expires_at', new Date().toISOString());
+    .select("*")
+    .eq("card_id", cardId)
+    .gt("expires_at", new Date().toISOString());
 
-  if (source) q = q.eq('source', source);
+  if (source) q = q.eq("source", source);
 
   const { data, error } = await q;
   if (error) throw error;
@@ -50,7 +50,7 @@ export const findCachedPrices = async (
 
 export const upsertPrices = async (
   prices: NormalizedPrice[],
-  ttlMs: number
+  ttlMs: number,
 ): Promise<void> => {
   if (prices.length === 0) return;
 
@@ -60,8 +60,8 @@ export const upsertPrices = async (
   const { error: deleteError } = await supabaseAdmin
     .from(PRICE_TABLE)
     .delete()
-    .eq('card_id', cardId)
-    .in('source', sources);
+    .eq("card_id", cardId)
+    .in("source", sources);
 
   if (deleteError) throw deleteError;
 
@@ -79,7 +79,9 @@ export const upsertPrices = async (
     expires_at: expiresAt,
   }));
 
-  const { error: insertError } = await supabaseAdmin.from(PRICE_TABLE).insert(rows);
+  const { error: insertError } = await supabaseAdmin
+    .from(PRICE_TABLE)
+    .insert(rows);
   if (insertError) throw insertError;
 };
 
@@ -87,7 +89,7 @@ export const purgeExpiredPrices = async (): Promise<void> => {
   const { error } = await supabaseAdmin
     .from(PRICE_TABLE)
     .delete()
-    .lt('expires_at', new Date().toISOString());
+    .lt("expires_at", new Date().toISOString());
   if (error) throw error;
 };
 
@@ -96,8 +98,8 @@ export const purgeExpiredPrices = async (): Promise<void> => {
 export const findAllSets = async () => {
   const { data, error } = await supabase
     .from(SET_TABLE)
-    .select('*')
-    .order('release_date', { ascending: false });
+    .select("*")
+    .order("release_date", { ascending: false });
   if (error) throw error;
   return data ?? [];
 };
@@ -105,18 +107,18 @@ export const findAllSets = async () => {
 export const findSetById = async (setId: string) => {
   const { data, error } = await supabase
     .from(SET_TABLE)
-    .select('*')
-    .eq('id', setId)
+    .select("*")
+    .eq("id", setId)
     .single();
-  if (error && error.code !== 'PGRST116') throw error;
+  if (error && error.code !== "PGRST116") throw error;
   return data;
 };
 
 export const getLastSyncTime = async (): Promise<Date | null> => {
   const { data, error } = await supabase
     .from(SET_TABLE)
-    .select('synced_at')
-    .order('synced_at', { ascending: false })
+    .select("synced_at")
+    .order("synced_at", { ascending: false })
     .limit(1)
     .single();
   if (error) return null;
@@ -138,6 +140,6 @@ export const upsertSets = async (sets: PokemonSet[]): Promise<void> => {
 
   const { error } = await supabaseAdmin
     .from(SET_TABLE)
-    .upsert(rows, { onConflict: 'id' });
+    .upsert(rows, { onConflict: "id" });
   if (error) throw error;
 };
