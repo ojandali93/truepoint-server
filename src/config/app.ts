@@ -7,6 +7,7 @@ import userRoutes from "../routes/user.routes";
 import cardRoutes from "../routes/card.routes";
 import centeringRoutes from "../routes/centering.routes";
 import { supabase } from "../lib/supabase";
+import billingRoutes from "../routes/billing.routes";
 
 dotenv.config();
 
@@ -21,6 +22,18 @@ app.use(morgan("combined"));
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/cards", cardRoutes);
 app.use("/api/v1/centering", centeringRoutes);
+
+// Add BEFORE express.json() so the webhook route gets the raw body
+app.use(
+  "/api/v1/billing/webhook",
+  express.raw({ type: "application/json" }),
+  (req, _res, next) => {
+    next();
+  },
+);
+
+// After your other routes:
+app.use("/api/v1/billing", billingRoutes);
 
 app.post("/debug/token", async (req, res) => {
   const authHeader = req.headers.authorization;
