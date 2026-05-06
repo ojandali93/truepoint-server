@@ -96,8 +96,8 @@ export const purgeExpiredPrices = async (): Promise<void> => {
 // ─── Sets ─────────────────────────────────────────────────────────────────────
 
 export const findAllSets = async () => {
-  const { data, error } = await supabase
-    .from(SET_TABLE)
+  const { data, error } = await supabaseAdmin // ← was supabase
+    .from("sets")
     .select("*")
     .order("release_date", { ascending: false });
   if (error) throw error;
@@ -105,8 +105,8 @@ export const findAllSets = async () => {
 };
 
 export const findSetById = async (setId: string) => {
-  const { data, error } = await supabase
-    .from(SET_TABLE)
+  const { data, error } = await supabaseAdmin // ← was supabase
+    .from("sets")
     .select("*")
     .eq("id", setId)
     .single();
@@ -115,8 +115,8 @@ export const findSetById = async (setId: string) => {
 };
 
 export const getLastSyncTime = async (): Promise<Date | null> => {
-  const { data, error } = await supabase
-    .from(SET_TABLE)
+  const { data, error } = await supabaseAdmin // ← was supabase
+    .from("sets")
     .select("synced_at")
     .order("synced_at", { ascending: false })
     .limit(1)
@@ -131,8 +131,8 @@ export const upsertSets = async (sets: PokemonSet[]): Promise<void> => {
     name: s.name,
     series: s.series,
     printed_total: s.printedTotal,
-    total_cards_base: s.printedTotal,  // base set total from API
-    total_cards_master: s.total,       // includes secret rares
+    total_cards_base: s.printedTotal, // base set total from API
+    total_cards_master: s.total, // includes secret rares
     release_date: s.releaseDate,
     symbol_url: s.images.symbol,
     logo_url: s.images.logo,
@@ -140,7 +140,7 @@ export const upsertSets = async (sets: PokemonSet[]): Promise<void> => {
   }));
 
   const { error } = await supabaseAdmin
-    .from('sets')
-    .upsert(rows, { onConflict: 'id' });
+    .from("sets")
+    .upsert(rows, { onConflict: "id" });
   if (error) throw error;
 };
