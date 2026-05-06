@@ -1,9 +1,25 @@
-import { createClient } from "@supabase/supabase-js";
-import dotenv from "dotenv";
+import express from 'express';
+import helmet from 'helmet';
+import cors from 'cors';
+import morgan from 'morgan';
+import dotenv from 'dotenv';
+import userRoutes from '../routes/user.routes';
+import cardRoutes from '../routes/card.routes';
+
 dotenv.config();
 
-// Use SERVICE_ROLE_KEY for the server to bypass RLS when necessary
-export const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-);
+const app = express();
+
+app.use(helmet());
+app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(',') ?? '*' }));
+app.use(express.json({ limit: '10kb' }));
+app.use(morgan('combined'));
+
+app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/cards', cardRoutes);
+
+app.use((_req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+export default app;
