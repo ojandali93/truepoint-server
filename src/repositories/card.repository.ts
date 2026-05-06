@@ -131,7 +131,8 @@ export const upsertSets = async (sets: PokemonSet[]): Promise<void> => {
     name: s.name,
     series: s.series,
     printed_total: s.printedTotal,
-    total: s.total,
+    total_cards_base: s.printedTotal,  // base set total from API
+    total_cards_master: s.total,       // includes secret rares
     release_date: s.releaseDate,
     symbol_url: s.images.symbol,
     logo_url: s.images.logo,
@@ -139,7 +140,7 @@ export const upsertSets = async (sets: PokemonSet[]): Promise<void> => {
   }));
 
   const { error } = await supabaseAdmin
-    .from(SET_TABLE)
-    .upsert(rows, { onConflict: "id" });
+    .from('sets')
+    .upsert(rows, { onConflict: 'id' });
   if (error) throw error;
 };
