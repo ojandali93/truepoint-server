@@ -27,7 +27,7 @@ app.use("/api/v1/centering", centeringRoutes);
 app.use(
   "/api/v1/billing/webhook",
   express.raw({ type: "application/json" }),
-  (req, _res, next) => {
+  (_req, _res, next) => {
     next();
   },
 );
