@@ -5,33 +5,48 @@ const PRICE_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 export const syncProductsForSet = async (setId: string): Promise<number> => {
   console.log(`[ProductSync] Fetching sealed products for set: ${setId}`);
+  console.log(`[ProductSync] RAPIDAPI_KEY set: ${!!process.env.RAPIDAPI_KEY}`);
 
   try {
     const products = await cardMarketClient.getSealedProducts(setId);
+    console.log(
+      `[ProductSync] API returned ${products.length} products for ${setId}`,
+    );
+
     if (!products.length) {
       console.log(`[ProductSync] No products found for set: ${setId}`);
       return 0;
     }
 
-    const expiresAt = new Date(Date.now() + PRICE_TTL_MS).toISOString();
-
     for (const product of products) {
       const productId = `${setId}-${product.id}`;
-
-      // Upsert product metadata
-      await supabaseAdmin.from("products").upsert(
-        {
-          id: productId,
-          name: product.name,
-          set_id: setId,
-          product_type: normalizeProductType(product.type),
-          image_url: null,
-          synced_at: new Date().toISOString(),
-        },
-        { onConflict: "id" },
+      console.log(
+        `[ProductSync] Upserting product: ${productId} — ${product.name}`,
       );
 
-      // Upsert prices
+      const { error: productError } = await supabaseAdmin
+        .from("products")
+        .upsert(
+          {
+            id: productId,
+            name: product.name,
+            set_id: setId,
+            product_type: normalizeProductType(product.type),
+            image_url: null,
+            synced_at: new Date().toISOString(),
+          },
+          { onConflict: "id" },
+        );
+
+      if (productError) {
+        console.error(
+          `[ProductSync] Failed to upsert product ${productId}:`,
+          productError,
+        );
+        continue;
+      }
+
+      const expiresAt = new Date(Date.now() + PRICE_TTL_MS).toISOString();
       const priceRows = [];
 
       if (product.prices?.tcg_player?.market_price) {
@@ -74,15 +89,30 @@ export const syncProductsForSet = async (setId: string): Promise<number> => {
       }
 
       if (priceRows.length > 0) {
-        await supabaseAdmin
+        const { error: priceError } = await supabaseAdmin
           .from("product_price_cache")
           .upsert(priceRows, { onConflict: "product_id,source" });
+
+        if (priceError) {
+          console.error(
+            `[ProductSync] Failed to upsert prices for ${productId}:`,
+            priceError,
+          );
+        } else {
+          console.log(
+            `[ProductSync] Saved ${priceRows.length} price rows for ${productId}`,
+          );
+        }
       }
     }
 
     return products.length;
   } catch (err: any) {
-    console.error(`[ProductSync] Failed for set ${setId}:`, err?.message);
+    console.error(
+      `[ProductSync] Failed for set ${setId}:`,
+      err?.message,
+      err?.status,
+    );
     return 0;
   }
 };

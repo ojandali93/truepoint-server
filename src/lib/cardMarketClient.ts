@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosInstance, AxiosError } from "axios";
 
 export interface CardMarketPrices {
   cardmarket: {
@@ -6,8 +6,8 @@ export interface CardMarketPrices {
     lowest_near_mint: number | null;
     lowest_near_mint_DE?: number | null;
     lowest_near_mint_FR?: number | null;
-    '30d_average': number | null;
-    '7d_average': number | null;
+    "30d_average": number | null;
+    "7d_average": number | null;
     graded?: {
       psa?: { psa10?: number; psa9?: number; psa8?: number };
       cgc?: { cgc10?: number; cgc9?: number };
@@ -57,14 +57,17 @@ class CardMarketClient {
 
   constructor() {
     this.client = axios.create({
-      baseURL: 'https://cardmarket-api.p.rapidapi.com',
+      baseURL: "https://cardmarket-api.p.rapidapi.com",
       timeout: 10000,
-      headers: {
-        'x-rapidapi-key': process.env.RAPIDAPI_KEY ?? '',
-        'x-rapidapi-host':
-          process.env.RAPIDAPI_CARDMARKET_HOST ?? 'cardmarket-api.p.rapidapi.com',
-        'Content-Type': 'application/json',
-      },
+    });
+
+    // Read API key at request time, not construction time
+    this.client.interceptors.request.use((config) => {
+      config.headers["x-rapidapi-key"] = process.env.RAPIDAPI_KEY ?? "";
+      config.headers["x-rapidapi-host"] =
+        process.env.RAPIDAPI_CARDMARKET_HOST ?? "cardmarket-api.p.rapidapi.com";
+      config.headers["Content-Type"] = "application/json";
+      return config;
     });
 
     this.client.interceptors.response.use(
@@ -72,16 +75,16 @@ class CardMarketClient {
       (error: AxiosError) => {
         const status = error.response?.status;
         const messages: Record<number, string> = {
-          401: 'Invalid RapidAPI key',
-          403: 'CardMarket API access forbidden — check your subscription plan',
-          429: 'CardMarket API rate limit exceeded',
-          404: 'Card not found in CardMarket database',
+          401: "Invalid RapidAPI key",
+          403: "CardMarket API access forbidden — check your subscription plan",
+          429: "CardMarket API rate limit exceeded",
+          404: "Card not found in CardMarket database",
         };
         throw {
           status: status ?? 503,
           message: messages[status ?? 0] ?? `CardMarket API error ${status}`,
         };
-      }
+      },
     );
   }
 
@@ -91,21 +94,33 @@ class CardMarketClient {
   }
 
   async searchCard(name: string, setCode?: string): Promise<CardMarketCard[]> {
-    const res = await this.client.get<{ results: CardMarketCard[] }>('/cards/search', {
-      params: { q: name, set: setCode ?? undefined },
-    });
+    const res = await this.client.get<{ results: CardMarketCard[] }>(
+      "/cards/search",
+      {
+        params: { q: name, set: setCode ?? undefined },
+      },
+    );
     return res.data.results ?? [];
   }
 
-  async getSealedProducts(setCode?: string): Promise<CardMarketSealedProduct[]> {
-    const res = await this.client.get<{ results: CardMarketSealedProduct[] }>('/sealed', {
-      params: { set: setCode ?? undefined, game: 'pokemon' },
-    });
+  async getSealedProducts(
+    setCode?: string,
+  ): Promise<CardMarketSealedProduct[]> {
+    const res = await this.client.get<{ results: CardMarketSealedProduct[] }>(
+      "/sealed",
+      {
+        params: { set: setCode ?? undefined, game: "pokemon" },
+      },
+    );
     return res.data.results ?? [];
   }
 
-  async getSealedProductById(productId: string | number): Promise<CardMarketSealedProduct> {
-    const res = await this.client.get<CardMarketSealedProduct>(`/sealed/${productId}`);
+  async getSealedProductById(
+    productId: string | number,
+  ): Promise<CardMarketSealedProduct> {
+    const res = await this.client.get<CardMarketSealedProduct>(
+      `/sealed/${productId}`,
+    );
     return res.data;
   }
 }

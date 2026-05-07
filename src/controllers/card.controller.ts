@@ -190,7 +190,7 @@ export const adminGetSyncStatus = async (
 
 export const adminBackfillCards = async (
   _req: AuthenticatedRequest,
-  res: Response,
+  res: Response, 
 ) => {
   try {
     res.json({ message: "Card backfill started in background" });
