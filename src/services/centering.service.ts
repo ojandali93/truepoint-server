@@ -49,6 +49,7 @@ export const analyzeAndSave = async (
     percentages: calc.percentages,
     truepointScore: calc.truepointScore,
     grades: calc.grades,
+    label: input.label ?? null,
   });
 };
 

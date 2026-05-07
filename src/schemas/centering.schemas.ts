@@ -23,6 +23,7 @@ export const analyzeCenteringSchema = z.object({
   side: z.enum(["front", "back"]).default("front"),
   cardId: z.string().optional(),
   inventoryItemId: z.string().uuid().optional(),
+  label: z.string().max(200).optional(),
 });
 
 export const saveCenteringReportSchema = analyzeCenteringSchema;

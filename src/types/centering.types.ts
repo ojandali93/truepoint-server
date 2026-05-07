@@ -19,6 +19,8 @@ export interface CenteringInput {
   side: "front" | "back";
   cardId?: string; // pokemontcg.io card ID
   inventoryItemId?: string;
+  /** Optional user-visible name for the report */
+  label?: string | null;
 }
 
 export interface BorderMeasurements {
@@ -62,4 +64,5 @@ export interface CenteringReport {
   truepointScore: number;
   grades: GradePredictions;
   createdAt: string;
+  label: string | null;
 }

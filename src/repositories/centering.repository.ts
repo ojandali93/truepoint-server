@@ -37,6 +37,7 @@ type CenteringRow = {
   sgc_grade: string;
   tag_grade: string;
   created_at: string;
+  label: string | null;
 };
 
 const rowToReport = (row: CenteringRow): CenteringReport => ({
@@ -83,6 +84,7 @@ const rowToReport = (row: CenteringRow): CenteringReport => ({
     tag: row.tag_grade,
   },
   createdAt: row.created_at,
+  label: row.label,
 });
 
 export const insertCenteringReport = async (
@@ -125,6 +127,7 @@ export const insertCenteringReport = async (
       cgc_grade: input.grades.cgc,
       sgc_grade: input.grades.sgc,
       tag_grade: input.grades.tag,
+      label: input.label ?? null,
     })
     .select()
     .single();
