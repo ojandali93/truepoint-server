@@ -8,6 +8,7 @@ import cardRoutes from "../routes/card.routes";
 import centeringRoutes from "../routes/centering.routes";
 import { supabase } from "../lib/supabase";
 import billingRoutes from "../routes/billing.routes";
+import syncRoutes from "../routes/sync.routes";
 
 dotenv.config();
 
@@ -22,6 +23,7 @@ app.use(morgan("combined"));
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/cards", cardRoutes);
 app.use("/api/v1/centering", centeringRoutes);
+app.use("/api/v1/sync", syncRoutes);
 
 // Add BEFORE express.json() so the webhook route gets the raw body
 app.use(

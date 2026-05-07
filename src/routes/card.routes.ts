@@ -87,4 +87,18 @@ router.delete(
   CardController.adminPurgeExpiredPrices as any,
 );
 
+// Add to card.routes.ts
+router.post(
+  "/admin/sync/prices",
+  adminLimiter,
+  requireAdmin as any,
+  CardController.adminTriggerPriceSync as any,
+);
+router.get(
+  "/admin/sync/prices/status",
+  adminLimiter,
+  requireAdmin as any,
+  CardController.adminGetSyncStatus as any,
+);
+
 export default router;

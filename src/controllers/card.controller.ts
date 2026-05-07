@@ -5,6 +5,7 @@ import * as CardIdentificationService from "../services/cardIdentification.servi
 import * as PricingService from "../services/pricing.service";
 import { cardMarketClient } from "../lib/cardMarketClient";
 import * as CardSyncService from "../services/cardSync.service";
+import { syncAllCardPrices } from "../services/priceSync.service";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -208,6 +209,20 @@ export const adminSyncSingleSet = async (
   try {
     const count = await CardSyncService.syncSingleSet(req.params.setId);
     res.json({ message: `Synced ${count} cards`, count });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+export const adminTriggerPriceSync = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    res.json({ message: "Price sync started in background" });
+    syncAllCardPrices().catch((err) =>
+      console.error("[PriceSync] Failed:", err?.message),
+    );
   } catch (err) {
     handleError(res, err);
   }
