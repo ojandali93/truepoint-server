@@ -52,12 +52,47 @@ export interface CardMarketSealedProduct {
   };
 }
 
+export interface CardMarketExpansion {
+  id: number;
+  name: string;
+  slug: string;
+  released_at: string;
+  logo: string;
+  code: string;
+  cards_total: number;
+  cards_printed_total: number;
+  series: { id: number; name: string; slug: string };
+}
+
+export interface CardMarketProduct {
+  id: number;
+  name: string;
+  slug: string;
+  prices: {
+    cardmarket?: {
+      currency: string;
+      lowest: number | null;
+      lowest_DE?: number | null;
+      lowest_FR?: number | null;
+    };
+  };
+  episode: {
+    id: number;
+    name: string;
+    slug: string;
+    code: string;
+    logo: string;
+  };
+  image: string;
+  tcggo_url: string;
+}
+
 class CardMarketClient {
   private client: AxiosInstance;
 
   constructor() {
     this.client = axios.create({
-      baseURL: "https://cardmarket-api.p.rapidapi.com",
+      baseURL: "https://cardmarket-api-tcg.p.rapidapi.com",
       timeout: 10000,
     });
 
@@ -65,7 +100,8 @@ class CardMarketClient {
     this.client.interceptors.request.use((config) => {
       config.headers["x-rapidapi-key"] = process.env.RAPIDAPI_KEY ?? "";
       config.headers["x-rapidapi-host"] =
-        process.env.RAPIDAPI_CARDMARKET_HOST ?? "cardmarket-api.p.rapidapi.com";
+        process.env.RAPIDAPI_CARDMARKET_HOST ??
+        "cardmarket-api-tcg.p.rapidapi.com";
       config.headers["Content-Type"] = "application/json";
       return config;
     });
@@ -76,9 +112,9 @@ class CardMarketClient {
         const status = error.response?.status;
         const messages: Record<number, string> = {
           401: "Invalid RapidAPI key",
-          403: "CardMarket API access forbidden — check your subscription plan",
+          403: "CardMarket API access forbidden",
           429: "CardMarket API rate limit exceeded",
-          404: "Card not found in CardMarket database",
+          404: "Not found in CardMarket database",
         };
         throw {
           status: status ?? 503,
@@ -86,6 +122,44 @@ class CardMarketClient {
         };
       },
     );
+  }
+
+  async getAllExpansions(): Promise<CardMarketExpansion[]> {
+    const results: CardMarketExpansion[] = [];
+    let page = 0;
+
+    while (true) {
+      const res = await this.client.get<{ data: CardMarketExpansion[] }>(
+        "/pokemon/episodes",
+        { params: { page } },
+      );
+      const batch = res.data.data ?? [];
+      results.push(...batch);
+      if (batch.length < 20) break; // API returns 20 per page
+      page++;
+    }
+
+    return results;
+  }
+
+  async getProductsByExpansion(
+    expansionId: number,
+  ): Promise<CardMarketProduct[]> {
+    const results: CardMarketProduct[] = [];
+    let page = 0;
+
+    while (true) {
+      const res = await this.client.get<{ data: CardMarketProduct[] }>(
+        `/pokemon/episodes/${expansionId}/products`,
+        { params: { page, sort: "price_highest" } },
+      );
+      const batch = res.data.data ?? [];
+      results.push(...batch);
+      if (batch.length < 20) break;
+      page++;
+    }
+
+    return results;
   }
 
   async getCardPrices(cardId: string | number): Promise<CardMarketCard> {

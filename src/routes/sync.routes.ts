@@ -66,8 +66,22 @@ router.post("/products", requireSyncKey, async (_req, res) => {
 router.post("/products/:setId", requireSyncKey, async (req, res) => {
   try {
     const { setId } = req.params;
-    res.json({ message: `Product sync started for ${setId}` });
-    syncProductsForSet(setId).catch((err) =>
+
+    // Fetch set name from DB
+    const { supabaseAdmin } = await import("../lib/supabase");
+    const { data: set } = await supabaseAdmin
+      .from("sets")
+      .select("name")
+      .eq("id", setId)
+      .single();
+
+    if (!set) {
+      res.status(404).json({ error: `Set ${setId} not found` });
+      return;
+    }
+
+    res.json({ message: `Product sync started for ${set.name}` });
+    syncProductsForSet(setId, set.name).catch((err) =>
       console.error(
         `[SyncRoute] Product sync failed for ${setId}:`,
         err?.message,

@@ -1,28 +1,90 @@
 import { supabaseAdmin } from "../lib/supabase";
-import { cardMarketClient } from "../lib/cardMarketClient";
+import { cardMarketClient, CardMarketExpansion } from "../lib/cardMarketClient";
 
-const PRICE_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours
+const PRICE_TTL_MS = 48 * 60 * 60 * 1000;
+const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-export const syncProductsForSet = async (setId: string): Promise<number> => {
-  console.log(`[ProductSync] Fetching sealed products for set: ${setId}`);
-  console.log(`[ProductSync] RAPIDAPI_KEY set: ${!!process.env.RAPIDAPI_KEY}`);
+// ─── Expansion cache ──────────────────────────────────────────────────────────
+// Fetch all CardMarket expansions once and reuse across the sync
+
+let expansionCache: CardMarketExpansion[] | null = null;
+
+const getExpansions = async (): Promise<CardMarketExpansion[]> => {
+  if (expansionCache) return expansionCache;
+  console.log("[ProductSync] Fetching all CardMarket expansions...");
+  expansionCache = await cardMarketClient.getAllExpansions();
+  console.log(`[ProductSync] Found ${expansionCache.length} expansions`);
+  return expansionCache;
+};
+
+// Match a set from your DB to a CardMarket expansion
+// Tries: exact name match, then code match, then fuzzy name match
+const findExpansion = (
+  setName: string,
+  setId: string,
+  expansions: CardMarketExpansion[],
+): CardMarketExpansion | null => {
+  // Normalize for comparison
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  const normalizedSetName = normalize(setName);
+
+  // 1. Exact name match
+  let match = expansions.find((e) => normalize(e.name) === normalizedSetName);
+  if (match) return match;
+
+  // 2. Code match (CardMarket uses codes like CRZ, SVI, OBF)
+  // pokemontcg.io uses sv1, sv2, swsh1 etc — try mapping the suffix
+  const setCode = setId.replace(/[^0-9]/g, ""); // e.g. "sv1" → "1"
+  match = expansions.find((e) => e.code.toLowerCase() === setId.toLowerCase());
+  if (match) return match;
+
+  // 3. Partial name match (handles subtitle differences)
+  match = expansions.find(
+    (e) =>
+      normalize(e.name).includes(normalizedSetName) ||
+      normalizedSetName.includes(normalize(e.name)),
+  );
+  if (match) return match;
+
+  return null;
+};
+
+// ─── Sync a single set ───────────────────────────────────────────────────────
+
+export const syncProductsForSet = async (
+  setId: string,
+  setName: string,
+): Promise<number> => {
+  const expansions = await getExpansions();
+  const expansion = findExpansion(setName, setId, expansions);
+
+  if (!expansion) {
+    console.log(
+      `[ProductSync] No CardMarket expansion match for: ${setName} (${setId})`,
+    );
+    return 0;
+  }
+
+  console.log(
+    `[ProductSync] Matched "${setName}" → CardMarket: "${expansion.name}" (id: ${expansion.id})`,
+  );
 
   try {
-    const products = await cardMarketClient.getSealedProducts(setId);
+    const products = await cardMarketClient.getProductsByExpansion(
+      expansion.id,
+    );
     console.log(
-      `[ProductSync] API returned ${products.length} products for ${setId}`,
+      `[ProductSync] Found ${products.length} products for ${setName}`,
     );
 
-    if (!products.length) {
-      console.log(`[ProductSync] No products found for set: ${setId}`);
-      return 0;
-    }
+    if (!products.length) return 0;
+
+    const expiresAt = new Date(Date.now() + PRICE_TTL_MS).toISOString();
+    let saved = 0;
 
     for (const product of products) {
       const productId = `${setId}-${product.id}`;
-      console.log(
-        `[ProductSync] Upserting product: ${productId} — ${product.name}`,
-      );
 
       const { error: productError } = await supabaseAdmin
         .from("products")
@@ -31,8 +93,8 @@ export const syncProductsForSet = async (setId: string): Promise<number> => {
             id: productId,
             name: product.name,
             set_id: setId,
-            product_type: normalizeProductType(product.type),
-            image_url: null,
+            product_type: normalizeProductType(product.name),
+            image_url: product.image ?? null,
             synced_at: new Date().toISOString(),
           },
           { onConflict: "id" },
@@ -40,117 +102,102 @@ export const syncProductsForSet = async (setId: string): Promise<number> => {
 
       if (productError) {
         console.error(
-          `[ProductSync] Failed to upsert product ${productId}:`,
-          productError,
+          `[ProductSync] Failed to save product ${productId}:`,
+          productError.message,
         );
         continue;
       }
 
-      const expiresAt = new Date(Date.now() + PRICE_TTL_MS).toISOString();
-      const priceRows = [];
-
-      if (product.prices?.tcg_player?.market_price) {
-        priceRows.push({
-          product_id: productId,
-          source: "tcgplayer",
-          low_price: null,
-          mid_price: null,
-          high_price: null,
-          market_price: product.prices.tcg_player.market_price,
-          fetched_at: new Date().toISOString(),
-          expires_at: expiresAt,
-        });
+      // Save CardMarket price
+      const cmPrice = product.prices?.cardmarket;
+      if (cmPrice?.lowest != null) {
+        await supabaseAdmin.from("product_price_cache").upsert(
+          {
+            product_id: productId,
+            source: "cardmarket",
+            low_price: cmPrice.lowest ?? null,
+            mid_price: null,
+            high_price: null,
+            market_price: cmPrice.lowest ?? null,
+            fetched_at: new Date().toISOString(),
+            expires_at: expiresAt,
+          },
+          { onConflict: "product_id,source" },
+        );
       }
 
-      if (product.prices?.cardmarket?.trend_price) {
-        priceRows.push({
-          product_id: productId,
-          source: "cardmarket",
-          low_price: null,
-          mid_price: product.prices.cardmarket.avg30 ?? null,
-          high_price: null,
-          market_price: product.prices.cardmarket.trend_price,
-          fetched_at: new Date().toISOString(),
-          expires_at: expiresAt,
-        });
-      }
-
-      if (product.prices?.ebay?.median_price) {
-        priceRows.push({
-          product_id: productId,
-          source: "ebay",
-          low_price: null,
-          mid_price: null,
-          high_price: null,
-          market_price: product.prices.ebay.median_price,
-          fetched_at: new Date().toISOString(),
-          expires_at: expiresAt,
-        });
-      }
-
-      if (priceRows.length > 0) {
-        const { error: priceError } = await supabaseAdmin
-          .from("product_price_cache")
-          .upsert(priceRows, { onConflict: "product_id,source" });
-
-        if (priceError) {
-          console.error(
-            `[ProductSync] Failed to upsert prices for ${productId}:`,
-            priceError,
-          );
-        } else {
-          console.log(
-            `[ProductSync] Saved ${priceRows.length} price rows for ${productId}`,
-          );
-        }
-      }
+      saved++;
     }
 
-    return products.length;
+    console.log(
+      `[ProductSync] ✓ ${setName}: saved ${saved}/${products.length} products`,
+    );
+    return saved;
   } catch (err: any) {
     console.error(
-      `[ProductSync] Failed for set ${setId}:`,
+      `[ProductSync] Failed for ${setName} (${setId}):`,
       err?.message,
-      err?.status,
     );
     return 0;
   }
 };
 
+// ─── Sync all sets ────────────────────────────────────────────────────────────
+
 export const syncAllProducts = async (): Promise<void> => {
   console.log("[ProductSync] Starting full product sync...");
+
+  // Pre-fetch expansions once
+  await getExpansions();
 
   const { data: sets } = await supabaseAdmin
     .from("sets")
     .select("id, name")
     .order("release_date", { ascending: false });
 
-  if (!sets?.length) return;
-
-  let totalSynced = 0;
-
-  for (const set of sets) {
-    const count = await syncProductsForSet(set.id);
-    totalSynced += count;
-    await new Promise((res) => setTimeout(res, 500)); // polite delay
+  if (!sets?.length) {
+    console.log("[ProductSync] No sets found in database");
+    return;
   }
 
-  console.log(`[ProductSync] Complete. Total products synced: ${totalSynced}`);
+  let totalProducts = 0;
+  let matchedSets = 0;
+
+  for (const set of sets) {
+    const count = await syncProductsForSet(set.id, set.name);
+    if (count > 0) {
+      totalProducts += count;
+      matchedSets++;
+    }
+    await delay(2000); // 2s between sets — well within rate limits
+  }
+
+  console.log(
+    `[ProductSync] Complete. ${matchedSets} sets matched, ${totalProducts} products saved`,
+  );
+
+  // Clear expansion cache for next run
+  expansionCache = null;
 };
 
-const normalizeProductType = (type: string): string => {
-  const t = type.toLowerCase();
-  if (t.includes("booster box") || t.includes("booster_box"))
-    return "booster_box";
-  if (t.includes("elite trainer") || t.includes("etb"))
-    return "elite_trainer_box";
-  if (t.includes("ultra premium") || t.includes("upc"))
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const normalizeProductType = (name: string): string => {
+  const n = name.toLowerCase();
+  if (n.includes("ultra premium") || n.includes("upc"))
     return "ultra_premium_collection";
-  if (t.includes("special collection") || t.includes("spc"))
+  if (n.includes("special collection") || n.includes("spc"))
     return "special_collection";
-  if (t.includes("bundle")) return "bundle";
-  if (t.includes("tin")) return "tin";
-  if (t.includes("blister")) return "blister";
-  if (t.includes("promo")) return "promo_pack";
+  if (n.includes("elite trainer") || n.includes("etb"))
+    return "elite_trainer_box";
+  if (n.includes("booster box") || n.includes("booster bundle"))
+    return "booster_box";
+  if (n.includes("collection box") || n.includes("collector"))
+    return "collection";
+  if (n.includes("bundle")) return "bundle";
+  if (n.includes("blister")) return "blister";
+  if (n.includes("tin")) return "tin";
+  if (n.includes("promo")) return "promo_pack";
+  if (n.includes("booster")) return "booster_box";
   return "collection";
 };
