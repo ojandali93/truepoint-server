@@ -150,8 +150,9 @@ export const findReportsByUser = async (
   page = 1,
   limit = 20,
 ): Promise<CenteringReport[]> => {
+  console.log("findReportsByUser", userId, page, limit);
   const offset = (page - 1) * limit;
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("centering_reports")
     .select("*")
     .eq("user_id", userId)
@@ -165,7 +166,7 @@ export const findReportsByCard = async (
   userId: string,
   cardId: string,
 ): Promise<CenteringReport[]> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("centering_reports")
     .select("*")
     .eq("user_id", userId)
@@ -179,7 +180,7 @@ export const deleteReport = async (
   id: string,
   userId: string,
 ): Promise<void> => {
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from("centering_reports")
     .delete()
     .eq("id", id)
