@@ -49,6 +49,7 @@ export const updateProfile = async (
   id: string,
   payload: Partial<Profile>,
 ): Promise<Profile> => {
+  console.log("updateProfile function", payload, id);
   const { data, error } = await supabase
     .from("profiles")
     .update({ ...payload, updated_at: new Date().toISOString() })
