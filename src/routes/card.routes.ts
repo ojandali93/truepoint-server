@@ -11,6 +11,7 @@ import {
   identifyFromUrlSchema,
 } from "../schemas/card.schemas";
 import * as CardController from "../controllers/card.controller";
+import { supabaseAdmin } from "../lib/supabase";
 
 const router = Router();
 
@@ -100,5 +101,28 @@ router.get(
   requireAdmin as any,
   CardController.adminGetSyncStatus as any,
 );
+
+router.get("/sealed/:setCode", standardLimiter, async (req, res) => {
+  try {
+    const { setCode } = req.params;
+
+    const { data: products } = await supabaseAdmin
+      .from("products")
+      .select(
+        `
+        *,
+        product_price_cache (
+          source, low_price, mid_price, high_price, market_price, fetched_at
+        )
+      `,
+      )
+      .eq("set_id", setCode)
+      .order("product_type");
+
+    res.json({ data: products ?? [] });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch products" });
+  }
+});
 
 export default router;

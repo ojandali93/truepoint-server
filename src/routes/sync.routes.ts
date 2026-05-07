@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { Request, Response } from "express";
 import { syncAllCardPrices } from "../services/priceSync.service";
+import {
+  syncAllProducts,
+  syncProductsForSet,
+} from "../services/productSync.service";
 
 const router = Router();
 
@@ -41,6 +45,36 @@ router.get("/status", requireSyncKey, async (_req: Request, res: Response) => {
     res.json({ data });
   } catch (err) {
     res.status(500).json({ error: "Failed to get sync status" });
+  }
+});
+
+router.post("/products", requireSyncKey, async (_req, res) => {
+  try {
+    res.json({
+      message: "Product sync started",
+      timestamp: new Date().toISOString(),
+    });
+    syncAllProducts().catch((err) =>
+      console.error("[SyncRoute] Product sync failed:", err?.message),
+    );
+  } catch (err) {
+    res.status(500).json({ error: "Failed to start product sync" });
+  }
+});
+
+// Sync products for a single set
+router.post("/products/:setId", requireSyncKey, async (req, res) => {
+  try {
+    const { setId } = req.params;
+    res.json({ message: `Product sync started for ${setId}` });
+    syncProductsForSet(setId).catch((err) =>
+      console.error(
+        `[SyncRoute] Product sync failed for ${setId}:`,
+        err?.message,
+      ),
+    );
+  } catch (err) {
+    res.status(500).json({ error: "Failed to start product sync" });
   }
 });
 
