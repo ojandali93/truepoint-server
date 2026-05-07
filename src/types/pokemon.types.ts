@@ -12,9 +12,13 @@ export interface PokemonCard {
   id: string;
   name: string;
   number: string;
+  supertype?: string;
+  subtypes?: string[];
   hp?: string;
+  types?: string[];
   rarity?: string;
   set: { id: string; name: string };
+  images?: { small: string; large: string };
   tcgplayer?: {
     prices?: Record<
       string,

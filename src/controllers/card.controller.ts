@@ -3,7 +3,6 @@ import { AuthenticatedRequest } from "../types/user.types";
 import * as CardService from "../services/card.service";
 import * as CardIdentificationService from "../services/cardIdentification.service";
 import * as PricingService from "../services/pricing.service";
-import { cardMarketClient } from "../lib/cardMarketClient";
 import * as CardSyncService from "../services/cardSync.service";
 import { syncAllCardPrices } from "../services/priceSync.service";
 
@@ -85,6 +84,7 @@ export const getCardPrices = async (
 ) => {
   try {
     const { cardId } = req.params;
+    // Use CardService — not a local function
     const card = await CardService.getCardById(cardId);
     const prices = await PricingService.getAllPricesForCard(
       cardId,
@@ -97,21 +97,6 @@ export const getCardPrices = async (
         prices,
       },
     });
-  } catch (err) {
-    handleError(res, err);
-  }
-};
-
-// ─── Sealed Products ──────────────────────────────────────────────────────────
-
-export const getSealedProductPrices = async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
-  try {
-    const { setCode } = req.params;
-    const products = await cardMarketClient.getSealedProducts(setCode);
-    res.json({ data: products });
   } catch (err) {
     handleError(res, err);
   }
@@ -190,7 +175,7 @@ export const adminGetSyncStatus = async (
 
 export const adminBackfillCards = async (
   _req: AuthenticatedRequest,
-  res: Response, 
+  res: Response,
 ) => {
   try {
     res.json({ message: "Card backfill started in background" });

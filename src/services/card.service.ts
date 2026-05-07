@@ -15,7 +15,7 @@ import {
 import { supabaseAdmin } from "../lib/supabase";
 
 const setsCache = new TTLCache<PokemonSet[]>();
-const cardCache = new TTLCache<PokemonCard>();
+const cardCache = new TTLCache<PokemonCard>(); // ← add this if missing
 const searchCache = new TTLCache<ApiListResponse<PokemonCard>>();
 
 // ─── Sets ─────────────────────────────────────────────────────────────────────
@@ -170,4 +170,47 @@ export const shouldSync = async (): Promise<boolean> => {
   if (!lastSync) return true;
   const hoursSinceSync = (Date.now() - lastSync.getTime()) / (1000 * 60 * 60);
   return hoursSinceSync > 24;
+};
+
+export const getCardById = async (cardId: string): Promise<PokemonCard> => {
+  const cached = cardCache.get(cardId);
+  if (cached) return cached;
+
+  // Try local DB first with set name join
+  const { data, error } = await supabaseAdmin
+    .from("cards")
+    .select(`*, sets ( id, name, series, symbol_url, logo_url )`)
+    .eq("id", cardId)
+    .single();
+
+  if (!error && data) {
+    const card: PokemonCard = {
+      id: data.id,
+      name: data.name,
+      number: data.number,
+      supertype: data.supertype,
+      subtypes: data.subtypes ?? [],
+      hp: data.hp,
+      types: data.types ?? [],
+      rarity: data.rarity,
+      set: {
+        id: data.set_id,
+        name: data.sets?.name ?? data.set_id,
+      },
+      images: {
+        small: data.image_small,
+        large: data.image_large,
+      },
+    };
+    cardCache.set(cardId, card, TTL.CARDS);
+    return card;
+  }
+
+  // Fallback to external API
+  console.log(
+    `[CardService] Card ${cardId} not in local DB, fetching from API`,
+  );
+  const card = await pokemonTcgClient.getCardById(cardId);
+  cardCache.set(cardId, card, TTL.CARDS);
+  return card;
 };
