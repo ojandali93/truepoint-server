@@ -118,4 +118,46 @@ router.get("/sealed/:setCode", standardLimiter, async (req, res) => {
   }
 });
 
+router.get("/search/global", standardLimiter, async (req, res) => {
+  try {
+    const q = (req.query.q as string)?.trim();
+    if (!q || q.length < 2) {
+      res.json({ data: { sets: [], cards: [], products: [] } });
+      return;
+    }
+
+    const search = `%${q}%`;
+
+    const [setsResult, cardsResult, productsResult] = await Promise.all([
+      supabaseAdmin
+        .from("sets")
+        .select("id, name, series, symbol_url, logo_url")
+        .ilike("name", search)
+        .limit(5),
+
+      supabaseAdmin
+        .from("cards")
+        .select("id, name, number, rarity, set_id, image_small")
+        .ilike("name", search)
+        .limit(8),
+
+      supabaseAdmin
+        .from("products")
+        .select("id, name, product_type, set_id, image_url")
+        .ilike("name", search)
+        .limit(5),
+    ]);
+
+    res.json({
+      data: {
+        sets: setsResult.data ?? [],
+        cards: cardsResult.data ?? [],
+        products: productsResult.data ?? [],
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Search failed" });
+  }
+});
+
 export default router;
