@@ -215,7 +215,7 @@ export const adminSyncSingleSet = async (
 };
 
 export const adminTriggerPriceSync = async (
-  req: AuthenticatedRequest,
+  _req: AuthenticatedRequest,
   res: Response,
 ) => {
   try {
