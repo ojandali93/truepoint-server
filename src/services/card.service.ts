@@ -12,6 +12,7 @@ import {
   ApiListResponse,
   CardSearchParams,
 } from "../types/pokemon.types";
+import { supabaseAdmin } from "../lib/supabase";
 
 const setsCache = new TTLCache<PokemonSet[]>();
 const cardCache = new TTLCache<PokemonCard>();
@@ -70,22 +71,58 @@ export const getCardsBySet = async (
   setId: string,
   page = 1,
 ): Promise<ApiListResponse<PokemonCard>> => {
+  const pageSize = 250;
+  const offset = (page - 1) * pageSize;
   const cacheKey = `cards:set:${setId}:${page}`;
+
   const cached = searchCache.get(cacheKey);
   if (cached) return cached;
 
-  const result = await pokemonTcgClient.getCardsBySet(setId, page, 250);
+  // Read from local Supabase cards table first
+  const { data, error, count } = await supabaseAdmin
+    .from("cards")
+    .select("*", { count: "exact" })
+    .eq("set_id", setId)
+    .order("number")
+    .range(offset, offset + pageSize - 1);
+
+  if (!error && data && data.length > 0) {
+    // Map DB columns to PokemonCard shape
+    const cards = data.map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      number: row.number,
+      supertype: row.supertype,
+      subtypes: row.subtypes ?? [],
+      hp: row.hp,
+      types: row.types ?? [],
+      rarity: row.rarity,
+      set: { id: row.set_id, name: "" }, // name not stored in cards table
+      images: {
+        small: row.image_small,
+        large: row.image_large,
+      },
+    })) as PokemonCard[];
+
+    const result: ApiListResponse<PokemonCard> = {
+      data: cards,
+      page,
+      pageSize,
+      count: data.length,
+      totalCount: count ?? data.length,
+    };
+
+    searchCache.set(cacheKey, result, TTL.CARDS);
+    return result;
+  }
+
+  // Fallback to external API if cards not in DB yet
+  console.log(
+    `[CardService] No local cards for set ${setId}, falling back to API`,
+  );
+  const result = await pokemonTcgClient.getCardsBySet(setId, page, pageSize);
   searchCache.set(cacheKey, result, TTL.CARDS);
   return result;
-};
-
-export const getCardById = async (cardId: string): Promise<PokemonCard> => {
-  const cached = cardCache.get(cardId);
-  if (cached) return cached;
-
-  const card = await pokemonTcgClient.getCardById(cardId);
-  cardCache.set(cardId, card, TTL.CARDS);
-  return card;
 };
 
 export const searchCards = async (

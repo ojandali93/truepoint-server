@@ -35,13 +35,6 @@ router.get(
 );
 router.get("/:cardId", standardLimiter, CardController.getCardById as any);
 
-// ─── Sealed Products ───────────────────────────────────────────────────────────
-router.get(
-  "/sealed/:setCode",
-  standardLimiter,
-  CardController.getSealedProductPrices as any,
-);
-
 // ─── Card Identification ───────────────────────────────────────────────────────
 router.post(
   "/identify/base64",
