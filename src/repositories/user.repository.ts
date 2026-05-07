@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from "../lib/supabase";
+import { supabaseAdmin } from "../lib/supabase";
 import {
   Profile,
   NotificationSettings,
