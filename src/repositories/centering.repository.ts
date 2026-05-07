@@ -1,4 +1,4 @@
-import { supabase } from "../lib/supabase";
+import { supabase, supabaseAdmin } from "../lib/supabase";
 import { CenteringReport } from "../types/centering.types";
 
 type CenteringRow = {
@@ -89,7 +89,7 @@ export const insertCenteringReport = async (
   userId: string,
   input: Omit<CenteringReport, "id" | "userId" | "createdAt">,
 ): Promise<CenteringReport> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("centering_reports")
     .insert({
       user_id: userId,
