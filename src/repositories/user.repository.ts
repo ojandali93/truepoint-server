@@ -9,7 +9,7 @@ import {
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
 export const findProfileById = async (id: string): Promise<Profile | null> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("profiles")
     .select("*")
     .eq("id", id)
@@ -21,7 +21,7 @@ export const findProfileById = async (id: string): Promise<Profile | null> => {
 export const findProfileByUsername = async (
   username: string,
 ): Promise<Profile | null> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("profiles")
     .select(
       "id, username, full_name, avatar_url, currency, preferred_grading_company, show_market_values, is_pro_member, created_at, updated_at",
@@ -36,7 +36,7 @@ export const createProfile = async (
   id: string,
   payload: Partial<Profile>,
 ): Promise<Profile> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("profiles")
     .insert({ id, ...payload })
     .select()
@@ -50,7 +50,7 @@ export const updateProfile = async (
   payload: Partial<Profile>,
 ): Promise<Profile> => {
   console.log("updateProfile function", payload, id);
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("profiles")
     .update({ ...payload, updated_at: new Date().toISOString() })
     .eq("id", id)
@@ -70,7 +70,7 @@ export const deleteProfileById = async (id: string): Promise<void> => {
 export const findNotificationSettings = async (
   userId: string,
 ): Promise<NotificationSettings | null> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("notification_settings")
     .select("*")
     .eq("user_id", userId)
@@ -83,7 +83,7 @@ export const createNotificationSettings = async (
   userId: string,
   payload: Partial<NotificationSettings>,
 ): Promise<NotificationSettings> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("notification_settings")
     .insert({ user_id: userId, ...payload })
     .select()
@@ -96,7 +96,7 @@ export const updateNotificationSettings = async (
   userId: string,
   payload: Partial<NotificationSettings>,
 ): Promise<NotificationSettings> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("notification_settings")
     .update(payload)
     .eq("user_id", userId)
@@ -111,7 +111,7 @@ export const updateNotificationSettings = async (
 export const findDevicesByUserId = async (
   userId: string,
 ): Promise<UserDevice[]> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("user_devices")
     .select("*")
     .eq("user_id", userId)
@@ -124,7 +124,7 @@ export const upsertDevice = async (
   userId: string,
   payload: Pick<UserDevice, "device_token" | "device_type" | "device_name">,
 ): Promise<UserDevice> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("user_devices")
     .upsert(
       { user_id: userId, ...payload, last_seen: new Date().toISOString() },
@@ -140,7 +140,7 @@ export const deleteDevice = async (
   deviceId: string,
   userId: string,
 ): Promise<void> => {
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from("user_devices")
     .delete()
     .eq("id", deviceId)
@@ -152,7 +152,7 @@ export const pingDevice = async (
   deviceId: string,
   userId: string,
 ): Promise<UserDevice> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("user_devices")
     .update({ last_seen: new Date().toISOString() })
     .eq("id", deviceId)
@@ -170,7 +170,7 @@ export const findActivityByUserId = async (
   limit = 50,
   offset = 0,
 ): Promise<UserActivityLog[]> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("user_activity_logs")
     .select("*")
     .eq("user_id", userId)
@@ -184,7 +184,7 @@ export const insertActivityLog = async (
   userId: string,
   payload: Pick<UserActivityLog, "event_name" | "metadata" | "platform">,
 ): Promise<void> => {
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from("user_activity_logs")
     .insert({ user_id: userId, ...payload });
   if (error) throw error;
