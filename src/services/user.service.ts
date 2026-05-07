@@ -38,7 +38,7 @@ export const updateProfile = async (
   payload: Partial<Profile>,
 ): Promise<Profile> => {
   try {
-    console.log("updateProfile payload", payload);
+    console.log("updateProfile payload", payload, userId);
     return await UserRepository.updateProfile(userId, payload);
   } catch (err: any) {
     console.log("updateProfile error", err);
