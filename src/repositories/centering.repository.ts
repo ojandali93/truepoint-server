@@ -150,7 +150,6 @@ export const findReportsByUser = async (
   page = 1,
   limit = 20,
 ): Promise<CenteringReport[]> => {
-  console.log("findReportsByUser", userId, page, limit);
   const offset = (page - 1) * limit;
   const { data, error } = await supabaseAdmin
     .from("centering_reports")
@@ -158,6 +157,7 @@ export const findReportsByUser = async (
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
+  console.log("findReportsByUser", data, error);
   if (error) throw error;
   return (data ?? []).map((row) => rowToReport(row as CenteringRow));
 };
