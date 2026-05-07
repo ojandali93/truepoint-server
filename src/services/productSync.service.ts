@@ -35,7 +35,6 @@ const findExpansion = (
 
   // 2. Code match (CardMarket uses codes like CRZ, SVI, OBF)
   // pokemontcg.io uses sv1, sv2, swsh1 etc — try mapping the suffix
-  const setCode = setId.replace(/[^0-9]/g, ""); // e.g. "sv1" → "1"
   match = expansions.find((e) => e.code.toLowerCase() === setId.toLowerCase());
   if (match) return match;
 
