@@ -1,9 +1,7 @@
 import {
   findSnapshotsByUser,
-  findLatestSnapshot,
   upsertSnapshot,
   findAllUsersWithInventory,
-  PortfolioSnapshot,
 } from "../repositories/portfolio.repository";
 import { getInventory } from "./inventory.service";
 
