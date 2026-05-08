@@ -11,7 +11,9 @@ import {
   UpdateInventoryInput,
   InventoryRow,
   GradingCompany,
+  ItemType,
 } from "../repositories/inventory.repository";
+import { supabaseAdmin } from "../lib/supabase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -320,4 +322,52 @@ export const openSealedProduct = async (
 export const getCurrentTotalValue = async (userId: string): Promise<number> => {
   const { summary } = await getInventory(userId);
   return summary.totalMarketValue;
+};
+
+export interface BatchItem {
+  itemType: ItemType;
+  cardId?: string | null;
+  productId?: string | null;
+  variantType?: string | null;
+  gradingCompany?: GradingCompany | null;
+  grade?: string | null;
+  isSealed?: boolean | null;
+  purchasePrice?: number | null;
+  purchaseDate?: string | null;
+  notes?: string | null;
+}
+
+export const batchAddInventoryItems = async (
+  userId: string,
+  items: BatchItem[],
+): Promise<number> => {
+  if (!items.length) return 0;
+
+  const rows = items.map((item) => ({
+    user_id: userId,
+    item_type: item.itemType,
+    card_id: item.cardId ?? null,
+    product_id: item.productId ?? null,
+    variant_type: item.variantType ?? null,
+    grading_company: item.gradingCompany ?? null,
+    grade: item.grade ?? null,
+    is_sealed: item.isSealed ?? null,
+    purchase_price: item.purchasePrice ?? null,
+    purchase_date: item.purchaseDate ?? null,
+    notes: item.notes ?? null,
+  }));
+
+  // Insert in chunks of 200 to avoid payload limits
+  const CHUNK = 200;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const { error } = await supabaseAdmin
+      .from("inventory")
+      .insert(rows.slice(i, i + CHUNK));
+    if (error) {
+      console.error("[InventoryService] batchAdd error:", error);
+      throw error;
+    }
+  }
+
+  return rows.length;
 };

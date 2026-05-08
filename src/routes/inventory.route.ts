@@ -20,6 +20,12 @@ router.get("/", standardLimiter, InventoryController.getInventory as any);
 // Add a raw card, graded card, or sealed product
 router.post("/", writeLimiter, InventoryController.addInventoryItem as any);
 
+router.post(
+  "/batch",
+  writeLimiter,
+  InventoryController.batchAddInventoryItems as any,
+);
+
 // PUT /api/v1/inventory/:id
 // Edit an existing inventory item
 router.put("/:id", writeLimiter, InventoryController.editInventoryItem as any);

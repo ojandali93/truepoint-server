@@ -146,3 +146,61 @@ export const openSealedProduct = async (
     handleError(res, err);
   }
 };
+
+export const batchAddInventoryItems = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: "items must be a non-empty array" });
+      return;
+    }
+
+    if (items.length > 500) {
+      res.status(400).json({ error: "Maximum 500 items per batch" });
+      return;
+    }
+
+    // Expand items by quantity into individual rows
+    const expanded: InventoryService.BatchItem[] = [];
+
+    for (const item of items) {
+      const qty = Math.max(1, Math.min(99, parseInt(item.quantity) || 1));
+
+      if (!item.itemType) {
+        res.status(400).json({ error: "Each item must have an itemType" });
+        return;
+      }
+
+      for (let i = 0; i < qty; i++) {
+        expanded.push({
+          itemType: item.itemType,
+          cardId: item.cardId ?? null,
+          productId: item.productId ?? null,
+          variantType: item.variantType ?? null,
+          gradingCompany: item.gradingCompany ?? null,
+          grade: item.grade ?? null,
+          isSealed:
+            item.isSealed ?? (item.itemType === "sealed_product" ? true : null),
+          purchasePrice: item.purchasePrice ? Number(item.purchasePrice) : null,
+          purchaseDate: item.purchaseDate ?? null,
+          notes: item.notes ?? null,
+        });
+      }
+    }
+
+    const inserted = await import("../services/inventory.service").then((s) =>
+      s.batchAddInventoryItems(req.user.id, expanded),
+    );
+
+    res.status(201).json({
+      data: { inserted },
+      message: `${inserted} item${inserted !== 1 ? "s" : ""} added to inventory`,
+    });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
