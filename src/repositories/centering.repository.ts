@@ -1,4 +1,4 @@
-import { supabase, supabaseAdmin } from "../lib/supabase";
+import { supabaseAdmin } from "../lib/supabase";
 import { CenteringReport } from "../types/centering.types";
 
 type CenteringRow = {
@@ -37,7 +37,8 @@ type CenteringRow = {
   sgc_grade: string;
   tag_grade: string;
   created_at: string;
-  label: string | null;
+  label: string | null; // ← add
+  image_url: string | null; // ← add
 };
 
 const rowToReport = (row: CenteringRow): CenteringReport => ({
@@ -83,8 +84,9 @@ const rowToReport = (row: CenteringRow): CenteringReport => ({
     sgc: row.sgc_grade,
     tag: row.tag_grade,
   },
+  label: row.label, // ← add
+  imageUrl: row.image_url, // ← add
   createdAt: row.created_at,
-  label: row.label,
 });
 
 export const insertCenteringReport = async (
@@ -127,19 +129,23 @@ export const insertCenteringReport = async (
       cgc_grade: input.grades.cgc,
       sgc_grade: input.grades.sgc,
       tag_grade: input.grades.tag,
-      label: input.label ?? null,
+      label: input.label ?? null, // ← fixed: was payload.label
+      image_url: input.imageUrl ?? null, // ← fixed: was payload.imageUrl
     })
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    console.error("[CenteringRepo] Insert error:", error);
+    throw error;
+  }
   return rowToReport(data as CenteringRow);
 };
 
 export const findReportById = async (
   id: string,
 ): Promise<CenteringReport | null> => {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("centering_reports")
     .select("*")
     .eq("id", id)

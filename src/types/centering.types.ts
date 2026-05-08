@@ -1,5 +1,4 @@
 export interface BorderPositions {
-  // All values normalized 0–1 (frontend sends percentages, server converts)
   outerLeft: number;
   outerRight: number;
   outerTop: number;
@@ -11,16 +10,55 @@ export interface BorderPositions {
 }
 
 export interface CenteringInput {
-  borders: BorderPositions;
-  imageWidth: number; // pixels
-  imageHeight: number; // pixels
-  dpi: number; // default 1600
-  rotation: number; // degrees, stored for reference
+  cardId?: string | null;
+  inventoryItemId?: string | null;
   side: "front" | "back";
-  cardId?: string; // pokemontcg.io card ID
-  inventoryItemId?: string;
-  /** Optional user-visible name for the report */
-  label?: string | null;
+  imageWidth: number;
+  imageHeight: number;
+  dpi: number;
+  rotation: number;
+  borders: BorderPositions;
+  label?: string | null; // ← add
+  imageUrl?: string | null; // ← add
+}
+
+export interface CenteringReport {
+  id: string;
+  userId: string;
+  cardId: string | null;
+  inventoryItemId: string | null;
+  side: "front" | "back";
+  imageWidth: number;
+  imageHeight: number;
+  dpi: number;
+  rotation: number;
+  borders: BorderPositions;
+  measurements: {
+    leftMm: number;
+    rightMm: number;
+    topMm: number;
+    bottomMm: number;
+  };
+  percentages: {
+    leftPct: number;
+    rightPct: number;
+    topPct: number;
+    bottomPct: number;
+    lrWorse: number;
+    tbWorse: number;
+    worstAxis: number;
+  };
+  truepointScore: number;
+  grades: {
+    psa: string;
+    bgs: string;
+    cgc: string;
+    sgc: string;
+    tag: string;
+  };
+  label: string | null; // ← add
+  imageUrl: string | null; // ← add
+  createdAt: string;
 }
 
 export interface BorderMeasurements {
@@ -46,23 +84,4 @@ export interface GradePredictions {
   cgc: string;
   sgc: string;
   tag: string;
-}
-
-export interface CenteringReport {
-  id: string;
-  userId: string;
-  cardId: string | null;
-  inventoryItemId: string | null;
-  side: "front" | "back";
-  imageWidth: number;
-  imageHeight: number;
-  dpi: number;
-  rotation: number;
-  borders: BorderPositions;
-  measurements: BorderMeasurements;
-  percentages: CenteringPercentages;
-  truepointScore: number;
-  grades: GradePredictions;
-  createdAt: string;
-  label: string | null;
 }
