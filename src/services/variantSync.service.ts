@@ -97,15 +97,12 @@ const makeVariant = (
 const buildVariantsFromTCGdex = (
   cardId: string,
   setId: string,
-  variants: any, // could be undefined if TCGdex set endpoint omitted it
+  variants: any,
   foil: string | undefined,
   isDualBall: boolean,
   rarity: string,
   foilPatterns: string[],
 ): VariantRow[] => {
-  // ── Safety check ──────────────────────────────────────────────────────────
-  // TCGdex /sets/{id} returns card briefs WITHOUT the variants field.
-  // In that case we fall through to rarity-based rules below.
   const hasVariantData =
     variants !== null &&
     variants !== undefined &&
@@ -132,9 +129,7 @@ const buildVariantsFromTCGdex = (
 
   if (variants.reverse) {
     const isCommonUncommon = rarity === "Common" || rarity === "Uncommon";
-
     if (isDualBall && isCommonUncommon) {
-      // Dual-ball sets: add all ball patterns instead of generic reverse holo
       foilPatterns.forEach((p) =>
         rows.push(makeVariant(cardId, setId, p, order++)),
       );
@@ -149,7 +144,6 @@ const buildVariantsFromTCGdex = (
 };
 
 // ─── Rarity-based fallback ────────────────────────────────────────────────────
-// Used when TCGdex data is missing or doesn't include variant fields
 
 const buildFallbackVariants = (
   cardId: string,
@@ -162,21 +156,28 @@ const buildFallbackVariants = (
   let order = 0;
 
   const isCommonUncommon = rarity === "Common" || rarity === "Uncommon";
-  const isRare = rarity === "Rare";
-  const isHoloRare = rarity === "Rare Holo";
-  const isHigher = !isCommonUncommon && !isRare && !isHoloRare && rarity !== "";
+  const isHigher =
+    rarity !== "" &&
+    !["Common", "Uncommon", "Rare", "Rare Holo"].includes(rarity);
 
   rows.push(makeVariant(cardId, setId, "normal", order++));
 
-  if (isHigher) return rows; // Double Rare, Ultra Rare, SIR, HR etc — Normal only
+  if (isHigher) return rows;
 
-  if (
+  const hasReverseHolo =
     setId.startsWith("sv") ||
     setId.startsWith("swsh") ||
     setId.startsWith("sm") ||
     setId.startsWith("xy") ||
-    setId.startsWith("bw")
-  ) {
+    setId.startsWith("bw") ||
+    setId.startsWith("dp") ||
+    setId.startsWith("ex") ||
+    setId.startsWith("hgss") ||
+    setId.startsWith("pl") ||
+    setId.startsWith("pop") ||
+    setId.startsWith("me");
+
+  if (hasReverseHolo) {
     if (isDualBall && isCommonUncommon) {
       foilPatterns.forEach((p) =>
         rows.push(makeVariant(cardId, setId, p, order++)),
@@ -186,12 +187,27 @@ const buildFallbackVariants = (
     }
   }
 
-  if (isHoloRare) {
+  if (rarity === "Rare Holo") {
     rows.push(makeVariant(cardId, setId, "holo", order++));
   }
 
   // Base Set era — first edition
-  if (["base1", "base2", "base3", "base4", "base5", "basep"].includes(setId)) {
+  if (
+    [
+      "base1",
+      "base2",
+      "base3",
+      "base4",
+      "base5",
+      "basep",
+      "gym1",
+      "gym2",
+      "neo1",
+      "neo2",
+      "neo3",
+      "neo4",
+    ].includes(setId)
+  ) {
     rows.push(makeVariant(cardId, setId, "first_edition", order++));
   }
 
@@ -255,18 +271,12 @@ const seedSetRules = async (setId: string): Promise<void> => {
   const isSm = setId.startsWith("sm");
   const isXy = setId.startsWith("xy");
   const isBw = setId.startsWith("bw");
+  const hasModernReverseHolo = isSv || isSwsh || isSm || isXy || isBw;
 
   const rules: { rarity: string; variants: any[] }[] = [
     { rarity: "Common", variants: cu },
     { rarity: "Uncommon", variants: cu },
-    {
-      rarity: "Rare",
-      variants: isSv
-        ? rareRev
-        : isSwsh || isSm || isXy || isBw
-          ? rareRev
-          : normalOnly,
-    },
+    { rarity: "Rare", variants: hasModernReverseHolo ? rareRev : normalOnly },
     { rarity: "Rare Holo", variants: holoRare },
     { rarity: "Double Rare", variants: normalOnly },
     { rarity: "Ultra Rare", variants: normalOnly },
@@ -290,19 +300,35 @@ const seedSetRules = async (setId: string): Promise<void> => {
   await upsertSetVariantRules(setId, rules);
 };
 
-// ─── Diagnostic: inspect what TCGdex actually returns for a set ───────────────
+// ─── Diagnostic ───────────────────────────────────────────────────────────────
 
-export const diagnoseTCGdexSet = async (
-  setId: string,
-): Promise<{
-  setId: string;
-  tcgdexCards: number;
-  sampleCard: any | null;
-  hasVariantData: boolean;
-  dbCards: number;
-  matchedCards: number;
-}> => {
-  const tcgCards = await tcgdexClient.getSetCards(setId);
+export const diagnoseTCGdexSet = async (setId: string) => {
+  // Get brief cards first (no variant data)
+  const idsToTry = [setId, ...tcgdexClient.getIdVariants(setId)];
+  let briefCards: any[] = [];
+  let resolvedId = setId;
+
+  for (const id of idsToTry) {
+    try {
+      const axios = await import("axios");
+      const res = await axios.default.get(
+        `https://api.tcgdex.net/v2/en/sets/${id}`,
+        { timeout: 10000 },
+      );
+      if (res.data?.cards?.length) {
+        briefCards = res.data.cards;
+        resolvedId = id;
+        break;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // Fetch one full card to see variant structure
+  const fullCard = briefCards[0]
+    ? await tcgdexClient.getCard(briefCards[0].id)
+    : null;
 
   const { data: dbCards } = await supabaseAdmin
     .from("cards")
@@ -310,26 +336,27 @@ export const diagnoseTCGdexSet = async (
     .eq("set_id", setId)
     .limit(5);
 
-  const sampleCard = tcgCards[0] ?? null;
-  const hasVariantData =
-    sampleCard?.variants !== undefined &&
-    typeof sampleCard.variants === "object" &&
-    ("normal" in sampleCard.variants || "reverse" in sampleCard.variants);
-
-  const tcgMap = new Map(tcgCards.map((c) => [c.id, c]));
-  const matchedCards = (dbCards ?? []).filter((c) => tcgMap.has(c.id)).length;
+  // Check ID matching using the ID map
+  const idMap = tcgdexClient.buildIdMap(briefCards);
+  const matchedCards = (dbCards ?? []).filter((c) => idMap.has(c.id)).length;
 
   return {
     setId,
-    tcgdexCards: tcgCards.length,
-    sampleCard,
-    hasVariantData,
+    resolvedTCGdexId: resolvedId,
+    tcgdexBriefCards: briefCards.length,
+    sampleBriefCard: briefCards[0] ?? null,
+    sampleFullCard: fullCard,
+    fullCardHasVariants: !!fullCard?.variants,
     dbCards: dbCards?.length ?? 0,
     matchedCards,
+    idMatchRate: `${matchedCards}/${dbCards?.length ?? 0} after ID normalization`,
+    explanation: fullCard?.variants
+      ? "✅ Full card endpoint has variant data — individual card fetching will work"
+      : "⚠️ Even full card endpoint lacks variants — rarity rules will be used",
   };
 };
 
-// ─── Core sync function for one set ──────────────────────────────────────────
+// ─── Core sync function ───────────────────────────────────────────────────────
 
 export interface SetSyncResult {
   setId: string;
@@ -361,28 +388,81 @@ export const syncVariantsForSet = async (
 
   console.log(`[VariantSync] Fetching TCGdex data for: ${setName} (${setId})`);
 
+  // getSetCards now fetches brief list first, then individual cards for variant data
   const tcgCards = await tcgdexClient.getSetCards(setId);
 
   if (!tcgCards.length) {
-    result.notes.push(
-      "TCGdex returned no cards — set ID may differ or set not yet in TCGdex",
-    );
+    result.notes.push("TCGdex returned no cards — using rarity rules");
     console.warn(
       `[VariantSync] No TCGdex data for ${setId} — using rarity rules`,
     );
-    await supabaseAdmin.from("set_variant_status").upsert(
-      {
-        set_id: setId,
-        status: "pending",
-        variant_count: 0,
-        last_updated: new Date().toISOString(),
-      },
-      { onConflict: "set_id" },
+
+    // Still process with rarity rules if we have DB cards
+    const { data: dbCards } = await supabaseAdmin
+      .from("cards")
+      .select("id, rarity")
+      .eq("set_id", setId);
+
+    if (!dbCards?.length) {
+      await supabaseAdmin.from("set_variant_status").upsert(
+        {
+          set_id: setId,
+          status: "pending",
+          variant_count: 0,
+          last_updated: new Date().toISOString(),
+        },
+        { onConflict: "set_id" },
+      );
+      return result;
+    }
+
+    // Apply rarity rules
+    const isDualBall = isDualBallEraSet(setId);
+    const foilPatterns = getDualBallPatterns(setId);
+    const allVariantRows: VariantRow[] = [];
+
+    for (const dbCard of dbCards) {
+      const rows = buildFallbackVariants(
+        dbCard.id,
+        setId,
+        dbCard.rarity ?? "",
+        isDualBall,
+        foilPatterns,
+      );
+      allVariantRows.push(...rows);
+      result.cardsProcessed++;
+      result.fallbackCards++;
+    }
+
+    await supabaseAdmin.from("card_variants").delete().eq("set_id", setId);
+    if (allVariantRows.length) {
+      await supabaseAdmin.from("card_variants").insert(
+        allVariantRows.map((r) => ({
+          card_id: r.cardId,
+          set_id: r.setId,
+          variant_type: r.variantType,
+          label: r.label,
+          color: r.color,
+          sort_order: r.sortOrder,
+        })),
+      );
+    }
+
+    result.variantsSaved = allVariantRows.length;
+    await seedSetRules(setId);
+    await setVariantReady(setId, allVariantRows.length);
+    result.status = "partial";
+
+    console.log(
+      `[VariantSync] ✓ ${setName} (rarity rules): ${result.cardsProcessed} cards → ${result.variantsSaved} variants`,
     );
     return result;
   }
 
-  // Check if TCGdex is actually returning variant data in this response
+  // Build ID map that handles sv01-001 ↔ sv1-001 normalization
+  const tcgMap = tcgdexClient.buildIdMap(tcgCards);
+
+  // Check if variant data is present
   const sampleCard = tcgCards[0];
   const tcgdexHasVariants =
     sampleCard?.variants !== undefined &&
@@ -391,14 +471,12 @@ export const syncVariantsForSet = async (
 
   if (!tcgdexHasVariants) {
     result.notes.push(
-      `TCGdex returned ${tcgCards.length} cards but WITHOUT variant data (set endpoint returns brief objects). Using rarity-based rules instead.`,
+      `TCGdex cards lack variant field after full fetch — rarity rules used`,
     );
     console.warn(
       `[VariantSync] ⚠️  ${setName}: TCGdex cards lack variant field — falling back to rarity rules`,
     );
   }
-
-  const tcgMap = new Map(tcgCards.map((c) => [c.id, c]));
 
   const { data: dbCards, error } = await supabaseAdmin
     .from("cards")
@@ -417,12 +495,12 @@ export const syncVariantsForSet = async (
 
   for (const dbCard of dbCards) {
     result.cardsProcessed++;
-    const tcgCard = tcgMap.get(dbCard.id);
+    const tcgCard = tcgMap.get(dbCard.id); // works for both sv1-001 and sv01-001
 
     const variantRows = buildVariantsFromTCGdex(
       dbCard.id,
       setId,
-      tcgCard?.variants, // safe — undefined handled inside
+      tcgCard?.variants,
       tcgCard?.foil,
       isDualBall,
       dbCard.rarity ?? "",
@@ -431,7 +509,6 @@ export const syncVariantsForSet = async (
 
     allVariantRows.push(...variantRows);
 
-    // Track whether TCGdex data was actually used or rarity fallback
     if (tcgCard && tcgdexHasVariants && tcgCard.variants) {
       result.tcgdexMatchedCards++;
     } else {
@@ -525,7 +602,6 @@ export const syncAllVariants = async (): Promise<AllSyncResult> => {
 
   for (const set of sets) {
     const result = await syncVariantsForSet(set.id, set.name);
-
     if (result.status === "synced") summary.synced++;
     else if (result.status === "partial") {
       summary.partial++;
@@ -544,22 +620,12 @@ export const syncAllVariants = async (): Promise<AllSyncResult> => {
   console.log(
     `[VariantSync] Complete — synced: ${summary.synced}, partial: ${summary.partial}, not_found: ${summary.notFound}, errors: ${summary.errors}`,
   );
-
-  if (summary.needsAttention.length > 0) {
-    console.warn("\n⚠️  SETS NEEDING ADMIN ATTENTION:");
-    for (const s of summary.needsAttention) {
-      console.warn(`  • ${s.setName} (${s.setId}): ${s.status}`);
-      for (const note of s.notes) console.warn(`    → ${note}`);
-    }
-  }
-
   return summary;
 };
 
 // ─── Startup check ────────────────────────────────────────────────────────────
 
 export const checkForNewSetsWithoutVariants = async (): Promise<string[]> => {
-  // Fallback — manual query
   const { data: allSets } = await supabaseAdmin.from("sets").select("id, name");
   const { data: readySets } = await supabaseAdmin
     .from("set_variant_status")
@@ -575,9 +641,7 @@ export const checkForNewSetsWithoutVariants = async (): Promise<string[]> => {
       .from("cards")
       .select("id", { count: "exact", head: true })
       .eq("set_id", set.id);
-
     if ((count ?? 0) > 0) setsWithCards.push(set.name);
   }
-
   return setsWithCards;
 };

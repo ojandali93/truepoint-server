@@ -255,7 +255,7 @@ router.get(
       res.json({
         data: {
           ...diagnosis,
-          explanation: diagnosis.hasVariantData
+          explanation: diagnosis.fullCardHasVariants
             ? "✅ TCGdex is returning variant data for this set"
             : "⚠️ TCGdex cards lack variant field — rarity rules will be used instead",
           idMatchRate:
