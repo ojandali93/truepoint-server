@@ -8,6 +8,11 @@ import {
   syncVariantsForSet,
   checkForNewSetsWithoutVariants,
 } from "../services/variantSync.service";
+import {
+  backfillAllCards,
+  syncSingleSet,
+  getSyncStatus,
+} from "../services/cardSync.service";
 import { supabaseAdmin } from "../lib/supabase";
 
 const router = Router();
@@ -23,7 +28,92 @@ const requireSyncKey = (req: Request, res: Response, next: Function): void => {
   next();
 };
 
-// ─── Card prices ─────────────────────────────────────────────────────────────
+// ─── Card sync ────────────────────────────────────────────────────────────────
+
+// POST /sync/cards/backfill
+// Re-syncs any sets that are missing cards (incomplete syncs).
+// Safe to run at any time — complete sets are skipped automatically.
+router.post(
+  "/cards/backfill",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        message:
+          "Card backfill started — incomplete sets will be re-synced (this may take several minutes)",
+        timestamp: new Date().toISOString(),
+      });
+      backfillAllCards()
+        .then((result) => {
+          console.log(
+            `[SyncRoute] Card backfill complete: ${result.totalCards} cards, ` +
+              `${result.completedSets} sets completed, ${result.failedSets.length} failed`,
+          );
+        })
+        .catch((err) =>
+          console.error("[SyncRoute] Card backfill failed:", err?.message),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start card backfill" });
+    }
+  },
+);
+
+// POST /sync/cards/:setId
+// Force re-sync a specific set regardless of current card count.
+router.post(
+  "/cards/:setId",
+  requireSyncKey,
+  async (req: Request, res: Response) => {
+    try {
+      const { setId } = req.params;
+      const { data: set } = await supabaseAdmin
+        .from("sets")
+        .select("name")
+        .eq("id", setId)
+        .single();
+
+      if (!set) {
+        res.status(404).json({ error: `Set ${setId} not found` });
+        return;
+      }
+
+      res.json({
+        message: `Card sync started for ${set.name} (${setId})`,
+        setId,
+      });
+      syncSingleSet(setId)
+        .then((count) =>
+          console.log(`[SyncRoute] ✓ ${set.name}: ${count} cards synced`),
+        )
+        .catch((err) =>
+          console.error(
+            `[SyncRoute] Card sync failed for ${setId}:`,
+            err?.message,
+          ),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start card sync" });
+    }
+  },
+);
+
+// GET /sync/cards/status
+// Shows which sets have incomplete card data.
+router.get(
+  "/cards/status",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      const status = await getSyncStatus();
+      res.json({ data: status });
+    } catch {
+      res.status(500).json({ error: "Failed to get card sync status" });
+    }
+  },
+);
+
+// ─── Card prices ──────────────────────────────────────────────────────────────
 
 router.post("/prices", requireSyncKey, async (_req: Request, res: Response) => {
   try {
@@ -112,9 +202,7 @@ router.post(
 );
 
 // ─── Variant sync ─────────────────────────────────────────────────────────────
-// Pulls per-card variant data from TCGdex for all sets
 
-// POST /sync/variants — sync all sets
 router.post(
   "/variants",
   requireSyncKey,
@@ -146,7 +234,6 @@ router.post(
   },
 );
 
-// POST /sync/variants/:setId — sync a specific set
 router.post(
   "/variants/:setId",
   requireSyncKey,
@@ -190,7 +277,6 @@ router.post(
   },
 );
 
-// GET /sync/variants/status — check which sets are missing variants
 router.get(
   "/variants/status",
   requireSyncKey,
@@ -233,10 +319,10 @@ router.get(
             pending: pending.length,
           },
           pendingSets: pending,
-          readySets: ready.slice(0, 20), // most recently updated
+          readySets: ready.slice(0, 20),
         },
       });
-    } catch (err) {
+    } catch {
       res.status(500).json({ error: "Failed to get variant status" });
     }
   },
@@ -264,7 +350,7 @@ router.get(
               : "No DB cards found for this set",
         },
       });
-    } catch (err) {
+    } catch {
       res.status(500).json({ error: "Diagnosis failed" });
     }
   },
