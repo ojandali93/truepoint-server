@@ -38,6 +38,31 @@ const requireSyncKey = (req: Request, res: Response, next: Function): void => {
 // Re-syncs any sets that are missing cards (incomplete syncs).
 // Safe to run at any time — complete sets are skipped automatically.
 router.post(
+  "/cards/fill-all",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        message: "TCGdex card fill started for all incomplete sets",
+        timestamp: new Date().toISOString(),
+      });
+      fillAllSetsFromTCGdex()
+        .then((result) => {
+          console.log(
+            `[SyncRoute] TCGdex fill complete: ${result.filled} sets filled, ` +
+              `${result.alreadyComplete} already complete`,
+          );
+        })
+        .catch((err) =>
+          console.error("[SyncRoute] TCGdex fill failed:", err?.message),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start TCGdex fill" });
+    }
+  },
+);
+
+router.post(
   "/cards/backfill",
   requireSyncKey,
   async (_req: Request, res: Response) => {
@@ -395,30 +420,6 @@ router.get("/status", requireSyncKey, async (_req: Request, res: Response) => {
 
 // POST /sync/cards/fill-all
 // Fills missing cards for ALL sets using TCGdex
-router.post(
-  "/cards/fill-all",
-  requireSyncKey,
-  async (_req: Request, res: Response) => {
-    try {
-      res.json({
-        message: "TCGdex card fill started for all incomplete sets",
-        timestamp: new Date().toISOString(),
-      });
-      fillAllSetsFromTCGdex()
-        .then((result) => {
-          console.log(
-            `[SyncRoute] TCGdex fill complete: ${result.filled} sets filled, ` +
-              `${result.alreadyComplete} already complete`,
-          );
-        })
-        .catch((err) =>
-          console.error("[SyncRoute] TCGdex fill failed:", err?.message),
-        );
-    } catch {
-      res.status(500).json({ error: "Failed to start TCGdex fill" });
-    }
-  },
-);
 
 router.post(
   "/cards/fill/:setId",
