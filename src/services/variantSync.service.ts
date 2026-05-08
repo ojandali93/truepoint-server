@@ -1,14 +1,14 @@
 // src/services/variantSync.service.ts
 import { supabaseAdmin } from "../lib/supabase";
-import { tcgdexClient, TCGdexVariants } from "../lib/tcgdexClient";
+import { tcgdexClient } from "../lib/tcgdexClient";
 import {
   setVariantReady,
   upsertSetVariantRules,
 } from "../repositories/variant.repository";
 
-// ─── Variant color palette ─────────────────────────────────────────────────
+// ─── Variant colour/label palette ─────────────────────────────────────────────
 
-const VARIANT_COLORS = {
+const VARIANT_COLORS: Record<string, string> = {
   normal: "#6B7280",
   reverse_holo: "#A78BFA",
   holo: "#F59E0B",
@@ -50,7 +50,6 @@ const VARIANT_LABELS: Record<string, string> = {
   duskball_holo: "Dusk Ball Holo",
 };
 
-// Map TCGdex foil string → our variant type key
 const FOIL_TO_VARIANT: Record<string, string> = {
   pokeball: "pokeball_holo",
   masterball: "masterball_holo",
@@ -66,10 +65,9 @@ const FOIL_TO_VARIANT: Record<string, string> = {
   friendball: "friendball_holo",
   quickball: "quickball_holo",
   duskball: "duskball_holo",
-  "team-rocket": "reverse_holo", // team rocket R pattern is a reverse holo
 };
 
-// ─── Convert TCGdex variants to our format ─────────────────────────────────
+// ─── Variant row type ─────────────────────────────────────────────────────────
 
 interface VariantRow {
   cardId: string;
@@ -80,51 +78,258 @@ interface VariantRow {
   sortOrder: number;
 }
 
-const buildVariantRows = (
+const makeVariant = (
   cardId: string,
   setId: string,
-  tcgVariants: TCGdexVariants,
-  foil?: string,
+  type: string,
+  order: number,
+): VariantRow => ({
+  cardId,
+  setId,
+  variantType: type,
+  label: VARIANT_LABELS[type] ?? type,
+  color: VARIANT_COLORS[type] ?? "#6B7280",
+  sortOrder: order,
+});
+
+// ─── Build variants from TCGdex card data ────────────────────────────────────
+
+const buildVariantsFromTCGdex = (
+  cardId: string,
+  setId: string,
+  variants: any, // could be undefined if TCGdex set endpoint omitted it
+  foil: string | undefined,
+  isDualBall: boolean,
+  rarity: string,
+  foilPatterns: string[],
 ): VariantRow[] => {
+  // ── Safety check ──────────────────────────────────────────────────────────
+  // TCGdex /sets/{id} returns card briefs WITHOUT the variants field.
+  // In that case we fall through to rarity-based rules below.
+  const hasVariantData =
+    variants !== null &&
+    variants !== undefined &&
+    typeof variants === "object" &&
+    ("normal" in variants || "reverse" in variants || "holo" in variants);
+
+  if (!hasVariantData) {
+    return buildFallbackVariants(
+      cardId,
+      setId,
+      rarity,
+      isDualBall,
+      foilPatterns,
+    );
+  }
+
   const rows: VariantRow[] = [];
   let order = 0;
 
-  const add = (type: string) => {
-    const color =
-      VARIANT_COLORS[type as keyof typeof VARIANT_COLORS] ?? "#6B7280";
-    const label = VARIANT_LABELS[type] ?? type;
-    rows.push({
-      cardId,
-      setId,
-      variantType: type,
-      label,
-      color,
-      sortOrder: order++,
-    });
-  };
+  if (variants.normal) rows.push(makeVariant(cardId, setId, "normal", order++));
+  if (variants.firstEdition)
+    rows.push(makeVariant(cardId, setId, "first_edition", order++));
+  if (variants.holo) rows.push(makeVariant(cardId, setId, "holo", order++));
 
-  // Standard variants from TCGdex boolean flags
-  if (tcgVariants.normal) add("normal");
-  if (tcgVariants.firstEdition) add("first_edition");
-  if (tcgVariants.holo) add("holo");
-  if (tcgVariants.reverse) {
-    // If there's a specific foil pattern for the reverse, add that instead
-    if (foil && FOIL_TO_VARIANT[foil]) {
-      add(FOIL_TO_VARIANT[foil]);
+  if (variants.reverse) {
+    const isCommonUncommon = rarity === "Common" || rarity === "Uncommon";
+
+    if (isDualBall && isCommonUncommon) {
+      // Dual-ball sets: add all ball patterns instead of generic reverse holo
+      foilPatterns.forEach((p) =>
+        rows.push(makeVariant(cardId, setId, p, order++)),
+      );
+    } else if (foil && FOIL_TO_VARIANT[foil]) {
+      rows.push(makeVariant(cardId, setId, FOIL_TO_VARIANT[foil], order++));
     } else {
-      add("reverse_holo");
+      rows.push(makeVariant(cardId, setId, "reverse_holo", order++));
     }
   }
-
-  // Some SV-era sets have BOTH pokeball and masterball reverses
-  // TCGdex may only report one foil type per card — we detect this
-  // by checking if the set has the pokeball/masterball dual-pattern
-  // This is handled at the set level via set rules (see seedSetRules)
 
   return rows;
 };
 
-// ─── Sync a single set ─────────────────────────────────────────────────────
+// ─── Rarity-based fallback ────────────────────────────────────────────────────
+// Used when TCGdex data is missing or doesn't include variant fields
+
+const buildFallbackVariants = (
+  cardId: string,
+  setId: string,
+  rarity: string,
+  isDualBall: boolean,
+  foilPatterns: string[],
+): VariantRow[] => {
+  const rows: VariantRow[] = [];
+  let order = 0;
+
+  const isCommonUncommon = rarity === "Common" || rarity === "Uncommon";
+  const isRare = rarity === "Rare";
+  const isHoloRare = rarity === "Rare Holo";
+  const isHigher = !isCommonUncommon && !isRare && !isHoloRare && rarity !== "";
+
+  rows.push(makeVariant(cardId, setId, "normal", order++));
+
+  if (isHigher) return rows; // Double Rare, Ultra Rare, SIR, HR etc — Normal only
+
+  if (
+    setId.startsWith("sv") ||
+    setId.startsWith("swsh") ||
+    setId.startsWith("sm") ||
+    setId.startsWith("xy") ||
+    setId.startsWith("bw")
+  ) {
+    if (isDualBall && isCommonUncommon) {
+      foilPatterns.forEach((p) =>
+        rows.push(makeVariant(cardId, setId, p, order++)),
+      );
+    } else {
+      rows.push(makeVariant(cardId, setId, "reverse_holo", order++));
+    }
+  }
+
+  if (isHoloRare) {
+    rows.push(makeVariant(cardId, setId, "holo", order++));
+  }
+
+  // Base Set era — first edition
+  if (["base1", "base2", "base3", "base4", "base5", "basep"].includes(setId)) {
+    rows.push(makeVariant(cardId, setId, "first_edition", order++));
+  }
+
+  return rows;
+};
+
+// ─── Dual-ball set detection ──────────────────────────────────────────────────
+
+const DUAL_BALL_SETS = new Set(["sv8pt5", "sv9", "sv9pt5"]);
+const POKEBALL_ONLY_SETS = new Set(["sv3pt5", "sv4pt5"]);
+
+const isDualBallEraSet = (setId: string) =>
+  DUAL_BALL_SETS.has(setId) || POKEBALL_ONLY_SETS.has(setId);
+
+const getDualBallPatterns = (setId: string): string[] => {
+  if (DUAL_BALL_SETS.has(setId))
+    return ["reverse_holo", "pokeball_holo", "masterball_holo"];
+  if (POKEBALL_ONLY_SETS.has(setId)) return ["reverse_holo", "pokeball_holo"];
+  return ["reverse_holo"];
+};
+
+// ─── Set-level rules seeding ──────────────────────────────────────────────────
+
+const seedSetRules = async (setId: string): Promise<void> => {
+  const foilPatterns = getDualBallPatterns(setId);
+
+  const cu = [
+    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
+    ...foilPatterns.map((p, i) => ({
+      type: p,
+      label: VARIANT_LABELS[p],
+      color: VARIANT_COLORS[p],
+      sort_order: i + 1,
+    })),
+  ];
+  const rareRev = [
+    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
+    {
+      type: "reverse_holo",
+      label: "Reverse Holo",
+      color: "#A78BFA",
+      sort_order: 1,
+    },
+  ];
+  const holoRare = [
+    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
+    { type: "holo", label: "Holofoil", color: "#F59E0B", sort_order: 1 },
+    {
+      type: "reverse_holo",
+      label: "Reverse Holo",
+      color: "#A78BFA",
+      sort_order: 2,
+    },
+  ];
+  const normalOnly = [
+    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
+  ];
+
+  const isSv = setId.startsWith("sv");
+  const isSwsh = setId.startsWith("swsh");
+  const isSm = setId.startsWith("sm");
+  const isXy = setId.startsWith("xy");
+  const isBw = setId.startsWith("bw");
+
+  const rules: { rarity: string; variants: any[] }[] = [
+    { rarity: "Common", variants: cu },
+    { rarity: "Uncommon", variants: cu },
+    {
+      rarity: "Rare",
+      variants: isSv
+        ? rareRev
+        : isSwsh || isSm || isXy || isBw
+          ? rareRev
+          : normalOnly,
+    },
+    { rarity: "Rare Holo", variants: holoRare },
+    { rarity: "Double Rare", variants: normalOnly },
+    { rarity: "Ultra Rare", variants: normalOnly },
+    { rarity: "Illustration Rare", variants: normalOnly },
+    { rarity: "Special Illustration Rare", variants: normalOnly },
+    { rarity: "Hyper Rare", variants: normalOnly },
+    { rarity: "Promo", variants: normalOnly },
+  ];
+
+  if (isSwsh) {
+    rules.push(
+      { rarity: "Rare Holo V", variants: normalOnly },
+      { rarity: "Rare Holo VMAX", variants: normalOnly },
+      { rarity: "Rare Holo VSTAR", variants: normalOnly },
+      { rarity: "Rare Ultra", variants: normalOnly },
+      { rarity: "Rare Rainbow", variants: normalOnly },
+      { rarity: "Rare Secret", variants: normalOnly },
+    );
+  }
+
+  await upsertSetVariantRules(setId, rules);
+};
+
+// ─── Diagnostic: inspect what TCGdex actually returns for a set ───────────────
+
+export const diagnoseTCGdexSet = async (
+  setId: string,
+): Promise<{
+  setId: string;
+  tcgdexCards: number;
+  sampleCard: any | null;
+  hasVariantData: boolean;
+  dbCards: number;
+  matchedCards: number;
+}> => {
+  const tcgCards = await tcgdexClient.getSetCards(setId);
+
+  const { data: dbCards } = await supabaseAdmin
+    .from("cards")
+    .select("id, rarity")
+    .eq("set_id", setId)
+    .limit(5);
+
+  const sampleCard = tcgCards[0] ?? null;
+  const hasVariantData =
+    sampleCard?.variants !== undefined &&
+    typeof sampleCard.variants === "object" &&
+    ("normal" in sampleCard.variants || "reverse" in sampleCard.variants);
+
+  const tcgMap = new Map(tcgCards.map((c) => [c.id, c]));
+  const matchedCards = (dbCards ?? []).filter((c) => tcgMap.has(c.id)).length;
+
+  return {
+    setId,
+    tcgdexCards: tcgCards.length,
+    sampleCard,
+    hasVariantData,
+    dbCards: dbCards?.length ?? 0,
+    matchedCards,
+  };
+};
+
+// ─── Core sync function for one set ──────────────────────────────────────────
 
 export interface SetSyncResult {
   setId: string;
@@ -132,6 +337,8 @@ export interface SetSyncResult {
   status: "synced" | "partial" | "not_found" | "error";
   cardsProcessed: number;
   variantsSaved: number;
+  tcgdexMatchedCards: number;
+  fallbackCards: number;
   missingFoilData: boolean;
   notes: string[];
 }
@@ -146,24 +353,23 @@ export const syncVariantsForSet = async (
     status: "not_found",
     cardsProcessed: 0,
     variantsSaved: 0,
+    tcgdexMatchedCards: 0,
+    fallbackCards: 0,
     missingFoilData: false,
     notes: [],
   };
 
   console.log(`[VariantSync] Fetching TCGdex data for: ${setName} (${setId})`);
 
-  // Fetch cards from TCGdex
   const tcgCards = await tcgdexClient.getSetCards(setId);
 
   if (!tcgCards.length) {
     result.notes.push(
-      `TCGdex returned no cards — set ID may differ or set not yet in TCGdex`,
+      "TCGdex returned no cards — set ID may differ or set not yet in TCGdex",
     );
     console.warn(
-      `[VariantSync] No TCGdex data for ${setId} — manual entry needed`,
+      `[VariantSync] No TCGdex data for ${setId} — using rarity rules`,
     );
-
-    // Still mark as pending so admin knows to fill in
     await supabaseAdmin.from("set_variant_status").upsert(
       {
         set_id: setId,
@@ -176,10 +382,24 @@ export const syncVariantsForSet = async (
     return result;
   }
 
-  // Build a map of TCGdex card data keyed by card ID
+  // Check if TCGdex is actually returning variant data in this response
+  const sampleCard = tcgCards[0];
+  const tcgdexHasVariants =
+    sampleCard?.variants !== undefined &&
+    typeof sampleCard.variants === "object" &&
+    "normal" in sampleCard.variants;
+
+  if (!tcgdexHasVariants) {
+    result.notes.push(
+      `TCGdex returned ${tcgCards.length} cards but WITHOUT variant data (set endpoint returns brief objects). Using rarity-based rules instead.`,
+    );
+    console.warn(
+      `[VariantSync] ⚠️  ${setName}: TCGdex cards lack variant field — falling back to rarity rules`,
+    );
+  }
+
   const tcgMap = new Map(tcgCards.map((c) => [c.id, c]));
 
-  // Get our cards for this set from the DB
   const { data: dbCards, error } = await supabaseAdmin
     .from("cards")
     .select("id, rarity")
@@ -191,72 +411,37 @@ export const syncVariantsForSet = async (
     return result;
   }
 
-  // Detect if this is an SV-era set with dual ball patterns
-  // (Pokéball AND Master Ball reverses for the same card)
-  const isDualBallSet = isDualBallEraSet(setId);
+  const isDualBall = isDualBallEraSet(setId);
   const foilPatterns = getDualBallPatterns(setId);
-
-  // Build variant rows
   const allVariantRows: VariantRow[] = [];
-  const cardsWithFoilData: string[] = [];
-  const cardsWithoutFoilData: string[] = [];
 
   for (const dbCard of dbCards) {
-    const tcgCard = tcgMap.get(dbCard.id);
     result.cardsProcessed++;
+    const tcgCard = tcgMap.get(dbCard.id);
 
-    if (!tcgCard) {
-      // Card not in TCGdex — use rarity-based rules as fallback
-      const fallbackRows = buildFallbackVariants(
-        dbCard.id,
-        setId,
-        dbCard.rarity ?? "",
-        isDualBallSet,
-        foilPatterns,
-      );
-      allVariantRows.push(...fallbackRows);
-      continue;
-    }
-
-    // Get variant rows from TCGdex data
-    const variantRows = buildVariantRows(
+    const variantRows = buildVariantsFromTCGdex(
       dbCard.id,
       setId,
-      tcgCard.variants,
-      tcgCard.foil,
+      tcgCard?.variants, // safe — undefined handled inside
+      tcgCard?.foil,
+      isDualBall,
+      dbCard.rarity ?? "",
+      foilPatterns,
     );
 
-    // For dual-ball sets: TCGdex may only track one ball pattern
-    // We need to add both pokeball AND masterball for C/U cards
-    if (isDualBallSet && tcgCard.variants.reverse) {
-      const expandedRows = expandDualBallVariants(
-        dbCard.id,
-        setId,
-        variantRows,
-        dbCard.rarity ?? "",
-        foilPatterns,
-      );
-      allVariantRows.push(...expandedRows);
-      if (tcgCard.foil) cardsWithFoilData.push(dbCard.id);
+    allVariantRows.push(...variantRows);
+
+    // Track whether TCGdex data was actually used or rarity fallback
+    if (tcgCard && tcgdexHasVariants && tcgCard.variants) {
+      result.tcgdexMatchedCards++;
     } else {
-      allVariantRows.push(...variantRows);
-      if (tcgCard.foil) cardsWithFoilData.push(dbCard.id);
-      else if (tcgCard.variants.reverse) cardsWithoutFoilData.push(dbCard.id);
+      result.fallbackCards++;
     }
   }
 
-  // Check if foil data is incomplete
-  if (cardsWithoutFoilData.length > 0 && !isDualBallSet) {
-    result.missingFoilData = true;
-    result.notes.push(
-      `${cardsWithoutFoilData.length} cards have reverse holos but no foil pattern specified`,
-    );
-  }
-
-  // Delete existing variants for this set and reinsert
+  // Delete and reinsert
   await supabaseAdmin.from("card_variants").delete().eq("set_id", setId);
 
-  // Batch insert in chunks of 500
   const CHUNK = 500;
   for (let i = 0; i < allVariantRows.length; i += CHUNK) {
     const chunk = allVariantRows.slice(i, i + CHUNK);
@@ -278,228 +463,24 @@ export const syncVariantsForSet = async (
         insertErr.message,
       );
       result.status = "error";
+      result.notes.push(`Insert error: ${insertErr.message}`);
       return result;
     }
   }
 
   result.variantsSaved = allVariantRows.length;
-
-  // Seed set-level rules
   await seedSetRules(setId);
-
-  // Mark set as ready
   await setVariantReady(setId, allVariantRows.length);
 
-  result.status = result.missingFoilData ? "partial" : "synced";
+  result.status = tcgdexHasVariants ? "synced" : "partial";
 
+  const avg = result.variantsSaved / (result.cardsProcessed || 1);
   console.log(
     `[VariantSync] ✓ ${setName}: ${result.cardsProcessed} cards → ${result.variantsSaved} variants` +
-      (result.missingFoilData ? " (partial foil data)" : ""),
+      ` (avg ${avg.toFixed(1)}/card, ${result.tcgdexMatchedCards} from TCGdex, ${result.fallbackCards} from rules)`,
   );
 
   return result;
-};
-
-// ─── Detect SV dual-ball sets ────────────────────────────────────────────────
-
-// Sets where common/uncommon cards have BOTH pokeball AND masterball reverses
-// Started with sv8pt5 (Prismatic Evolutions) then continued
-const DUAL_BALL_SETS = new Set([
-  "sv8pt5", // Prismatic Evolutions
-  "sv9", // Destined Rivals (based on screenshots showing pokeball/masterball)
-  "sv9pt5", // Ascended Heroes (confirmed - loveball/friendball/quickball/duskball per card)
-]);
-
-// Sets with single special ball reverse (pokeball only, not masterball)
-const POKEBALL_ONLY_SETS = new Set([
-  "sv3pt5", // 151 — has Master Ball pattern
-  "sv4pt5", // Paldean Fates — has special reverse patterns
-]);
-
-const isDualBallEraSet = (setId: string): boolean => {
-  return DUAL_BALL_SETS.has(setId) || POKEBALL_ONLY_SETS.has(setId);
-};
-
-// Get the specific foil patterns for a set
-const getDualBallPatterns = (setId: string): string[] => {
-  if (DUAL_BALL_SETS.has(setId)) {
-    return ["reverse_holo", "pokeball_holo", "masterball_holo"];
-  }
-  if (POKEBALL_ONLY_SETS.has(setId)) {
-    return ["reverse_holo", "pokeball_holo"];
-  }
-  // Default SV era (sv1-sv8): normal reverse holo
-  if (setId.startsWith("sv")) {
-    return ["reverse_holo"];
-  }
-  // SWSH era: normal reverse holo
-  return ["reverse_holo"];
-};
-
-// Expand single reverse holo into dual ball variants for applicable cards
-const expandDualBallVariants = (
-  cardId: string,
-  setId: string,
-  existingRows: VariantRow[],
-  rarity: string,
-  foilPatterns: string[],
-): VariantRow[] => {
-  // Only C/U cards get dual ball treatment
-  const isCommonUncommon = rarity === "Common" || rarity === "Uncommon";
-
-  if (!isCommonUncommon || foilPatterns.length <= 1) {
-    return existingRows;
-  }
-
-  // Remove the existing reverse_holo entry and replace with all ball patterns
-  const withoutReverse = existingRows.filter(
-    (r) =>
-      r.variantType !== "reverse_holo" &&
-      r.variantType !== "pokeball_holo" &&
-      r.variantType !== "masterball_holo",
-  );
-
-  const ballRows: VariantRow[] = foilPatterns.map((pattern, i) => ({
-    cardId,
-    setId,
-    variantType: pattern,
-    label: VARIANT_LABELS[pattern] ?? pattern,
-    color: VARIANT_COLORS[pattern as keyof typeof VARIANT_COLORS] ?? "#6B7280",
-    sortOrder: withoutReverse.length + i,
-  }));
-
-  return [...withoutReverse, ...ballRows];
-};
-
-// Fallback variants when card not in TCGdex — use rarity rules
-const buildFallbackVariants = (
-  cardId: string,
-  setId: string,
-  rarity: string,
-  isDualBall: boolean,
-  foilPatterns: string[],
-): VariantRow[] => {
-  const rows: VariantRow[] = [];
-  let order = 0;
-  const add = (type: string) => {
-    rows.push({
-      cardId,
-      setId,
-      variantType: type,
-      label: VARIANT_LABELS[type] ?? type,
-      color: VARIANT_COLORS[type as keyof typeof VARIANT_COLORS] ?? "#6B7280",
-      sortOrder: order++,
-    });
-  };
-
-  const isCommonUncommon = rarity === "Common" || rarity === "Uncommon";
-  const isRare = rarity === "Rare";
-  const isHigherRarity = !isCommonUncommon && !isRare;
-
-  add("normal");
-
-  if (!isHigherRarity) {
-    if (isDualBall && isCommonUncommon) {
-      foilPatterns.forEach(add);
-    } else if (setId.startsWith("sv") || setId.startsWith("swsh")) {
-      add("reverse_holo");
-    }
-  }
-
-  if (
-    rarity === "Rare Holo" ||
-    (rarity === "Rare" &&
-      (setId.startsWith("swsh") ||
-        setId.startsWith("xy") ||
-        setId.startsWith("xy")))
-  ) {
-    add("holo");
-  }
-
-  return rows;
-};
-
-// ─── Seed set-level rules ────────────────────────────────────────────────────
-
-const seedSetRules = async (setId: string): Promise<void> => {
-  const foilPatterns = getDualBallPatterns(setId);
-
-  const cuVariants = [
-    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
-    ...foilPatterns.map((p, i) => ({
-      type: p,
-      label: VARIANT_LABELS[p],
-      color: VARIANT_COLORS[p as keyof typeof VARIANT_COLORS] ?? "#6B7280",
-      sort_order: i + 1,
-    })),
-  ];
-
-  const rareVariants = [
-    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
-    {
-      type: "reverse_holo",
-      label: "Reverse Holo",
-      color: "#A78BFA",
-      sort_order: 1,
-    },
-  ];
-
-  const normalOnly = [
-    { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
-  ];
-
-  const isSvEra = setId.startsWith("sv");
-  const isSwshEra = setId.startsWith("swsh");
-
-  const rules: { rarity: string; variants: any[] }[] = [
-    { rarity: "Common", variants: cuVariants },
-    { rarity: "Uncommon", variants: cuVariants },
-    {
-      rarity: "Rare",
-      variants: isSvEra
-        ? rareVariants
-        : [
-            ...rareVariants,
-            {
-              type: "holo",
-              label: "Holofoil",
-              color: "#F59E0B",
-              sort_order: 2,
-            },
-          ],
-    },
-    {
-      rarity: "Rare Holo",
-      variants: [
-        { type: "normal", label: "Normal", color: "#6B7280", sort_order: 0 },
-        { type: "holo", label: "Holofoil", color: "#F59E0B", sort_order: 1 },
-        {
-          type: "reverse_holo",
-          label: "Reverse Holo",
-          color: "#A78BFA",
-          sort_order: 2,
-        },
-      ],
-    },
-    { rarity: "Double Rare", variants: normalOnly },
-    { rarity: "Ultra Rare", variants: normalOnly },
-    { rarity: "Illustration Rare", variants: normalOnly },
-    { rarity: "Special Illustration Rare", variants: normalOnly },
-    { rarity: "Hyper Rare", variants: normalOnly },
-    { rarity: "Promo", variants: normalOnly },
-  ];
-
-  if (isSwshEra) {
-    rules.push(
-      { rarity: "Rare Holo V", variants: normalOnly },
-      { rarity: "Rare Holo VMAX", variants: normalOnly },
-      { rarity: "Rare Holo VSTAR", variants: normalOnly },
-      { rarity: "Rare Rainbow", variants: normalOnly },
-      { rarity: "Rare Ultra", variants: normalOnly },
-    );
-  }
-
-  await upsertSetVariantRules(setId, rules);
 };
 
 // ─── Sync all sets ────────────────────────────────────────────────────────────
@@ -533,7 +514,6 @@ export const syncAllVariants = async (): Promise<AllSyncResult> => {
     };
   }
 
-  const results: SetSyncResult[] = [];
   const summary: AllSyncResult = {
     total: sets.length,
     synced: 0,
@@ -545,7 +525,6 @@ export const syncAllVariants = async (): Promise<AllSyncResult> => {
 
   for (const set of sets) {
     const result = await syncVariantsForSet(set.id, set.name);
-    results.push(result);
 
     if (result.status === "synced") summary.synced++;
     else if (result.status === "partial") {
@@ -559,11 +538,12 @@ export const syncAllVariants = async (): Promise<AllSyncResult> => {
       summary.needsAttention.push(result);
     }
 
-    // Polite delay between sets
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 300));
   }
 
-  console.log(`[VariantSync] Complete:`, summary);
+  console.log(
+    `[VariantSync] Complete — synced: ${summary.synced}, partial: ${summary.partial}, not_found: ${summary.notFound}, errors: ${summary.errors}`,
+  );
 
   if (summary.needsAttention.length > 0) {
     console.warn("\n⚠️  SETS NEEDING ADMIN ATTENTION:");
@@ -576,35 +556,27 @@ export const syncAllVariants = async (): Promise<AllSyncResult> => {
   return summary;
 };
 
-// ─── Check for new sets without variants ─────────────────────────────────────
-// Called on server startup — logs any sets that have cards but no variant data
+// ─── Startup check ────────────────────────────────────────────────────────────
 
 export const checkForNewSetsWithoutVariants = async (): Promise<string[]> => {
-  const { data: setsWithoutVariants } = await supabaseAdmin
-    .from("sets")
-    .select("id, name")
-    .not(
-      "id",
-      "in",
-      `(select set_id from set_variant_status where status = 'ready')`,
-    );
+  // Fallback — manual query
+  const { data: allSets } = await supabaseAdmin.from("sets").select("id, name");
+  const { data: readySets } = await supabaseAdmin
+    .from("set_variant_status")
+    .select("set_id")
+    .eq("status", "ready");
 
-  if (!setsWithoutVariants?.length) return [];
+  const readyIds = new Set((readySets ?? []).map((r) => r.set_id));
+  const pending = (allSets ?? []).filter((s) => !readyIds.has(s.id));
 
-  // Filter to only sets that actually have cards (ignore empty sets)
   const setsWithCards: string[] = [];
-  for (const set of setsWithoutVariants) {
+  for (const set of pending) {
     const { count } = await supabaseAdmin
       .from("cards")
       .select("id", { count: "exact", head: true })
       .eq("set_id", set.id);
 
-    if ((count ?? 0) > 0) {
-      setsWithCards.push(set.name);
-      console.warn(
-        `[VariantSync] ⚠️  NEW SET WITHOUT VARIANTS: ${set.name} (${set.id}) — admin action needed`,
-      );
-    }
+    if ((count ?? 0) > 0) setsWithCards.push(set.name);
   }
 
   return setsWithCards;

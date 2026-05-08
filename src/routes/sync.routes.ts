@@ -242,6 +242,34 @@ router.get(
   },
 );
 
+router.get(
+  "/variants/diagnose/:setId",
+  requireSyncKey,
+  async (req: Request, res: Response) => {
+    try {
+      const { setId } = req.params;
+      const { diagnoseTCGdexSet } =
+        await import("../services/variantSync.service");
+      const diagnosis = await diagnoseTCGdexSet(setId);
+
+      res.json({
+        data: {
+          ...diagnosis,
+          explanation: diagnosis.hasVariantData
+            ? "✅ TCGdex is returning variant data for this set"
+            : "⚠️ TCGdex cards lack variant field — rarity rules will be used instead",
+          idMatchRate:
+            diagnosis.dbCards > 0
+              ? `${diagnosis.matchedCards}/${diagnosis.dbCards} sample DB cards matched TCGdex IDs`
+              : "No DB cards found for this set",
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ error: "Diagnosis failed" });
+    }
+  },
+);
+
 // ─── General status ───────────────────────────────────────────────────────────
 
 router.get("/status", requireSyncKey, async (_req: Request, res: Response) => {
