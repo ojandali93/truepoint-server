@@ -9,6 +9,7 @@ import centeringRoutes from "../routes/centering.routes";
 import { supabase } from "../lib/supabase";
 import billingRoutes from "../routes/billing.routes";
 import syncRoutes from "../routes/sync.routes";
+import inventoryRoutes from "../routes/inventory.route";
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/cards", cardRoutes);
 app.use("/api/v1/centering", centeringRoutes);
 app.use("/api/v1/sync", syncRoutes);
+app.use("/api/v1/inventory", inventoryRoutes);
 
 // Add BEFORE express.json() so the webhook route gets the raw body
 app.use(
