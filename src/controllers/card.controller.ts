@@ -5,15 +5,6 @@ import * as CardIdentificationService from "../services/cardIdentification.servi
 import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
 import { syncAllCardPrices } from "../services/priceSync.service";
-import { supabaseAdmin } from "../lib";
-import { TTL, TTLCache } from "../lib/cache";
-import {
-  ApiListResponse,
-  CardSearchParams,
-  PokemonCard,
-} from "../types/pokemon.types";
-
-const searchCache = new TTLCache<ApiListResponse<PokemonCard>>();
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
