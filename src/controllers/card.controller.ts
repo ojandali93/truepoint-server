@@ -68,81 +68,23 @@ export const getCardById = async (req: AuthenticatedRequest, res: Response) => {
   }
 };
 
-export const searchCards = async (
-  params: CardSearchParams,
-): Promise<ApiListResponse<PokemonCard>> => {
-  const { q, setId, rarity, supertype, type, page = 1, pageSize = 20 } = params;
-  const offset = (page - 1) * pageSize;
-
-  const cacheKey = `search:${JSON.stringify(params)}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached) return cached;
-
-  let query = supabaseAdmin
-    .from("cards")
-    .select(
-      `
-      *,
-      sets ( id, name )
-    `,
-      { count: "exact" },
-    )
-    .order("name")
-    .range(offset, offset + pageSize - 1);
-
-  // Apply filters
-  if (q) {
-    query = query.ilike("name", `%${q}%`);
+export const searchCards = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { q, setId, rarity, supertype, type, page, pageSize } =
+      req.query as any;
+    const result = await CardService.searchCards({
+      q,
+      setId,
+      rarity,
+      supertype,
+      type,
+      page: parseInt(page) || 1,
+      pageSize: parseInt(pageSize) || 20,
+    });
+    res.json(result);
+  } catch (err) {
+    handleError(res, err);
   }
-  if (setId) {
-    query = query.eq("set_id", setId);
-  }
-  if (rarity) {
-    query = query.eq("rarity", rarity);
-  }
-  if (supertype) {
-    query = query.eq("supertype", supertype);
-  }
-  if (type) {
-    query = query.contains("types", [type]);
-  }
-
-  const { data, error, count } = await query;
-
-  if (error) {
-    console.error("[CardService] searchCards error:", error);
-    throw { status: 500, message: "Search failed" };
-  }
-
-  const cards = (data ?? []).map((row: any) => ({
-    id: row.id,
-    name: row.name,
-    number: row.number,
-    supertype: row.supertype,
-    subtypes: row.subtypes ?? [],
-    hp: row.hp,
-    types: row.types ?? [],
-    rarity: row.rarity,
-    set: {
-      id: row.set_id,
-      name: row.sets?.name ?? row.set_id,
-    },
-    images: {
-      small: row.image_small,
-      large: row.image_large,
-    },
-  })) as PokemonCard[];
-
-  const result: ApiListResponse<PokemonCard> = {
-    data: cards,
-    page,
-    pageSize,
-    count: cards.length,
-    totalCount: count ?? cards.length,
-  };
-
-  searchCache.set(cacheKey, result, TTL.CARDS);
-  return result;
 };
 
 export const getCardPrices = async (

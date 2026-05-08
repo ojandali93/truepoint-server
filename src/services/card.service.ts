@@ -125,28 +125,6 @@ export const getCardsBySet = async (
   return result;
 };
 
-export const searchCards = async (
-  params: CardSearchParams,
-): Promise<ApiListResponse<PokemonCard>> => {
-  if (
-    !params.q &&
-    !params.setId &&
-    !params.rarity &&
-    !params.supertype &&
-    !params.type
-  ) {
-    throw { status: 400, message: "At least one search parameter is required" };
-  }
-
-  const cacheKey = `search:${JSON.stringify(params)}`;
-  const cached = searchCache.get(cacheKey);
-  if (cached) return cached;
-
-  const result = await pokemonTcgClient.searchCards(params);
-  searchCache.set(cacheKey, result, TTL.SEARCH);
-  return result;
-};
-
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 export const syncSets = async (): Promise<{
@@ -213,4 +191,65 @@ export const getCardById = async (cardId: string): Promise<PokemonCard> => {
   const card = await pokemonTcgClient.getCardById(cardId);
   cardCache.set(cardId, card, TTL.CARDS);
   return card;
+};
+
+export const searchCards = async (
+  params: CardSearchParams,
+): Promise<ApiListResponse<PokemonCard>> => {
+  const { q, setId, rarity, supertype, type, page = 1, pageSize = 20 } = params;
+  const offset = (page - 1) * pageSize;
+
+  // Build cache key from individual values — never JSON.stringify a params object
+  const cacheKey = `search:${q ?? ""}:${setId ?? ""}:${rarity ?? ""}:${supertype ?? ""}:${type ?? ""}:${page}:${pageSize}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached) return cached;
+
+  let query = supabaseAdmin
+    .from("cards")
+    .select("*, sets ( id, name )", { count: "exact" })
+    .order("name")
+    .range(offset, offset + pageSize - 1);
+
+  if (q) query = query.ilike("name", `%${q}%`);
+  if (setId) query = query.eq("set_id", setId);
+  if (rarity) query = query.eq("rarity", rarity);
+  if (supertype) query = query.eq("supertype", supertype);
+  if (type) query = query.contains("types", [type]);
+
+  const { data, error, count } = await query;
+
+  if (error) {
+    console.error("[CardService] searchCards error:", error);
+    throw { status: 500, message: "Search failed" };
+  }
+
+  const cards = (data ?? []).map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    number: row.number,
+    supertype: row.supertype,
+    subtypes: row.subtypes ?? [],
+    hp: row.hp,
+    types: row.types ?? [],
+    rarity: row.rarity,
+    set: {
+      id: row.set_id,
+      name: row.sets?.name ?? row.set_id,
+    },
+    images: {
+      small: row.image_small,
+      large: row.image_large,
+    },
+  })) as PokemonCard[];
+
+  const result: ApiListResponse<PokemonCard> = {
+    data: cards,
+    page,
+    pageSize,
+    count: cards.length,
+    totalCount: count ?? cards.length,
+  };
+
+  searchCache.set(cacheKey, result, TTL.CARDS);
+  return result;
 };
