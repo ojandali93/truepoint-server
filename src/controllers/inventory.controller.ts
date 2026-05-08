@@ -120,15 +120,16 @@ export const removeInventoryItem = async (
 export const openSealedProduct = async (
   req: AuthenticatedRequest,
   res: Response,
-) => {
+): Promise<void> => {
   try {
     const { pulledCards } = req.body;
 
     if (!Array.isArray(pulledCards) || !pulledCards.length) {
-      return res.status(400).json({
+      res.status(400).json({
         error:
           "pulledCards must be a non-empty array of { cardId, purchasePrice?, notes? }",
       });
+      return;
     }
 
     const result = await InventoryService.openSealedProduct(
