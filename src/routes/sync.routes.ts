@@ -246,7 +246,7 @@ router.get(
 
 router.get("/status", requireSyncKey, async (_req: Request, res: Response) => {
   try {
-    const [priceLogs, variantStatus] = await Promise.all([
+    const [priceLogs] = await Promise.all([
       supabaseAdmin
         .from("price_sync_log")
         .select("*")
