@@ -241,7 +241,7 @@ export const getSetPrices = async (
 
     // Batch fetch all cached prices (raw cards only, not graded)
     const { data: rows, error: pricesErr } = await supabaseAdmin
-      .from("cached_card_prices")
+      .from("market_prices")
       .select("card_id, source, variant, prices")
       .in("card_id", cardIds)
       .is("grade", null)
