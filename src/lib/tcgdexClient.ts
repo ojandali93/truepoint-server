@@ -1,6 +1,4 @@
 // src/lib/tcgdexClient.ts
-// Free, open-source Pokemon TCG API with per-card variant data
-// Docs: https://tcgdex.dev — no API key required
 import axios, { AxiosInstance } from "axios";
 
 export interface TCGdexVariants {
@@ -11,29 +9,19 @@ export interface TCGdexVariants {
 }
 
 export interface TCGdexCardBrief {
-  id: string; // matches pokemontcg.io format e.g. "sv1-001"
-  localId: string; // card number within set e.g. "001"
+  id: string; // e.g. "sv1-001" — matches pokemontcg.io format
+  localId: string; // e.g. "001"
   name: string;
   image?: string;
   rarity?: string;
   variants: TCGdexVariants;
-  // foil is on the full card object — pokeball/masterball etc.
-  foil?: string;
-}
-
-export interface TCGdexCardFull extends TCGdexCardBrief {
-  category: string;
-  hp?: number;
-  types?: string[];
-  stage?: string;
-  // The foil field — indicates which ball pattern is on the reverse
-  // 'pokeball' | 'masterball' | 'greatball' | 'ultraball' | 'energy' |
-  // 'cosmos' | 'galaxy' | 'starlight' | 'cracked-ice' | 'mirror' | etc.
+  foil?: string; // 'pokeball' | 'masterball' | 'greatball' | 'energy' | etc.
 }
 
 export interface TCGdexSet {
   id: string;
   name: string;
+  serie?: { id: string; name: string };
   cards: TCGdexCardBrief[];
 }
 
@@ -48,28 +36,41 @@ class TCGdexClient {
     });
   }
 
-  // Get all cards for a set with variant data
-  // Returns brief card objects which include the variants field
+  // ─── Get cards for a set with variant data ──────────────────────────────────
+  // Uses GET /sets/{setId} — returns the set with CardBrief objects that include
+  // the variants field (normal/reverse/holo/firstEdition booleans).
+  // The old approach of GET /cards?filters[set.id][is]={setId} caused 500 errors.
+
   async getSetCards(setId: string): Promise<TCGdexCardBrief[]> {
-    try {
-      const res = await this.client.get<TCGdexCardBrief[]>(`/cards`, {
-        params: {
-          "filters[set.id][is]": setId,
-          "pagination[pageSize]": 500,
-        },
-      });
-      return res.data ?? [];
-    } catch (err: any) {
-      if (err?.response?.status === 404) return [];
-      console.error(`[TCGdex] getSetCards error for ${setId}:`, err?.message);
-      return [];
+    // Try the given setId first, then try common ID variations
+    const idsToTry = [setId, ...this.getIdVariants(setId)];
+
+    for (const id of idsToTry) {
+      try {
+        const res = await this.client.get<TCGdexSet>(`/sets/${id}`);
+        const cards = res.data?.cards ?? [];
+        if (cards.length > 0) {
+          console.log(`[TCGdex] ✓ Set ${id} → ${cards.length} cards`);
+          return cards;
+        }
+      } catch (err: any) {
+        const status = err?.response?.status;
+        if (status === 404) continue; // Try next variant
+        // Any other error (500, network etc) — log and continue to next variant
+        console.error(
+          `[TCGdex] Error fetching set ${id}: ${status ?? err?.message}`,
+        );
+        continue;
+      }
     }
+
+    return []; // None of the ID variants worked
   }
 
-  // Get full card data including foil pattern (pokeball/masterball)
-  async getCard(cardId: string): Promise<TCGdexCardFull | null> {
+  // ─── Get a single card's full data (includes foil pattern) ─────────────────
+  async getCard(cardId: string): Promise<TCGdexCardBrief | null> {
     try {
-      const res = await this.client.get<TCGdexCardFull>(`/cards/${cardId}`);
+      const res = await this.client.get<TCGdexCardBrief>(`/cards/${cardId}`);
       return res.data;
     } catch (err: any) {
       if (err?.response?.status === 404) return null;
@@ -78,7 +79,7 @@ class TCGdexClient {
     }
   }
 
-  // Get all sets — used for detecting new releases
+  // ─── Get all sets for ID mapping / new release detection ───────────────────
   async getAllSets(): Promise<
     { id: string; name: string; releaseDate?: string }[]
   > {
@@ -89,6 +90,31 @@ class TCGdexClient {
       console.error("[TCGdex] getAllSets error:", err?.message);
       return [];
     }
+  }
+
+  // ─── ID variant generation ──────────────────────────────────────────────────
+  // TCGdex set IDs often match pokemontcg.io but sometimes differ.
+  // This generates alternative formats to try before giving up.
+
+  private getIdVariants(setId: string): string[] {
+    const variants: string[] = [];
+
+    // Some sets use different casing or separators
+    // e.g. sv1 → sv01, swsh12pt5 → swsh12.5 etc.
+
+    // Zero-pad single digit series numbers: sv1 → sv01, swsh1 → swsh01
+    const zeroPadded = setId.replace(
+      /^([a-z]+)(\d)([a-z]|pt\d|$)/,
+      (_, prefix, digit, suffix) => `${prefix}0${digit}${suffix}`,
+    );
+    if (zeroPadded !== setId) variants.push(zeroPadded);
+
+    // Try without the series prefix entirely (some TCGdex sets use short codes)
+    // e.g. sv1 might just be "sv-01" in some versions
+    const withDash = setId.replace(/^([a-z]+)(\d+)/, "$1-$2");
+    if (withDash !== setId) variants.push(withDash);
+
+    return variants;
   }
 }
 
