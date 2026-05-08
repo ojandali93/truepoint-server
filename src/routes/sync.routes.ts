@@ -14,6 +14,10 @@ import {
   getSyncStatus,
 } from "../services/cardSync.service";
 import { supabaseAdmin } from "../lib/supabase";
+import {
+  fillMissingCardsFromTCGdex,
+  fillAllSetsFromTCGdex,
+} from "../services/tcgdexCardFill.service";
 
 const router = Router();
 
@@ -384,5 +388,80 @@ router.get("/status", requireSyncKey, async (_req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to get sync status" });
   }
 });
+
+// ─── TCGdex card fill ─────────────────────────────────────────────────────────
+// Fills in cards that pokemontcg.io doesn't have (SIRs, HRs above printed_total)
+// using TCGdex as a fallback data source.
+
+// POST /sync/cards/fill-all
+// Fills missing cards for ALL sets using TCGdex
+router.post(
+  "/cards/fill-all",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        message: "TCGdex card fill started for all incomplete sets",
+        timestamp: new Date().toISOString(),
+      });
+      fillAllSetsFromTCGdex()
+        .then((result) => {
+          console.log(
+            `[SyncRoute] TCGdex fill complete: ${result.filled} sets filled, ` +
+              `${result.alreadyComplete} already complete`,
+          );
+        })
+        .catch((err) =>
+          console.error("[SyncRoute] TCGdex fill failed:", err?.message),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start TCGdex fill" });
+    }
+  },
+);
+
+router.post(
+  "/cards/fill/:setId",
+  requireSyncKey,
+  async (req: Request, res: Response) => {
+    try {
+      const { setId } = req.params;
+      const { data: set } = await supabaseAdmin
+        .from("sets")
+        .select("name")
+        .eq("id", setId)
+        .single();
+
+      if (!set) {
+        res.status(404).json({ error: `Set ${setId} not found` });
+        return;
+      }
+
+      res.json({
+        message: `TCGdex card fill started for ${set.name}`,
+        setId,
+      });
+
+      fillMissingCardsFromTCGdex(setId, set.name)
+        .then((result) => {
+          console.log(
+            `[SyncRoute] TCGdex fill for ${setId}: ` +
+              `inserted ${result.inserted}, status: ${result.status}`,
+          );
+          if (result.notes.length) {
+            console.log(`  Notes: ${result.notes.join(", ")}`);
+          }
+        })
+        .catch((err) =>
+          console.error(
+            `[SyncRoute] TCGdex fill failed for ${setId}:`,
+            err?.message,
+          ),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start TCGdex fill" });
+    }
+  },
+);
 
 export default router;
