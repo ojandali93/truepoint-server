@@ -26,6 +26,12 @@ router.get(
   CardController.getCardsBySet as any,
 );
 
+router.get(
+  "/sets/:setId/prices",
+  standardLimiter,
+  CardController.getSetPrices as any,
+);
+
 // ─── Cards ─────────────────────────────────────────────────────────────────────
 router.get("/search", standardLimiter, CardController.searchCards as any);
 router.get(

@@ -212,3 +212,74 @@ export const adminTriggerPriceSync = async (
     handleError(res, err);
   }
 };
+
+// ─── Add to src/controllers/card.controller.ts ───────────────────────────────
+
+import { supabaseAdmin } from "../lib/supabase";
+
+// GET /api/v1/cards/sets/:setId/prices
+// Returns all cached raw card prices for every card in a set.
+// Grouped by cardId → array of { variant, market, source }
+export const getSetPrices = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const { setId } = req.params;
+
+    // Get card IDs for this set
+    const { data: cards, error: cardsErr } = await supabaseAdmin
+      .from("cards")
+      .select("id")
+      .eq("set_id", setId);
+
+    if (cardsErr || !cards?.length) {
+      return res.json({ data: {} });
+    }
+
+    const cardIds = cards.map((c) => c.id);
+
+    // Batch fetch all cached prices (raw cards only, not graded)
+    const { data: rows, error: pricesErr } = await supabaseAdmin
+      .from("cached_card_prices")
+      .select("card_id, source, variant, prices")
+      .in("card_id", cardIds)
+      .is("grade", null)
+      .gt("expires_at", new Date().toISOString());
+
+    if (pricesErr) {
+      console.error("[CardController] getSetPrices error:", pricesErr);
+      return res.json({ data: {} });
+    }
+
+    // Build price map: cardId → [{ variant, market, source }]
+    const priceMap: Record<
+      string,
+      { variant: string; market: number | null; source: string }[]
+    > = {};
+
+    for (const row of rows ?? []) {
+      if (!priceMap[row.card_id]) priceMap[row.card_id] = [];
+      const prices = row.prices as Record<string, number>;
+      priceMap[row.card_id].push({
+        variant: row.variant ?? "normal",
+        market: prices?.market ?? null,
+        source: row.source,
+      });
+    }
+
+    return res.json({ data: priceMap });
+  } catch (err) {
+    console.error("[CardController] getSetPrices error:", err);
+    return res.status(500).json({ error: "Failed to fetch set prices" });
+  }
+};
+
+// ─── Add to src/routes/card.routes.ts ────────────────────────────────────────
+// Add this BEFORE the /:cardId route to avoid conflicts:
+
+// router.get(
+//   '/sets/:setId/prices',
+//   standardLimiter,
+//   CardController.getSetPrices as any
+// );
