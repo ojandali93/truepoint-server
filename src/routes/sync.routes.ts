@@ -5,6 +5,7 @@ import {
   syncAllProducts,
   syncProductsForSet,
 } from "../services/productSync.service";
+import { syncAllPortfolios } from "../services/portfolio.service";
 
 const router = Router();
 
@@ -91,5 +92,23 @@ router.post("/products/:setId", requireSyncKey, async (req, res) => {
     res.status(500).json({ error: "Failed to start product sync" });
   }
 });
+
+router.post(
+  "/portfolio",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        message: "Portfolio snapshot sync started",
+        timestamp: new Date().toISOString(),
+      });
+      syncAllPortfolios().catch((err) =>
+        console.error("[SyncRoute] Portfolio sync failed:", err?.message),
+      );
+    } catch (err) {
+      res.status(500).json({ error: "Failed to start portfolio sync" });
+    }
+  },
+);
 
 export default router;
