@@ -148,6 +148,50 @@ router.get(
 
 // ─── Card prices ──────────────────────────────────────────────────────────────
 
+router.post(
+  "/prices/cardmarket",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        message: "CardMarket bulk price sync started",
+        timestamp: new Date().toISOString(),
+      });
+      const { syncAllPricesFromCardMarket } =
+        await import("../services/cardMarketPriceSync.service");
+      syncAllPricesFromCardMarket().catch((err) =>
+        console.error(
+          "[SyncRoute] CardMarket price sync failed:",
+          err?.message,
+        ),
+      );
+    } catch {
+      res.status(500).json({ error: "Failed to start CardMarket price sync" });
+    }
+  },
+);
+
+router.post(
+  "/prices/cardmarket/:setId",
+  requireSyncKey,
+  async (req: Request, res: Response) => {
+    try {
+      const { setId } = req.params;
+      res.json({ message: `CardMarket price sync started for ${setId}` });
+      const { syncSetPricesFromCardMarket } =
+        await import("../services/cardMarketPriceSync.service");
+      syncSetPricesFromCardMarket(setId).catch((err) =>
+        console.error(
+          `[SyncRoute] CardMarket price sync failed for ${setId}:`,
+          err?.message,
+        ),
+      );
+    } catch {
+      res.status(500).json({ error: "Failed to start CardMarket price sync" });
+    }
+  },
+);
+
 router.post("/prices", requireSyncKey, async (_req: Request, res: Response) => {
   try {
     res.json({
@@ -306,50 +350,6 @@ router.post(
         );
     } catch {
       res.status(500).json({ error: "Failed to start variant sync" });
-    }
-  },
-);
-
-router.post(
-  "/prices/cardmarket",
-  requireSyncKey,
-  async (_req: Request, res: Response) => {
-    try {
-      res.json({
-        message: "CardMarket bulk price sync started",
-        timestamp: new Date().toISOString(),
-      });
-      const { syncAllPricesFromCardMarket } =
-        await import("../services/cardMarketPriceSync.service");
-      syncAllPricesFromCardMarket().catch((err) =>
-        console.error(
-          "[SyncRoute] CardMarket price sync failed:",
-          err?.message,
-        ),
-      );
-    } catch {
-      res.status(500).json({ error: "Failed to start CardMarket price sync" });
-    }
-  },
-);
-
-router.post(
-  "/prices/cardmarket/:setId",
-  requireSyncKey,
-  async (req: Request, res: Response) => {
-    try {
-      const { setId } = req.params;
-      res.json({ message: `CardMarket price sync started for ${setId}` });
-      const { syncSetPricesFromCardMarket } =
-        await import("../services/cardMarketPriceSync.service");
-      syncSetPricesFromCardMarket(setId).catch((err) =>
-        console.error(
-          `[SyncRoute] CardMarket price sync failed for ${setId}:`,
-          err?.message,
-        ),
-      );
-    } catch {
-      res.status(500).json({ error: "Failed to start CardMarket price sync" });
     }
   },
 );
