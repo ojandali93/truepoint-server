@@ -1,9 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
 import { AuthenticatedRequest } from '../types/user.types';
 
 export const authenticateUser = async (
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
@@ -26,7 +26,7 @@ export const authenticateUser = async (
 
     const role = (data.user.app_metadata?.role as 'admin' | 'user') ?? 'user';
 
-    (req as AuthenticatedRequest).user = {
+    req.user = {
       id: data.user.id,
       email: data.user.email!,
       role,
@@ -39,11 +39,11 @@ export const authenticateUser = async (
 };
 
 export const requireAdmin = (
-  req: Request,
+  req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): void => {
-  if ((req as AuthenticatedRequest).user?.role !== 'admin') {
+  if (req.user?.role !== 'admin') {
     res.status(403).json({ error: 'Insufficient permissions' });
     return;
   }
@@ -52,9 +52,8 @@ export const requireAdmin = (
 
 export const requireSelf =
   (paramKey = 'id') =>
-  (req: Request, res: Response, next: NextFunction): void => {
-    const r = req as AuthenticatedRequest;
-    if (r.user?.id !== req.params[paramKey] && r.user?.role !== 'admin') {
+  (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+    if (req.user?.id !== req.params[paramKey] && req.user?.role !== 'admin') {
       res.status(403).json({ error: 'Access denied' });
       return;
     }

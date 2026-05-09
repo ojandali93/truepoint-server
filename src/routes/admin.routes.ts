@@ -1,9 +1,10 @@
 // src/routes/admin.routes.ts
 // Admin-only routes — protected by requireAdmin middleware
 
-import { Router, Response, Request } from "express";
-import { supabaseAdmin } from "../lib/supabase";
-import { authenticateUser, requireAdmin } from "../middleware/auth.middleware";
+import { Router, Response } from 'express';
+import { supabaseAdmin } from '../lib/supabase';
+import { requireAdmin } from '../middleware/auth.middleware';
+import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -13,15 +14,14 @@ const router = Router();
 // Body: { mappings: [{ setId: string, tcgdexId: string }] }
 
 router.post(
-  "/sets/tcgdex-ids",
-  authenticateUser,
+  '/sets/tcgdex-ids',
   requireAdmin,
-  async (req: Request, res: Response) => {
+  async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { mappings } = req.body;
 
       if (!Array.isArray(mappings) || !mappings.length) {
-        res.status(400).json({ error: "mappings must be a non-empty array" });
+        res.status(400).json({ error: 'mappings must be a non-empty array' });
         return;
       }
 
@@ -32,9 +32,9 @@ router.post(
         if (!setId || !tcgdexId) continue;
 
         const { error } = await supabaseAdmin
-          .from("sets")
+          .from('sets')
           .update({ tcgdex_id: tcgdexId })
-          .eq("id", setId);
+          .eq('id', setId);
 
         if (error) {
           errors.push(`${setId}: ${error.message}`);
@@ -45,7 +45,7 @@ router.post(
 
       console.log(
         `[AdminRoute] Saved ${saved} TCGdex ID mappings` +
-          (errors.length ? `, ${errors.length} errors` : ""),
+        (errors.length ? `, ${errors.length} errors` : '')
       );
 
       res.json({
@@ -53,12 +53,13 @@ router.post(
         message: `Saved ${saved} TCGdex ID mappings`,
       });
     } catch (err) {
-      res.status(500).json({ error: "Failed to save TCGdex IDs" });
+      res.status(500).json({ error: 'Failed to save TCGdex IDs' });
     }
-  },
+  }
 );
 
 export default router;
+
 
 // ─── Add to src/config/app.ts ─────────────────────────────────────────────────
 // import adminRoutes from '../routes/admin.routes';

@@ -228,50 +228,6 @@ export const insertInventoryBatch = async (
   }
 };
 
-// Fetch cached card prices for a list of card IDs
-export const fetchCardPrices = async (
-  cardIds: string[],
-): Promise<Map<string, Record<string, number>>> => {
-  if (!cardIds.length) return new Map();
-
-  const { data, error } = await supabaseAdmin
-    .from("cached_card_prices")
-    .select("card_id, source, variant, grade, prices")
-    .in("card_id", cardIds)
-    .gt("expires_at", new Date().toISOString());
-
-  if (error) {
-    console.error("[InventoryRepo] fetchCardPrices error:", error);
-    return new Map();
-  }
-
-  // Build a map: cardId → best available market price
-  const priceMap = new Map<string, Record<string, number>>();
-
-  for (const row of data ?? []) {
-    if (!priceMap.has(row.card_id)) {
-      priceMap.set(row.card_id, {});
-    }
-    const entry = priceMap.get(row.card_id)!;
-    const prices = row.prices as Record<string, number>;
-
-    // Prefer TCGPlayer market price for raw, then CardMarket
-    if (row.source === "tcgplayer" && !row.grade && prices.market) {
-      entry.raw_market = prices.market;
-    }
-    if (row.source === "cardmarket" && !row.grade && prices.trend) {
-      entry.cm_market = prices.trend;
-    }
-
-    // Graded prices — store per grade
-    if (row.grade && prices.market) {
-      const key = `${row.source}_${row.grade}`;
-      entry[key] = prices.market;
-    }
-  }
-
-  return priceMap;
-};
 
 // Fetch cached product prices for a list of product IDs
 export const fetchProductPrices = async (

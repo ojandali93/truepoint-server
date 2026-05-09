@@ -32,7 +32,6 @@ app.use("/api/v1/sync", syncRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/portfolio", portfolioRoutes);
 app.use("/api/v1/variants", variantRoutes);
-
 app.use("/api/v1/admin", adminRoutes);
 
 // Add BEFORE express.json() so the webhook route gets the raw body

@@ -1,5 +1,5 @@
 // src/lib/tcgdexClient.ts
-import axios, { AxiosInstance } from "axios";
+import axios, { AxiosInstance } from 'axios';
 
 export interface TCGdexVariants {
   normal: boolean;
@@ -28,9 +28,9 @@ class TCGdexClient {
 
   constructor() {
     this.client = axios.create({
-      baseURL: "https://api.tcgdex.net/v2/en",
+      baseURL: 'https://api.tcgdex.net/v2/en',
       timeout: 30000,
-      headers: { "Content-Type": "application/json" },
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
@@ -47,24 +47,18 @@ class TCGdexClient {
     // Step 1 — get the brief card list to know which cards exist
     for (const id of idsToTry) {
       try {
-        const res = await this.client.get<{ cards?: TCGdexCardBrief[] }>(
-          `/sets/${id}`,
-        );
+        const res = await this.client.get<{ cards?: TCGdexCardBrief[] }>(`/sets/${id}`);
         const cards = res.data?.cards ?? [];
         if (cards.length > 0) {
           briefCards = cards;
           resolvedSetId = id;
-          console.log(
-            `[TCGdex] ✓ Set ${id} → ${cards.length} cards (fetching full data...)`,
-          );
+          console.log(`[TCGdex] ✓ Set ${id} → ${cards.length} cards (fetching full data...)`);
           break;
         }
       } catch (err: any) {
         const status = err?.response?.status;
         if (status === 404) continue;
-        console.error(
-          `[TCGdex] Error fetching set ${id}: ${status ?? err?.message}`,
-        );
+        console.error(`[TCGdex] Error fetching set ${id}: ${status ?? err?.message}`);
         continue;
       }
     }
@@ -74,9 +68,7 @@ class TCGdexClient {
     // Step 2 — fetch full card data in batches to get variant fields
     // Use the TCGdex card IDs (e.g. sv01-001) not our DB IDs
     const fullCards = await this.fetchCardsInBatches(briefCards);
-    console.log(
-      `[TCGdex] ✓ Set ${resolvedSetId} → ${fullCards.length}/${briefCards.length} full cards fetched`,
-    );
+    console.log(`[TCGdex] ✓ Set ${resolvedSetId} → ${fullCards.length}/${briefCards.length} full cards fetched`);
     return fullCards;
   }
 
@@ -84,14 +76,14 @@ class TCGdexClient {
   private async fetchCardsInBatches(
     cards: TCGdexCardBrief[],
     batchSize = 20,
-    delayMs = 200,
+    delayMs = 200
   ): Promise<TCGdexCardBrief[]> {
     const results: TCGdexCardBrief[] = [];
 
     for (let i = 0; i < cards.length; i += batchSize) {
       const batch = cards.slice(i, i + batchSize);
       const fetched = await Promise.all(
-        batch.map((card) => this.getCard(card.id).catch(() => null)),
+        batch.map((card) => this.getCard(card.id).catch(() => null))
       );
       for (const card of fetched) {
         if (card) results.push(card);
@@ -118,14 +110,12 @@ class TCGdexClient {
   }
 
   // ─── Get all sets ──────────────────────────────────────────────────────────
-  async getAllSets(): Promise<
-    { id: string; name: string; releaseDate?: string }[]
-  > {
+  async getAllSets(): Promise<{ id: string; name: string; releaseDate?: string }[]> {
     try {
-      const res = await this.client.get("/sets");
+      const res = await this.client.get('/sets');
       return res.data ?? [];
     } catch (err: any) {
-      console.error("[TCGdex] getAllSets error:", err?.message);
+      console.error('[TCGdex] getAllSets error:', err?.message);
       return [];
     }
   }
@@ -141,17 +131,16 @@ class TCGdexClient {
     // swsh1 → swsh01, swsh2 → swsh02 etc.
     const zeroPadded = setId.replace(
       /^([a-z]+)(\d)([a-z]|pt\d|$)/i,
-      (_match, prefix, digit, suffix) => `${prefix}0${digit}${suffix}`,
+      (_match, prefix, digit, suffix) => `${prefix}0${digit}${suffix}`
     );
     if (zeroPadded !== setId) variants.push(zeroPadded);
 
     // Handle pt5 suffix: sv3pt5 → sv03pt5
     const ptPadded = setId.replace(
       /^([a-z]+)(\d)(pt\d+)$/i,
-      (_match, prefix, digit, suffix) => `${prefix}0${digit}${suffix}`,
+      (_match, prefix, digit, suffix) => `${prefix}0${digit}${suffix}`
     );
-    if (ptPadded !== setId && !variants.includes(ptPadded))
-      variants.push(ptPadded);
+    if (ptPadded !== setId && !variants.includes(ptPadded)) variants.push(ptPadded);
 
     return variants;
   }
@@ -179,7 +168,10 @@ class TCGdexClient {
 
   // sv01-001 → sv1-001 (remove zero padding from set number)
   normalizeCardId(tcgdexId: string): string {
-    return tcgdexId.replace(/^([a-z]+)0(\d[a-z0-9]*)(-)/i, "$1$2$3");
+    return tcgdexId.replace(
+      /^([a-z]+)0(\d[a-z0-9]*)(-)/i,
+      '$1$2$3'
+    );
   }
 }
 

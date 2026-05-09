@@ -1,6 +1,5 @@
 // src/routes/sync.routes.ts
 import { Router, Request, Response } from "express";
-import { syncAllCardPrices } from "../services/priceSync.service";
 import { syncAllProducts } from "../services/productSync.service";
 import { syncAllPortfolios } from "../services/portfolio.service";
 import {
@@ -147,64 +146,8 @@ router.get(
 );
 
 // ─── Card prices ──────────────────────────────────────────────────────────────
-
-router.post(
-  "/prices/cardmarket",
-  requireSyncKey,
-  async (_req: Request, res: Response) => {
-    try {
-      res.json({
-        message: "CardMarket bulk price sync started",
-        timestamp: new Date().toISOString(),
-      });
-      const { syncAllPricesFromCardMarket } =
-        await import("../services/cardMarketPriceSync.service");
-      syncAllPricesFromCardMarket().catch((err) =>
-        console.error(
-          "[SyncRoute] CardMarket price sync failed:",
-          err?.message,
-        ),
-      );
-    } catch {
-      res.status(500).json({ error: "Failed to start CardMarket price sync" });
-    }
-  },
-);
-
-router.post(
-  "/prices/cardmarket/:setId",
-  requireSyncKey,
-  async (req: Request, res: Response) => {
-    try {
-      const { setId } = req.params;
-      res.json({ message: `CardMarket price sync started for ${setId}` });
-      const { syncSetPricesFromCardMarket } =
-        await import("../services/cardMarketPriceSync.service");
-      syncSetPricesFromCardMarket(setId).catch((err) =>
-        console.error(
-          `[SyncRoute] CardMarket price sync failed for ${setId}:`,
-          err?.message,
-        ),
-      );
-    } catch {
-      res.status(500).json({ error: "Failed to start CardMarket price sync" });
-    }
-  },
-);
-
-router.post("/prices", requireSyncKey, async (_req: Request, res: Response) => {
-  try {
-    res.json({
-      message: "Card price sync started",
-      timestamp: new Date().toISOString(),
-    });
-    syncAllCardPrices().catch((err) =>
-      console.error("[SyncRoute] Card price sync failed:", err?.message),
-    );
-  } catch {
-    res.status(500).json({ error: "Failed to start sync" });
-  }
-});
+// Prices are synced via CardMarket RapidAPI — use /prices/cardmarket endpoint.
+// The old pokemontcg.io per-card sync has been removed (had ~30% coverage).
 
 // ─── Product sync ─────────────────────────────────────────────────────────────
 
@@ -480,7 +423,7 @@ router.post(
     } catch {
       res.status(500).json({ error: "Failed to map TCGdex IDs" });
     }
-  },
+  }
 );
 
 // GET /sync/sets/mappings
@@ -504,7 +447,7 @@ router.get(
     } catch {
       res.status(500).json({ error: "Failed to get mappings" });
     }
-  },
+  }
 );
 
 // ─── TCGdex card fill ─────────────────────────────────────────────────────────
@@ -558,81 +501,55 @@ router.post(
   },
 );
 
+
+// ─── CardMarket price sync ────────────────────────────────────────────────────
+// Primary price source. Fetches TCGPlayer + CardMarket + graded prices
+// for every card using the RapidAPI CardMarket endpoint.
+
+// POST /sync/prices/cardmarket — sync ALL sets
 router.post(
-  "/prices/tcgdex",
+  "/prices/cardmarket",
   requireSyncKey,
   async (_req: Request, res: Response) => {
     try {
       res.json({
-        message: "TCGdex price sync started for sets with no coverage",
+        message: "CardMarket bulk price sync started — syncing all sets",
         timestamp: new Date().toISOString(),
       });
-      const { syncAllPricesFromTCGdex } =
-        await import("../services/tcgdexPriceSync.service");
-      syncAllPricesFromTCGdex()
-        .then(() => {
-          console.log("[SyncRoute] TCGdex price sync complete");
-        })
-        .catch((err: unknown) =>
-          console.error(
-            "[SyncRoute] TCGdex price sync failed:",
-            err instanceof Error ? err.message : err,
-          ),
-        );
+      const { syncAllPricesFromCardMarket } = await import(
+        "../services/cardMarketPriceSync.service"
+      );
+      syncAllPricesFromCardMarket().catch((err: any) =>
+        console.error("[SyncRoute] CardMarket price sync failed:", err?.message),
+      );
     } catch {
-      res.status(500).json({ error: "Failed to start TCGdex price sync" });
+      res.status(500).json({ error: "Failed to start CardMarket price sync" });
     }
   },
 );
 
+// POST /sync/prices/cardmarket/:setId — sync one set
 router.post(
-  "/prices/tcgdex/:setId",
+  "/prices/cardmarket/:setId",
   requireSyncKey,
   async (req: Request, res: Response) => {
     try {
       const { setId } = req.params;
-      const { data: set } = await supabaseAdmin
-        .from("sets")
-        .select("name, tcgdex_id")
-        .eq("id", setId)
-        .single();
-
-      if (!set) {
-        res.status(404).json({ error: `Set ${setId} not found` });
-        return;
-      }
-
-      if (!set.tcgdex_id) {
-        res.status(400).json({
-          error: `Set ${setId} has no tcgdex_id. Run POST /sync/sets/map-tcgdex first.`,
-        });
-        return;
-      }
-
-      res.json({
-        message: `TCGdex price sync started for ${set.name}`,
-        setId,
-        tcgdexId: set.tcgdex_id,
-      });
-
-      const { syncSetPrices } =
-        await import("../services/tcgdexPriceSync.service");
-      syncSetPrices(setId, set.tcgdex_id)
-        .then((result: { synced: number; noPrice: number }) => {
-          console.log(
-            `[SyncRoute] TCGdex price sync for ${setId}: ${result.synced} cards synced`,
-          );
-        })
-        .catch((err: unknown) =>
-          console.error(
-            `[SyncRoute] TCGdex price sync failed for ${setId}:`,
-            err instanceof Error ? err.message : err,
-          ),
-        );
+      res.json({ message: `CardMarket price sync started for ${setId}` });
+      const { syncSetPricesFromCardMarket } = await import(
+        "../services/cardMarketPriceSync.service"
+      );
+      syncSetPricesFromCardMarket(setId).catch((err: any) =>
+        console.error(
+          `[SyncRoute] CardMarket price sync failed for ${setId}:`,
+          err?.message,
+        ),
+      );
     } catch {
-      res.status(500).json({ error: "Failed to start TCGdex price sync" });
+      res.status(500).json({ error: "Failed to start CardMarket price sync" });
     }
   },
 );
+
 
 export default router;

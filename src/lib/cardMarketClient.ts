@@ -68,7 +68,14 @@ export interface CardMarketProduct {
   id: number;
   name: string;
   slug: string;
-  prices: CardMarketPrices;
+  prices: {
+    cardmarket?: {
+      currency: string;
+      lowest: number | null;
+      lowest_DE?: number | null;
+      lowest_FR?: number | null;
+    };
+  };
   episode: {
     id: number;
     name: string;
@@ -78,7 +85,6 @@ export interface CardMarketProduct {
   };
   image: string;
   tcggo_url: string;
-  card_number: string;
 }
 
 class CardMarketClient {
@@ -146,6 +152,25 @@ class CardMarketClient {
       const res = await this.client.get<{ data: CardMarketProduct[] }>(
         `/pokemon/episodes/${expansionId}/products`,
         { params: { page, sort: "price_highest" } },
+      );
+      const batch = res.data.data ?? [];
+      results.push(...batch);
+      if (batch.length < 20) break;
+      page++;
+    }
+
+    return results;
+  }
+
+  // Get individual card singles for an expansion (not sealed products)
+  async getCardsByExpansion(expansionId: number): Promise<CardMarketCard[]> {
+    const results: CardMarketCard[] = [];
+    let page = 0;
+
+    while (true) {
+      const res = await this.client.get<{ data: CardMarketCard[] }>(
+        `/pokemon/episodes/${expansionId}/cards`,
+        { params: { page } },
       );
       const batch = res.data.data ?? [];
       results.push(...batch);

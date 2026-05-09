@@ -4,7 +4,6 @@ import * as CardService from "../services/card.service";
 import * as CardIdentificationService from "../services/cardIdentification.service";
 import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
-import { syncAllCardPrices } from "../services/priceSync.service";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -86,12 +85,7 @@ export const getCardPrices = async (
     const { cardId } = req.params;
     // Use CardService — not a local function
     const card = await CardService.getCardById(cardId);
-    const prices = await PricingService.getAllPricesForCard(
-      cardId,
-      card.name,
-      card.set.id,
-      true,
-    );
+    const prices = await PricingService.getAllPricesForCard(cardId);
     res.json({
       data: {
         card: { id: card.id, name: card.name, set: card.set.name },

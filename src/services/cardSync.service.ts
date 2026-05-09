@@ -1,6 +1,12 @@
-import { pokemonTcgClient } from "../lib/pokemonTcgClient";
-import { supabaseAdmin } from "../lib/supabase";
-import { findAllSets } from "../repositories/card.repository";
+// src/services/cardSync.service.ts
+// Key fix: isSetSynced now compares DB card count against the set's totalCards
+// from the sets table so incomplete syncs are detected and re-run.
+
+import { pokemonTcgClient } from '../lib/pokemonTcgClient';
+import { supabaseAdmin } from '../lib/supabase';
+import { findAllSets } from '../repositories/card.repository';
+
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface SyncProgress {
   totalSets: number;
@@ -31,10 +37,51 @@ const upsertCardBatch = async (cards: any[]): Promise<void> => {
   }));
 
   const { error } = await supabaseAdmin
-    .from("cards")
-    .upsert(rows, { onConflict: "id" });
+    .from('cards')
+    .upsert(rows, { onConflict: 'id' });
 
   if (error) throw error;
+};
+
+// ─── Fixed completeness check ─────────────────────────────────────────────────
+// Previously: isSetSynced only checked count > 0 — missed partial syncs.
+// Now: compares DB count against the set's printed_total from the sets table.
+// If the set doesn't have a printed_total, falls back to count > 0.
+
+const isSetComplete = async (setId: string): Promise<boolean> => {
+  // Get expected card count from sets table
+  const { data: set } = await supabaseAdmin
+    .from('sets')
+    .select('printed_total, total')
+    .eq('id', setId)
+    .single();
+
+  const expected = set?.printed_total ?? set?.total ?? 0;
+
+  // Get actual count in DB
+  const { count } = await supabaseAdmin
+    .from('cards')
+    .select('id', { count: 'exact', head: true })
+    .eq('set_id', setId);
+
+  const actual = count ?? 0;
+
+  if (expected === 0) {
+    // No expected count available — just check if anything exists
+    return actual > 0;
+  }
+
+  // Allow a small tolerance (secret rares, promos can push above printed_total)
+  // Consider complete if we have >= 95% of expected cards
+  const isComplete = actual >= Math.floor(expected * 0.95);
+
+  if (!isComplete) {
+    console.log(
+      `[CardSync] ⚠️  ${setId}: ${actual}/${expected} cards — incomplete, will re-sync`
+    );
+  }
+
+  return isComplete;
 };
 
 // Sync a single set — fetches all pages
@@ -51,55 +98,17 @@ const syncSet = async (setId: string, setName: string): Promise<number> => {
 
     console.log(`  [${setName}] Page ${page}: ${result.data.length} cards`);
 
-    // No more pages
     if (result.data.length < 250) break;
     page++;
 
-    // Polite delay between pages to avoid rate limiting
     await delay(300);
   }
 
   return totalSynced;
 };
 
-const isSetComplete = async (setId: string): Promise<boolean> => {
-  // Get expected card count from sets table
-  const { data: set } = await supabaseAdmin
-    .from("sets")
-    .select("printed_total, total")
-    .eq("id", setId)
-    .single();
+// ─── Backfill — now re-syncs incomplete sets ──────────────────────────────────
 
-  const expected = set?.printed_total ?? set?.total ?? 0;
-
-  // Get actual count in DB
-  const { count } = await supabaseAdmin
-    .from("cards")
-    .select("id", { count: "exact", head: true })
-    .eq("set_id", setId);
-
-  const actual = count ?? 0;
-
-  if (expected === 0) {
-    // No expected count available — just check if anything exists
-    return actual > 0;
-  }
-
-  // Allow a small tolerance (secret rares, promos can push above printed_total)
-  // Consider complete if we have >= 95% of expected cards
-  const isComplete = actual >= Math.floor(expected * 0.95);
-
-  if (!isComplete) {
-    console.log(
-      `[CardSync] ⚠️  ${setId}: ${actual}/${expected} cards — incomplete, will re-sync`,
-    );
-  }
-
-  return isComplete;
-};
-
-// Full backfill — syncs all sets that don't have cards yet
-// Skips sets already in the DB so it's safe to re-run
 export const backfillAllCards = async (): Promise<SyncProgress> => {
   const start = Date.now();
   const sets = await findAllSets();
@@ -134,8 +143,8 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
   const durationMs = Date.now() - start;
   console.log(
     `[CardSync] Backfill complete: ${totalCards} new cards, ` +
-      `${skippedSets.length} sets skipped (already complete), ` +
-      `${failedSets.length} failed in ${(durationMs / 1000).toFixed(1)}s`,
+    `${skippedSets.length} sets skipped (already complete), ` +
+    `${failedSets.length} failed in ${(durationMs / 1000).toFixed(1)}s`
   );
 
   return {
@@ -148,7 +157,7 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
   };
 };
 
-// Sync a single set on demand (e.g. when a new set releases)
+// Sync a single set by ID — always re-syncs regardless of current count
 export const syncSingleSet = async (setId: string): Promise<number> => {
   const sets = await findAllSets();
   const set = sets.find((s: any) => s.id === setId);
@@ -164,41 +173,31 @@ export const syncSingleSet = async (setId: string): Promise<number> => {
 export const getSyncStatus = async (): Promise<{
   totalSets: number;
   completeSets: number;
-  incompleteSets: {
-    id: string;
-    name: string;
-    dbCount: number;
-    expected: number;
-  }[];
+  incompleteSets: { id: string; name: string; dbCount: number; expected: number }[];
   totalCards: number;
 }> => {
   const sets = await findAllSets();
 
   const { count: totalCards } = await supabaseAdmin
-    .from("cards")
-    .select("id", { count: "exact", head: true });
+    .from('cards')
+    .select('id', { count: 'exact', head: true });
 
   // Check each set for completeness
-  const incompleteSets: {
-    id: string;
-    name: string;
-    dbCount: number;
-    expected: number;
-  }[] = [];
+  const incompleteSets: { id: string; name: string; dbCount: number; expected: number }[] = [];
 
   for (const set of sets) {
     const { data: setData } = await supabaseAdmin
-      .from("sets")
-      .select("printed_total, total, name")
-      .eq("id", set.id)
+      .from('sets')
+      .select('printed_total, total, name')
+      .eq('id', set.id)
       .single();
 
     const expected = setData?.printed_total ?? setData?.total ?? 0;
 
     const { count: dbCount } = await supabaseAdmin
-      .from("cards")
-      .select("id", { count: "exact", head: true })
-      .eq("set_id", set.id);
+      .from('cards')
+      .select('id', { count: 'exact', head: true })
+      .eq('set_id', set.id);
 
     const actual = dbCount ?? 0;
 
@@ -219,5 +218,3 @@ export const getSyncStatus = async (): Promise<{
     totalCards: totalCards ?? 0,
   };
 };
-
-const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
