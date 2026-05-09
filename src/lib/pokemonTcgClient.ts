@@ -22,7 +22,7 @@ class PokemonTcgClient {
   constructor() {
     this.client = axios.create({
       baseURL: "https://api.pokemontcg.io/v2",
-      timeout: 15_000,
+      timeout: 60_000, // 60s — price sync fetches 250 cards per page
     });
 
     // Read the key at request time via interceptor, not at construction time
