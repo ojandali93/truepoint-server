@@ -15,6 +15,10 @@ import {
 } from "../services/cardSync.service";
 import { supabaseAdmin } from "../lib/supabase";
 import {
+  discoverTCGdexIds,
+  getAllSetMappings,
+} from "../services/setIdMapping.service";
+import {
   fillMissingCardsFromTCGdex,
   fillAllSetsFromTCGdex,
 } from "../services/tcgdexCardFill.service";
@@ -413,6 +417,51 @@ router.get("/status", requireSyncKey, async (_req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to get sync status" });
   }
 });
+
+// ─── Set ID mapping ───────────────────────────────────────────────────────────
+
+// POST /sync/sets/map-tcgdex
+// Auto-discovers TCGdex IDs for all sets and stores them.
+// MUST run this before /sync/prices/tcgdex so sets have their tcgdex_id.
+router.post(
+  "/sets/map-tcgdex",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      const result = await discoverTCGdexIds();
+      res.json({
+        data: result,
+        message: `Mapped ${result.matched} sets to TCGdex IDs. ${result.unmatched.length} could not be matched.`,
+      });
+    } catch {
+      res.status(500).json({ error: "Failed to map TCGdex IDs" });
+    }
+  },
+);
+
+// GET /sync/sets/mappings
+// Returns current set ID mapping table — our ID, TCGdex ID.
+router.get(
+  "/sets/mappings",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      const mappings = await getAllSetMappings();
+      const withTCGdex = mappings.filter((m: any) => m.tcgdex_id);
+      const without = mappings.filter((m: any) => !m.tcgdex_id);
+      res.json({
+        data: {
+          total: mappings.length,
+          mappedToTCGdex: withTCGdex.length,
+          unmappedFromTCGdex: without.length,
+          sets: mappings,
+        },
+      });
+    } catch {
+      res.status(500).json({ error: "Failed to get mappings" });
+    }
+  },
+);
 
 // ─── TCGdex card fill ─────────────────────────────────────────────────────────
 // Fills in cards that pokemontcg.io doesn't have (SIRs, HRs above printed_total)
