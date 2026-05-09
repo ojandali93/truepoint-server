@@ -36,18 +36,43 @@ const matchExpansionToSet = (
 
 const syncExpansionPrices = async (
   expansionId: number,
-  _expansionName: string,
+  expansionName: string,
   setId: string,
 ): Promise<{ synced: number; noMatch: number; noPrice: number }> => {
   const result = { synced: 0, noMatch: 0, noPrice: 0 };
 
+  console.log(
+    `[CMPriceSync] Fetching CardMarket products for expansion ${expansionId} (${expansionName})...`,
+  );
   const cmCards = await cardMarketClient.getProductsByExpansion(expansionId);
-  if (!cmCards.length) return result;
+  console.log(`[CMPriceSync] CardMarket returned ${cmCards.length} products`);
+
+  if (!cmCards.length) {
+    console.log(
+      `[CMPriceSync] No products returned — expansion may be empty or wrong ID`,
+    );
+    return result;
+  }
+
+  // Log first card structure so we can see what fields are available
+  const sample = cmCards[0];
+  console.log(
+    `[CMPriceSync] Sample card: ${JSON.stringify({
+      id: sample.id,
+      name: sample.name,
+      card_number: sample.card_number,
+      prices: sample.prices,
+    })}`,
+  );
 
   const { data: dbCards } = await supabaseAdmin
     .from("cards")
     .select("id, number")
     .eq("set_id", setId);
+
+  console.log(
+    `[CMPriceSync] DB has ${dbCards?.length ?? 0} cards for set ${setId}`,
+  );
 
   if (!dbCards?.length) return result;
 
@@ -56,6 +81,12 @@ const syncExpansionPrices = async (
     numberMap.set(normalizeNumber(card.number), card.id);
     numberMap.set(card.number, card.id);
   }
+
+  // Log a few DB numbers vs CM numbers to spot mismatches
+  const sampleDbNums = dbCards.slice(0, 3).map((c) => c.number);
+  const sampleCmNums = cmCards.slice(0, 3).map((c) => c.card_number);
+  console.log(`[CMPriceSync] Sample DB numbers: ${sampleDbNums.join(", ")}`);
+  console.log(`[CMPriceSync] Sample CM numbers: ${sampleCmNums.join(", ")}`);
 
   const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
   const now = new Date().toISOString();
@@ -71,6 +102,11 @@ const syncExpansionPrices = async (
     const cardId = numberMap.get(cardNum) ?? numberMap.get(cmCard.card_number);
 
     if (!cardId) {
+      if (result.noMatch < 3) {
+        console.log(
+          `[CMPriceSync] No DB match for CM card #${cmCard.card_number} (normalized: ${cardNum})`,
+        );
+      }
       result.noMatch++;
       continue;
     }
@@ -78,6 +114,7 @@ const syncExpansionPrices = async (
     const prices = cmCard.prices;
     let hasPrice = false;
 
+    // TCGPlayer singles price
     if (prices?.tcg_player?.market_price != null) {
       rows.push({
         card_id: cardId,
@@ -94,6 +131,7 @@ const syncExpansionPrices = async (
       hasPrice = true;
     }
 
+    // CardMarket raw price
     if (prices?.cardmarket) {
       const cm = prices.cardmarket;
       const market =
@@ -115,6 +153,7 @@ const syncExpansionPrices = async (
       }
     }
 
+    // Graded prices
     if (prices?.cardmarket?.graded) {
       const graded = prices.cardmarket.graded;
       const companies = ["psa", "bgs", "cgc"] as const;
@@ -139,6 +178,7 @@ const syncExpansionPrices = async (
       }
     }
 
+    // eBay graded prices
     if (prices?.ebay?.graded) {
       for (const [company, grades] of Object.entries(prices.ebay.graded)) {
         for (const [grade, data] of Object.entries(
@@ -161,9 +201,26 @@ const syncExpansionPrices = async (
       }
     }
 
-    if (hasPrice) result.synced++;
-    else result.noPrice++;
+    if (hasPrice) {
+      result.synced++;
+      if (result.synced <= 3) {
+        console.log(
+          `[CMPriceSync] ✓ Card #${cmCard.card_number} → ${cardId}: tcg=${prices?.tcg_player?.market_price ?? "null"}, cm=${prices?.cardmarket?.["30d_average"] ?? "null"}`,
+        );
+      }
+    } else {
+      result.noPrice++;
+      if (result.noPrice <= 3) {
+        console.log(
+          `[CMPriceSync] No price for card #${cmCard.card_number}: prices=${JSON.stringify(prices)}`,
+        );
+      }
+    }
   }
+
+  console.log(
+    `[CMPriceSync] Summary: ${result.synced} priced, ${result.noMatch} no match, ${result.noPrice} no price`,
+  );
 
   if (!rows.length) return result;
 
@@ -185,6 +242,7 @@ const syncExpansionPrices = async (
       console.error(`[CMPriceSync] Insert error for ${setId}:`, error.message);
   }
 
+  console.log(`[CMPriceSync] Inserted ${rows.length} price rows for ${setId}`);
   return result;
 };
 
@@ -217,7 +275,6 @@ export const syncAllPricesFromCardMarket = async (): Promise<void> => {
   let setsSkipped = 0;
 
   for (const expansion of expansions) {
-    // Skip expansions with null/missing data
     if (!expansion?.id) {
       setsSkipped++;
       continue;
@@ -245,9 +302,6 @@ export const syncAllPricesFromCardMarket = async (): Promise<void> => {
       );
       totalSynced += result.synced;
       setsProcessed++;
-      console.log(
-        `[CMPriceSync]   ✓ ${result.synced} priced, ${result.noMatch} no match, ${result.noPrice} no price`,
-      );
     } catch (err: any) {
       console.error(`[CMPriceSync] Error for ${expansion.name}:`, err?.message);
     }
@@ -291,6 +345,7 @@ export const syncSetPricesFromCardMarket = async (
     return;
   }
 
+  console.log(`[CMPriceSync] Finding CardMarket expansion for ${set.name}...`);
   const expansions = await cardMarketClient.getAllExpansions();
   const ourSets = await fetchOurSets();
 
@@ -300,9 +355,18 @@ export const syncSetPricesFromCardMarket = async (
 
   if (!match) {
     console.error(`[CMPriceSync] No CardMarket expansion found for ${setId}`);
+    console.log(
+      `[CMPriceSync] Available expansions (first 10): ${expansions
+        .slice(0, 10)
+        .map((e: any) => `${e.name} (${e.code})`)
+        .join(", ")}`,
+    );
     return;
   }
 
+  console.log(
+    `[CMPriceSync] Matched to CardMarket expansion: ${match.name} (id: ${match.id}, code: ${match.code})`,
+  );
   const result = await syncExpansionPrices(
     match.id,
     match.name ?? setId,
