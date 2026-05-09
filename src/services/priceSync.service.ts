@@ -25,7 +25,8 @@ export const syncAllCardPrices = async (): Promise<void> => {
   const { data: cards, error } = await supabaseAdmin
     .from("cards")
     .select("id, name, set_id")
-    .order("id");
+    .order("id")
+    .limit(100000);
 
   if (error || !cards) {
     console.error("[PriceSync] Failed to fetch cards:", error);
