@@ -14,7 +14,7 @@ import portfolioRoutes from "../routes/portfolio.routes";
 import variantRoutes from "../routes/variant.route";
 import adminRoutes from "../routes/admin.routes";
 import gradingRoutes from "../routes/grading.routes";
-import masterSetRoutes from "../routes/masetSet.routes";
+import masterSetRoutes from "../routes/masterSets.routes";
 
 dotenv.config();
 
