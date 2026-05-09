@@ -90,6 +90,7 @@ export const getCardPrices = async (
       cardId,
       card.name,
       card.set.id,
+      true,
     );
     res.json({
       data: {
