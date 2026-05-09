@@ -1,10 +1,9 @@
 // src/routes/admin.routes.ts
 // Admin-only routes — protected by requireAdmin middleware
 
-import { Router, Response } from 'express';
+import { Router, Response, Request } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
-import { requireAdmin } from '../middleware/auth.middleware';
-import type { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { authenticateUser, requireAdmin } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -15,8 +14,9 @@ const router = Router();
 
 router.post(
   '/sets/tcgdex-ids',
+  authenticateUser,
   requireAdmin,
-  async (req: AuthenticatedRequest, res: Response) => {
+  async (req: Request, res: Response) => {
     try {
       const { mappings } = req.body;
 

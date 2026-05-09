@@ -126,7 +126,7 @@ const syncExpansionPrices = async (
       // CardMarket graded — keys like "psa10", "cgc9", "bgs9"
       // graded can be an object OR an empty array — check it's actually an object
       if (prices.cardmarket.graded && !Array.isArray(prices.cardmarket.graded)) {
-        for (const [company, grades] of Object.entries(prices.cardmarket.graded as Record<string, any>)) {
+        for (const [, grades] of Object.entries(prices.cardmarket.graded as Record<string, any>)) {
           if (!grades || typeof grades !== "object") continue;
           for (const [gradeKey, price] of Object.entries(grades as Record<string, number>)) {
             if (price == null) continue;
