@@ -551,94 +551,32 @@ router.post(
   },
 );
 
-// Add these two routes to src/routes/sync.routes.ts
-// They test pricing sources directly from your Render server
+// ─── pokemontcg.io USD price sync ────────────────────────────────────────────
+// Syncs accurate TCGPlayer USD prices per variant for all cards.
+// Run this alongside /sync/prices/cardmarket for full coverage:
+//   pokemontcg.io → TCGPlayer USD prices per variant (normal, reverseHolofoil etc)
+//   CardMarket    → EUR prices + PSA/BGS/eBay graded prices
 
-// GET /sync/test/pokemontcg/:cardId
-// Tests what pokemontcg.io returns for a specific card's prices
-router.get(
-  "/test/pokemontcg/:cardId",
+router.post(
+  "/prices/pokemontcg",
   requireSyncKey,
-  async (req: Request, res: Response) => {
+  async (_req: Request, res: Response) => {
     try {
-      const { cardId } = req.params;
-      const { pokemonTcgClient } = await import("../lib/pokemonTcgClient");
-
-      const card = await (pokemonTcgClient as any).getCardById(cardId);
-
-      if (!card) {
-        res
-          .status(404)
-          .json({ error: `Card ${cardId} not found in pokemontcg.io` });
-        return;
-      }
-
       res.json({
-        data: {
-          cardId: card.id,
-          name: card.name,
-          set: card.set?.name,
-          hasTCGPlayerPrices: !!card.tcgplayer?.prices,
-          tcgplayerUpdatedAt: card.tcgplayer?.updatedAt ?? null,
-          tcgplayerPrices: card.tcgplayer?.prices ?? null,
-          tcgplayerId: card.tcgplayer?.productId ?? null,
-          hasCardMarketPrices: !!card.cardmarket?.prices,
-          cardmarketPrices: card.cardmarket?.prices ?? null,
-        },
+        message:
+          "pokemontcg.io USD price sync started — this takes 2-3 hours for all 20k cards",
+        timestamp: new Date().toISOString(),
       });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message ?? "Test failed" });
-    }
-  },
-);
-
-// GET /sync/test/pokemontcg-set/:setId
-// Tests price coverage across a full set from pokemontcg.io
-// Returns how many cards have prices vs total
-router.get(
-  "/test/pokemontcg-set/:setId",
-  requireSyncKey,
-  async (req: Request, res: Response) => {
-    try {
-      const { setId } = req.params;
-      const { pokemonTcgClient } = await import("../lib/pokemonTcgClient");
-
-      // Fetch first page of cards for this set
-      const result = await (pokemonTcgClient as any).getCardsBySet(
-        setId,
-        1,
-        20,
+      const { syncAllTCGPlayerPrices } =
+        await import("../services/pokemontcgPriceSync.service");
+      syncAllTCGPlayerPrices().catch((err: any) =>
+        console.error(
+          "[SyncRoute] pokemontcg price sync failed:",
+          err?.message,
+        ),
       );
-      const cards = result?.data ?? [];
-
-      if (!cards.length) {
-        res.json({ data: { setId, message: "No cards found", cards: [] } });
-        return;
-      }
-
-      const sample = cards.slice(0, 5).map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        hasTCGPlayerPrices: !!c.tcgplayer?.prices,
-        tcgplayerUpdatedAt: c.tcgplayer?.updatedAt ?? null,
-        prices: c.tcgplayer?.prices ?? null,
-        currency: "USD", // pokemontcg.io always returns USD
-      }));
-
-      const withPrices = cards.filter((c: any) => !!c.tcgplayer?.prices).length;
-
-      res.json({
-        data: {
-          setId,
-          totalFetched: cards.length,
-          withPrices,
-          coveragePct: Math.round((withPrices / cards.length) * 100),
-          currency: "USD",
-          sampleCards: sample,
-        },
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message ?? "Test failed" });
+    } catch {
+      res.status(500).json({ error: "Failed to start pokemontcg price sync" });
     }
   },
 );

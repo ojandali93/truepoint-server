@@ -92,6 +92,18 @@ class PokemonTcgClient {
     );
     return data;
   }
+
+  // Fetch all cards with pagination — used by price sync
+  async getAllCards(
+    page = 1,
+    pageSize = 250,
+  ): Promise<ApiListResponse<PokemonCard>> {
+    const { data } = await this.client.get<ApiListResponse<PokemonCard>>(
+      "/cards",
+      { params: { page, pageSize, orderBy: "id" } },
+    );
+    return data;
+  }
 }
 
 export const pokemonTcgClient = new PokemonTcgClient();
