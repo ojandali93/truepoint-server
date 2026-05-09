@@ -239,17 +239,25 @@ export const getSetPrices = async (
 
     const cardIds = cards.map((c) => c.id);
 
-    // Batch fetch all cached prices (raw cards only, not graded)
-    const { data: rows, error: pricesErr } = await supabaseAdmin
-      .from("market_prices")
-      .select("card_id, source, variant, prices")
-      .in("card_id", cardIds)
-      .is("grade", null)
-      .gt("expires_at", new Date().toISOString());
+    // Fetch in batches of 200 to avoid URL limits
+    const BATCH = 200;
+    const allRows: any[] = [];
 
-    if (pricesErr) {
-      console.error("[CardController] getSetPrices error:", pricesErr);
-      return res.json({ data: {} });
+    for (let i = 0; i < cardIds.length; i += BATCH) {
+      const batch = cardIds.slice(i, i + BATCH);
+      const { data: rows, error: pricesErr } = await supabaseAdmin
+        .from("market_prices")
+        .select("card_id, source, variant, market_price, low_price, high_price")
+        // flat columns — no 'prices' jsonb
+        .in("card_id", batch)
+        .is("grade", null) // raw cards only
+        .gt("expires_at", new Date().toISOString());
+
+      if (pricesErr) {
+        console.error("[CardController] getSetPrices batch error:", pricesErr);
+        continue;
+      }
+      allRows.push(...(rows ?? []));
     }
 
     // Build price map: cardId → [{ variant, market, source }]
@@ -258,12 +266,11 @@ export const getSetPrices = async (
       { variant: string; market: number | null; source: string }[]
     > = {};
 
-    for (const row of rows ?? []) {
+    for (const row of allRows) {
       if (!priceMap[row.card_id]) priceMap[row.card_id] = [];
-      const prices = row.prices as Record<string, number>;
       priceMap[row.card_id].push({
         variant: row.variant ?? "normal",
-        market: prices?.market ?? null,
+        market: row.market_price ?? null,
         source: row.source,
       });
     }
