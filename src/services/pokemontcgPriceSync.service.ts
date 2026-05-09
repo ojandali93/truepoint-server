@@ -7,7 +7,7 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { pokemonTcgClient } from "../lib/pokemonTcgClient";
 
-const PAGE_SIZE = 250; // pokemontcg.io max per page
+const PAGE_SIZE = 100; // smaller pages = less timeout risk
 const DELAY_MS = 100; // small delay between pages — API is generous with rate limits
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -65,18 +65,35 @@ export const syncAllTCGPlayerPrices = async (): Promise<void> => {
     console.log(`[PTCGPriceSync] Page ${page}...`);
 
     let cards: any[] = [];
-    try {
-      const result = await pokemonTcgClient.getAllCards(page, PAGE_SIZE);
-      cards = result?.data ?? [];
-      if (!totalCards && result?.totalCount) {
-        totalCards = result.totalCount;
-        console.log(
-          `[PTCGPriceSync] Total cards in pokemontcg.io: ${totalCards}`,
+    // Retry up to 3 times on timeout
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        const result = await pokemonTcgClient.getAllCards(page, PAGE_SIZE);
+        cards = result?.data ?? [];
+        if (!totalCards && result?.totalCount) {
+          totalCards = result.totalCount;
+          console.log(
+            `[PTCGPriceSync] Total cards in pokemontcg.io: ${totalCards}`,
+          );
+        }
+        break; // success
+      } catch (err: any) {
+        attempts++;
+        if (attempts >= 3) {
+          console.error(
+            `[PTCGPriceSync] Page ${page} failed after 3 attempts:`,
+            err?.message,
+          );
+          // Skip this page and continue rather than aborting the whole sync
+          cards = [];
+          break;
+        }
+        console.warn(
+          `[PTCGPriceSync] Page ${page} attempt ${attempts} failed, retrying in 5s...`,
         );
+        await delay(5000);
       }
-    } catch (err: any) {
-      console.error(`[PTCGPriceSync] Page ${page} failed:`, err?.message);
-      break;
     }
 
     if (!cards.length) break;
