@@ -3,9 +3,53 @@ import { supabaseAdmin } from "../lib/supabase";
 import { getAllPricesForCard } from "./pricing.service";
 
 const BATCH_SIZE = 50;
-const DELAY_MS = 400; // between cards — keeps API calls polite
+const DELAY_MS = 400;
+const PAGE_SIZE = 1000; // Supabase max rows per query
 
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+// ─── Fetch ALL cards using pagination ─────────────────────────────────────────
+// Supabase caps single queries at 1000 rows.
+// We paginate through all cards to get the full 20k+.
+
+const fetchAllCards = async (): Promise<
+  { id: string; name: string; set_id: string }[]
+> => {
+  const all: { id: string; name: string; set_id: string }[] = [];
+  let page = 0;
+
+  while (true) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, error } = await supabaseAdmin
+      .from("cards")
+      .select("id, name, set_id")
+      .order("id")
+      .range(from, to);
+
+    if (error) {
+      console.error("[PriceSync] fetchAllCards error:", error.message);
+      break;
+    }
+
+    if (!data || data.length === 0) break;
+
+    all.push(...data);
+    console.log(
+      `[PriceSync] Loaded cards ${from + 1}–${from + data.length} (total so far: ${all.length})`,
+    );
+
+    // If we got fewer than PAGE_SIZE we've hit the end
+    if (data.length < PAGE_SIZE) break;
+
+    page++;
+  }
+
+  return all;
+};
+
+// ─── Main sync ─────────────────────────────────────────────────────────────────
 
 export const syncAllCardPrices = async (): Promise<void> => {
   console.log("[PriceSync] Starting full card price sync...");
@@ -21,39 +65,38 @@ export const syncAllCardPrices = async (): Promise<void> => {
   let synced = 0;
   let failed = 0;
 
-  // Pull all card IDs from your cards table
-  const { data: cards, error } = await supabaseAdmin
-    .from("cards")
-    .select("id, name, set_id")
-    .order("id")
-    .limit(100000);
+  // Fetch all cards with pagination
+  const cards = await fetchAllCards();
 
-  if (error || !cards) {
-    console.error("[PriceSync] Failed to fetch cards:", error);
+  if (!cards.length) {
+    console.error("[PriceSync] No cards found");
     return;
   }
 
   console.log(`[PriceSync] Syncing prices for ${cards.length} cards...`);
 
   // Process in batches
+  const totalBatches = Math.ceil(cards.length / BATCH_SIZE);
+
   for (let i = 0; i < cards.length; i += BATCH_SIZE) {
     const batch = cards.slice(i, i + BATCH_SIZE);
-    console.log(
-      `[PriceSync] Batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(cards.length / BATCH_SIZE)}`,
-    );
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    console.log(`[PriceSync] Batch ${batchNum} of ${totalBatches}`);
 
     for (const card of batch) {
       try {
-        await getAllPricesForCard(card.id, card.name, card.set_id);
+        // fetchGraded = false — raw TCGPlayer prices only during bulk sync
+        // Graded prices fetched on-demand in card detail view
+        await getAllPricesForCard(card.id, card.name, card.set_id, false);
         synced++;
       } catch (err: any) {
-        console.error(`[PriceSync] Failed for card ${card.id}:`, err?.message);
+        console.error(`[PriceSync] Failed for ${card.id}:`, err?.message);
         failed++;
       }
       await delay(DELAY_MS);
     }
 
-    // Update progress every batch
+    // Update progress in DB every batch
     if (syncId) {
       await supabaseAdmin
         .from("price_sync_log")
@@ -82,7 +125,8 @@ export const syncAllCardPrices = async (): Promise<void> => {
   console.log(`[PriceSync] Complete. Synced: ${synced}, Failed: ${failed}`);
 };
 
-// Check if a sync is needed (last sync > 48 hours ago)
+// ─── Check if sync is needed ───────────────────────────────────────────────────
+
 export const shouldSyncPrices = async (): Promise<boolean> => {
   const { data } = await supabaseAdmin
     .from("price_sync_log")
