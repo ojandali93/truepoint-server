@@ -465,4 +465,81 @@ router.post(
   },
 );
 
+router.post(
+  "/prices/tcgdex",
+  requireSyncKey,
+  async (_req: Request, res: Response) => {
+    try {
+      res.json({
+        message: "TCGdex price sync started for sets with no coverage",
+        timestamp: new Date().toISOString(),
+      });
+      const { syncAllPricesFromTCGdex } =
+        await import("../services/tcgdexPriceSync.service");
+      syncAllPricesFromTCGdex()
+        .then(() => {
+          console.log("[SyncRoute] TCGdex price sync complete");
+        })
+        .catch((err: unknown) =>
+          console.error(
+            "[SyncRoute] TCGdex price sync failed:",
+            err instanceof Error ? err.message : err,
+          ),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start TCGdex price sync" });
+    }
+  },
+);
+
+router.post(
+  "/prices/tcgdex/:setId",
+  requireSyncKey,
+  async (req: Request, res: Response) => {
+    try {
+      const { setId } = req.params;
+      const { data: set } = await supabaseAdmin
+        .from("sets")
+        .select("name, tcgdex_id")
+        .eq("id", setId)
+        .single();
+
+      if (!set) {
+        res.status(404).json({ error: `Set ${setId} not found` });
+        return;
+      }
+
+      if (!set.tcgdex_id) {
+        res.status(400).json({
+          error: `Set ${setId} has no tcgdex_id. Run POST /sync/sets/map-tcgdex first.`,
+        });
+        return;
+      }
+
+      res.json({
+        message: `TCGdex price sync started for ${set.name}`,
+        setId,
+        tcgdexId: set.tcgdex_id,
+      });
+
+      const { syncSetPrices } =
+        await import("../services/tcgdexPriceSync.service");
+      syncSetPrices(setId, set.tcgdex_id)
+        .then((result: { synced: number; noPrice: number }) => {
+          console.log(
+            `[SyncRoute] TCGdex price sync for ${setId}: ${result.synced} cards synced`,
+          );
+        })
+        .catch((err: unknown) =>
+          console.error(
+            `[SyncRoute] TCGdex price sync failed for ${setId}:`,
+            err instanceof Error ? err.message : err,
+          ),
+        );
+    } catch {
+      res.status(500).json({ error: "Failed to start TCGdex price sync" });
+    }
+  },
+);
+
 export default router;
