@@ -170,4 +170,117 @@ export const syncAllTCGPlayerPrices = async (): Promise<void> => {
     `[PTCGPriceSync] Complete — ${totalSynced} cards with USD prices, ` +
       `${totalNoPrice} cards had no TCGPlayer price data`,
   );
+
+  // Convert remaining EUR prices to USD for cards pokemontcg.io doesn't have
+  await convertRemainingEURToUSD();
+};
+
+// ─── EUR → USD conversion for cards not in pokemontcg.io ─────────────────────
+// Fetches live EUR/USD rate, finds cards with CardMarket EUR prices but no
+// TCGPlayer USD price, converts and stores as source='tcgplayer'.
+
+const convertRemainingEURToUSD = async (): Promise<void> => {
+  console.log("[PTCGPriceSync] Converting remaining EUR prices to USD...");
+
+  // Fetch live EUR/USD exchange rate
+  let eurToUsd = 1.09; // fallback rate
+  try {
+    const res = await fetch("https://api.exchangerate-api.com/v4/latest/EUR");
+    if (res.ok) {
+      const data = (await res.json()) as { rates?: { USD?: number } };
+      eurToUsd = data?.rates?.USD ?? 1.09;
+      console.log(`[PTCGPriceSync] Live EUR/USD rate: ${eurToUsd}`);
+    }
+  } catch {
+    console.log(
+      `[PTCGPriceSync] Could not fetch live rate — using fallback: ${eurToUsd}`,
+    );
+  }
+
+  // Find cards that have cardmarket prices but no tcgplayer prices
+  // Do this in pages to avoid loading everything at once
+  const PAGE = 1000;
+  let offset = 0;
+  let converted = 0;
+
+  while (true) {
+    // Get cards that have cardmarket source but no tcgplayer source
+    const { data: eurRows } = await supabaseAdmin
+      .from("market_prices")
+      .select("card_id, market_price, low_price, mid_price, fetched_at")
+      .eq("source", "cardmarket")
+      .is("grade", null)
+      .range(offset, offset + PAGE - 1);
+
+    if (!eurRows?.length) break;
+
+    // Find which of these card IDs already have a tcgplayer row
+    const cardIds = [...new Set(eurRows.map((r) => r.card_id))];
+    const { data: existing } = await supabaseAdmin
+      .from("market_prices")
+      .select("card_id")
+      .eq("source", "tcgplayer")
+      .is("grade", null)
+      .in("card_id", cardIds);
+
+    const hasUSD = new Set((existing ?? []).map((r) => r.card_id));
+    const needsConversion = eurRows.filter((r) => !hasUSD.has(r.card_id));
+
+    if (!needsConversion.length) {
+      offset += PAGE;
+      if (eurRows.length < PAGE) break;
+      continue;
+    }
+
+    // Build USD rows from EUR prices
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    const usdRows = needsConversion
+      .map((row) => ({
+        card_id: row.card_id,
+        source: "tcgplayer",
+        variant: "normal",
+        grade: null,
+        low_price: row.low_price
+          ? Math.round(row.low_price * eurToUsd * 100) / 100
+          : null,
+        mid_price: null,
+        high_price: null,
+        market_price: row.market_price
+          ? Math.round(row.market_price * eurToUsd * 100) / 100
+          : null,
+        fetched_at: new Date().toISOString(),
+        expires_at: expiresAt,
+      }))
+      .filter((r) => r.market_price != null);
+
+    // Insert in chunks
+    const CHUNK = 500;
+    for (let i = 0; i < usdRows.length; i += CHUNK) {
+      const { error } = await supabaseAdmin
+        .from("market_prices")
+        .upsert(usdRows.slice(i, i + CHUNK), {
+          onConflict: "card_id,source,variant,grade",
+        });
+      if (error) {
+        // upsert may fail without unique constraint — try insert instead
+        const { error: insertErr } = await supabaseAdmin
+          .from("market_prices")
+          .insert(usdRows.slice(i, i + CHUNK));
+        if (insertErr) {
+          console.warn(
+            `[PTCGPriceSync] Insert fallback failed:`,
+            insertErr.message,
+          );
+        }
+      }
+    }
+
+    converted += usdRows.length;
+    offset += PAGE;
+    if (eurRows.length < PAGE) break;
+  }
+
+  console.log(
+    `[PTCGPriceSync] Converted ${converted} EUR prices to USD (rate: ${eurToUsd})`,
+  );
 };
