@@ -109,15 +109,16 @@ export const syncProductsForSet = async (
 
       // Save CardMarket price
       const cmPrice = product.prices?.cardmarket;
-      if (cmPrice?.lowest != null) {
+      const cmLow = cmPrice?.lowest_near_mint ?? null;
+      if (cmLow != null) {
         await supabaseAdmin.from("product_price_cache").upsert(
           {
             product_id: productId,
             source: "cardmarket",
-            low_price: cmPrice.lowest ?? null,
+            low_price: cmLow,
             mid_price: null,
             high_price: null,
-            market_price: cmPrice.lowest ?? null,
+            market_price: cmLow,
             fetched_at: new Date().toISOString(),
             expires_at: expiresAt,
           },

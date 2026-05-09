@@ -68,14 +68,7 @@ export interface CardMarketProduct {
   id: number;
   name: string;
   slug: string;
-  prices: {
-    cardmarket?: {
-      currency: string;
-      lowest: number | null;
-      lowest_DE?: number | null;
-      lowest_FR?: number | null;
-    };
-  };
+  prices: CardMarketPrices;
   episode: {
     id: number;
     name: string;
@@ -85,6 +78,7 @@ export interface CardMarketProduct {
   };
   image: string;
   tcggo_url: string;
+  card_number: string;
 }
 
 class CardMarketClient {
