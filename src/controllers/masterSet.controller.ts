@@ -1,3 +1,5 @@
+// src/controllers/masterSet.controller.ts
+
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import {
@@ -10,7 +12,7 @@ import {
   updateCardQuantity,
 } from "../services/masterSet.service";
 
-const err = (res: Response, e: unknown) => {
+const handleError = (res: Response, e: unknown) => {
   console.error("[MasterSet]", e);
   res.status(500).json({ error: "Internal server error" });
 };
@@ -24,7 +26,7 @@ export const getTracked = async (req: AuthenticatedRequest, res: Response) => {
     ]);
     res.json({ data: { sets, limit } });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
 
@@ -34,7 +36,7 @@ export const getLimit = async (req: AuthenticatedRequest, res: Response) => {
     const limit = await canTrackMoreSets(req.user.id);
     res.json({ data: limit });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
 
@@ -51,11 +53,11 @@ export const getSetDetail = async (
     }
     res.json({ data: result });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
 
-// POST /master-sets/:setId/track — start tracking
+// POST /master-sets/:setId/track — start tracking a set
 export const startTracking = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -68,11 +70,11 @@ export const startTracking = async (
     }
     res.json({ data: { tracked: true } });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
 
-// DELETE /master-sets/:setId/track — stop tracking
+// DELETE /master-sets/:setId/track — stop tracking a set
 export const stopTracking = async (
   req: AuthenticatedRequest,
   res: Response,
@@ -81,7 +83,7 @@ export const stopTracking = async (
     await untrackSet(req.user.id, req.params.setId);
     res.json({ data: { tracked: false } });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
 
@@ -97,7 +99,7 @@ export const toggleCardCollected = async (
     const result = await toggleCard(req.user.id, setId, cardId, variantType);
     res.json({ data: result });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
 
@@ -113,6 +115,6 @@ export const setCardQuantity = async (
     await updateCardQuantity(req.user.id, setId, cardId, variantType, quantity);
     res.json({ data: { quantity } });
   } catch (e) {
-    err(res, e);
+    handleError(res, e);
   }
 };
