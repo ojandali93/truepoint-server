@@ -5,7 +5,6 @@ import {
   insertInventoryBatch,
   updateInventoryItem,
   deleteInventoryItem,
-  fetchCardPrices,
   fetchProductPrices,
   CreateInventoryInput,
   UpdateInventoryInput,
@@ -13,6 +12,7 @@ import {
   GradingCompany,
   ItemType,
 } from "../repositories/inventory.repository";
+import { batchResolveMarketValues } from "./pricing.service";
 import { supabaseAdmin } from "../lib/supabase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -44,65 +44,22 @@ export interface InventorySummary {
 // Determine the best market price for an inventory item
 const resolveMarketValue = (
   item: InventoryRow,
-  cardPrices: Map<string, Record<string, number>>,
+  cardPrices: Map<string, number | null>,
   productPrices: Map<string, number>,
 ): MarketValue => {
   // Sealed product
   if (item.item_type === "sealed_product" && item.product_id) {
     const price = productPrices.get(item.product_id) ?? null;
+    return { marketPrice: price, source: price ? "tcgplayer" : null };
+  }
+
+  // Raw or graded card
+  if (item.card_id) {
+    const price = cardPrices.get(item.card_id) ?? null;
     return {
       marketPrice: price,
-      source: price ? "tcgplayer/cardmarket" : null,
+      source: price ? "tcgplayer" : null,
     };
-  }
-
-  // Raw card — use TCGPlayer market, fallback to CardMarket
-  if (item.item_type === "raw_card" && item.card_id) {
-    const prices = cardPrices.get(item.card_id);
-    if (!prices) return { marketPrice: null, source: null };
-
-    if (prices.raw_market)
-      return { marketPrice: prices.raw_market, source: "tcgplayer" };
-    if (prices.cm_market)
-      return { marketPrice: prices.cm_market, source: "cardmarket" };
-    return { marketPrice: null, source: null };
-  }
-
-  // Graded card — look up graded price for matching company + grade
-  if (
-    item.item_type === "graded_card" &&
-    item.card_id &&
-    item.grading_company &&
-    item.grade
-  ) {
-    const prices = cardPrices.get(item.card_id);
-    if (!prices) return { marketPrice: null, source: null };
-
-    // Map grading company to source key used in cached_card_prices
-    const sourceMap: Record<GradingCompany, string> = {
-      PSA: "psa",
-      BGS: "bgs",
-      CGC: "cgc",
-      SGC: "sgc",
-      TAG: "tag",
-    };
-
-    const sourceKey = sourceMap[item.grading_company];
-    const gradeKey = `${sourceKey}_${item.grade}`;
-
-    if (prices[gradeKey]) {
-      return { marketPrice: prices[gradeKey], source: item.grading_company };
-    }
-
-    // Fallback — use raw price if no graded price available
-    if (prices.raw_market) {
-      return {
-        marketPrice: prices.raw_market,
-        source: "tcgplayer (raw fallback)",
-      };
-    }
-
-    return { marketPrice: null, source: null };
   }
 
   return { marketPrice: null, source: null };
@@ -135,7 +92,6 @@ export const getInventory = async (
   const cardIds = [
     ...new Set(rows.filter((r) => r.card_id).map((r) => r.card_id!)),
   ];
-
   const productIds = [
     ...new Set(
       rows
@@ -144,18 +100,17 @@ export const getInventory = async (
     ),
   ];
 
-  // Fetch all prices in two queries
+  // Single DB query for all card prices (reads from market_prices table)
   const [cardPrices, productPrices] = await Promise.all([
-    fetchCardPrices(cardIds),
-    fetchProductPrices(productIds),
+    batchResolveMarketValues(cardIds),
+    fetchProductPrices(productIds), // existing function reads product_price_cache
   ]);
 
-  // Attach market values and calculate gain/loss
   let totalCostBasis = 0;
   let totalMarketValue = 0;
-  let rawCards = 0;
-  let gradedCards = 0;
-  let sealedProducts = 0;
+  let rawCards = 0,
+    gradedCards = 0,
+    sealedProducts = 0;
 
   const items: InventoryItemWithValue[] = rows.map((row) => {
     const marketValue = resolveMarketValue(row, cardPrices, productPrices);
@@ -184,18 +139,19 @@ export const getInventory = async (
   const totalGainLossPct =
     totalCostBasis > 0 ? (totalGainLoss / totalCostBasis) * 100 : null;
 
-  const summary: InventorySummary = {
-    totalItems: rows.length,
-    rawCards,
-    gradedCards,
-    sealedProducts,
-    totalCostBasis,
-    totalMarketValue,
-    totalGainLoss,
-    totalGainLossPct,
+  return {
+    items,
+    summary: {
+      totalItems: rows.length,
+      rawCards,
+      gradedCards,
+      sealedProducts,
+      totalCostBasis,
+      totalMarketValue,
+      totalGainLoss,
+      totalGainLossPct,
+    },
   };
-
-  return { items, summary };
 };
 
 export const addInventoryItem = async (
