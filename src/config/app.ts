@@ -12,6 +12,7 @@ import syncRoutes from "../routes/sync.routes";
 import inventoryRoutes from "../routes/inventory.route";
 import portfolioRoutes from "../routes/portfolio.routes";
 import variantRoutes from "../routes/variant.route";
+import adminRoutes from "../routes/admin.routes";
 
 dotenv.config();
 
@@ -31,6 +32,8 @@ app.use("/api/v1/sync", syncRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/portfolio", portfolioRoutes);
 app.use("/api/v1/variants", variantRoutes);
+
+app.use("/api/v1/admin", adminRoutes);
 
 // Add BEFORE express.json() so the webhook route gets the raw body
 app.use(
