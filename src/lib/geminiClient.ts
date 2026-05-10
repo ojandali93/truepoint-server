@@ -266,8 +266,10 @@ Return ONLY valid JSON — no markdown, no code blocks:
 Be precise and conservative — like a real grader. If image quality is poor, lower your confidence score.`;
 
 export const analyzeCardForGrading = async (
-  imageBase64: string,
-  mimeType: "image/jpeg" | "image/png" | "image/webp",
+  frontBase64: string,
+  frontMime: "image/jpeg" | "image/png" | "image/webp",
+  backBase64: string,
+  backMime: "image/jpeg" | "image/png" | "image/webp",
   cardName?: string,
   setName?: string,
 ): Promise<GradingAnalysis> => {
@@ -293,12 +295,19 @@ export const analyzeCardForGrading = async (
     ],
   });
 
-  const imagePart = fileToGenerativePart(imageBase64, mimeType);
+  const frontPart = fileToGenerativePart(frontBase64, frontMime);
+  const backPart = fileToGenerativePart(backBase64, backMime);
   const result = await model.generateContent({
     contents: [
       {
         role: "user",
-        parts: [imagePart, { text: GRADING_PROMPT(cardContext) }],
+        parts: [
+          { text: "FRONT OF CARD:" },
+          frontPart,
+          { text: "BACK OF CARD:" },
+          backPart,
+          { text: GRADING_PROMPT(cardContext) },
+        ],
       },
     ],
     generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },

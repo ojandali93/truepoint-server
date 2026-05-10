@@ -1,16 +1,16 @@
 import { Router } from "express";
 import { authenticateUser } from "../middleware/auth.middleware";
-import { writeLimiter } from "../middleware/rateLimit.middleware";
-import * as AIGradingController from "../controllers/aiGrading.controller";
-
-const aiGradingRouter = Router();
-aiGradingRouter.use(authenticateUser as any);
-
-// POST /grading/ai-analyze
-aiGradingRouter.post(
-  "/ai-analyze",
+import {
+  standardLimiter,
   writeLimiter,
-  AIGradingController.analyzeCard as any,
-);
+} from "../middleware/rateLimit.middleware";
+import * as AIG from "../controllers/aiGrading.controller";
 
-export default aiGradingRouter;
+const router = Router();
+router.use(authenticateUser as any);
+
+router.post("/ai-analyze", writeLimiter, AIG.analyzeCard as any);
+router.get("/ai-reports", standardLimiter, AIG.getReports as any);
+router.delete("/ai-reports/:id", writeLimiter, AIG.deleteReport as any);
+
+export default router;
