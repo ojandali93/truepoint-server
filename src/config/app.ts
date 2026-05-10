@@ -15,7 +15,6 @@ import variantRoutes from "../routes/variant.route";
 import adminRoutes from "../routes/admin.routes";
 import gradingRoutes from "../routes/grading.routes";
 import gradingLifecycleRoutes from "../routes/gradingLifecycle.routes";
-import aiGradingRoutes from "../routes/aiGrading.routes";
 import masterSetRoutes from "../routes/masterSet.routes";
 
 dotenv.config();
