@@ -68,7 +68,7 @@ const runIdentification = async (
 
     const prices =
       matchConfidence === 'exact' || matchConfidence === 'probable'
-        ? await getAllPricesForCard(topMatch.id, topMatch.name, topMatch.set.id)
+        ? await getAllPricesForCard(topMatch.id)
         : null;
 
     return { identification: id, matchedCard: topMatch, matchConfidence, prices, searchQuery };

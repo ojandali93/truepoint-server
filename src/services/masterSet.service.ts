@@ -46,42 +46,6 @@ export const canTrackMoreSets = async (userId: string) => {
   };
 };
 
-// ─── Rarity sort order for binder grouping ────────────────────────────────────
-
-const RARITY_ORDER: Record<string, number> = {
-  'Common':                    0,
-  'Uncommon':                  1,
-  'Rare':                      2,
-  'Rare Holo':                 3,
-  'Double Rare':               4,
-  'Rare Holo V':               4,
-  'Rare Holo VMAX':            4,
-  'Rare Holo VSTAR':           4,
-  'Ultra Rare':                5,
-  'Rare Ultra':                5,
-  'Illustration Rare':         6,
-  'Special Illustration Rare': 7,
-  'Hyper Rare':                8,
-  'Rare Secret':               8,
-  'Rare Rainbow':              8,
-  'Trainer Gallery Rare Holo': 9,
-  'ACE SPEC Rare':             9,
-};
-
-const raritySort = (rarity: string | null): number =>
-  RARITY_ORDER[rarity ?? ''] ?? 3;
-
-const VARIANT_ORDER: Record<string, number> = {
-  normal:           0,
-  unlimited:        0,
-  holofoil:         1,
-  reverseHolofoil:  2,
-  '1stEdition':     3,
-  '1stEditionHolofoil': 4,
-};
-
-const variantSort = (v: string): number => VARIANT_ORDER[v] ?? 5;
-
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface MasterSetCard {
@@ -300,7 +264,6 @@ export const toggleCard = async (
   cardId: string,
   variantType: string
 ): Promise<{ haveCount: number }> => {
-  const key = `${cardId}::${variantType}`;
   const { data: existing } = await supabaseAdmin
     .from('master_set_cards')
     .select('id, quantity')
@@ -353,10 +316,10 @@ export const trackSet = async (userId: string, setId: string) => {
   if (!limit.allowed) {
     return { success: false, error: `Upgrade to track more sets. Current limit: ${limit.limit}` };
   }
-  const { error } = await supabaseAdmin
-    .from('master_set_tracking')
-    .insert({ user_id: userId, set_id: setId })
-    .onConflict('user_id,set_id').ignore();
+  const { error } = await supabaseAdmin.from('master_set_tracking').upsert(
+    { user_id: userId, set_id: setId },
+    { onConflict: 'user_id,set_id', ignoreDuplicates: true },
+  );
 
   return error ? { success: false, error: error.message } : { success: true };
 };

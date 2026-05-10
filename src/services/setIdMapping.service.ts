@@ -66,7 +66,7 @@ export const discoverTCGdexIds = async (): Promise<{
     const directMatch =
       tcgdexById.get(set.id.toLowerCase()) ??
       tcgdexById.get(set.id.toLowerCase().replace(/([a-z])(\d)([a-z]|pt|$)/i,
-        (_, p, d, s) => `${p}0${d}${s}`
+        (_match: string, p: string, d: string, s: string) => `${p}0${d}${s}`
       ).toLowerCase());
 
     if (directMatch) {
