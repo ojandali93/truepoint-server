@@ -46,7 +46,7 @@ export const identifyCardFromBase64 = async (
     throw { status: 503, message: "Gemini Vision API not configured" };
   }
 
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
   const imagePart = fileToGenerativePart(base64Image, mimeType);
   const result = await model.generateContent([CARD_ID_PROMPT, imagePart]);
   const rawResponse = result.response.text().trim();
@@ -282,7 +282,7 @@ export const analyzeCardForGrading = async (
     : "";
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "gemini-2.5-flash",
     safetySettings: [
       {
         category: HarmCategory.HARM_CATEGORY_HARASSMENT,
