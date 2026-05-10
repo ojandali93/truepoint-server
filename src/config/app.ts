@@ -15,6 +15,7 @@ import variantRoutes from "../routes/variant.route";
 import adminRoutes from "../routes/admin.routes";
 import gradingRoutes from "../routes/grading.routes";
 import gradingLifecycleRoutes from "../routes/gradingLifecycle.routes";
+import aiGradingRoutes from "../routes/aiGrading.routes";
 import masterSetRoutes from "../routes/masterSet.routes";
 
 dotenv.config();
@@ -24,8 +25,8 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(",") ?? "*" }));
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "20mb" })); // 20mb for base64 images
+app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use(morgan("combined"));
 
 app.use("/api/v1/users", userRoutes);
@@ -38,6 +39,7 @@ app.use("/api/v1/variants", variantRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
+app.use("/api/v1/ai-grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 
 // Add BEFORE express.json() so the webhook route gets the raw body
@@ -49,7 +51,6 @@ app.use(
   },
 );
 
-// After your other routes:
 app.use("/api/v1/billing", billingRoutes);
 
 app.post("/debug/token", async (req, res) => {
