@@ -1,5 +1,3 @@
-// src/controllers/aiGrading.controller.ts
-
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import { analyzeCardForGrading, GradingAnalysis } from "../lib/geminiClient";
@@ -7,9 +5,11 @@ import { supabaseAdmin } from "../lib/supabase";
 
 const handleError = (res: Response, err: unknown) => {
   console.error("[AIGrading]", err);
-  res.status(500).json({
-    error: err instanceof Error ? err.message : "Internal server error",
-  });
+  res
+    .status(500)
+    .json({
+      error: err instanceof Error ? err.message : "Internal server error",
+    });
 };
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
@@ -70,6 +70,46 @@ export const analyzeCard = async (
     const { frontBase64, frontMime, backBase64, backMime, cardName, setName } =
       req.body;
 
+    // Upload images to Supabase Storage bucket "Ai Grading Images"
+    const uploadImage = async (
+      base64: string,
+      mime: string,
+      side: "front" | "back",
+    ): Promise<string | null> => {
+      try {
+        const ext =
+          mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
+        const path = `${req.user.id}/${Date.now()}_${side}.${ext}`;
+        const buffer = Buffer.from(base64, "base64");
+
+        const { error } = await supabaseAdmin.storage
+          .from("Ai Grading Images")
+          .upload(path, buffer, { contentType: mime, upsert: false });
+
+        if (error) {
+          console.error(
+            `[AIGrading] Storage upload failed (${side}):`,
+            error.message,
+          );
+          return null;
+        }
+
+        const { data } = supabaseAdmin.storage
+          .from("Ai Grading Images")
+          .getPublicUrl(path);
+
+        return data.publicUrl;
+      } catch (err: any) {
+        console.error(`[AIGrading] Upload error (${side}):`, err?.message);
+        return null;
+      }
+    };
+
+    const [frontImage, backImage] = await Promise.all([
+      uploadImage(frontBase64, frontMime ?? "image/jpeg", "front"),
+      uploadImage(backBase64, backMime ?? "image/jpeg", "back"),
+    ]);
+
     if (!frontBase64 || !backBase64) {
       res
         .status(400)
@@ -92,6 +132,8 @@ export const analyzeCard = async (
         card_name: cardName ?? null,
         set_name: setName ?? null,
         status: "processing",
+        front_image: frontImage,
+        back_image: backImage,
         // placeholder values — will be updated when Gemini completes
         centering: 0,
         corners: 0,
@@ -154,6 +196,7 @@ export const analyzeCard = async (
           .from("ai_grading_reports")
           .update({
             status: "completed",
+            overall_score: analysis.overallScore,
             centering: analysis.centering,
             corners: analysis.corners,
             edges: analysis.edges,
@@ -229,22 +272,3 @@ export const deleteReport = async (
     handleError(res, err);
   }
 };
-
-// ─── src/routes/aiGrading.routes.ts ──────────────────────────────────────────
-
-import { Router } from "express";
-import { authenticateUser } from "../middleware/auth.middleware";
-import {
-  standardLimiter,
-  writeLimiter,
-} from "../middleware/rateLimit.middleware";
-import * as AIG from "../controllers/aiGrading.controller";
-
-const router = Router();
-router.use(authenticateUser as any);
-
-router.post("/ai-analyze", writeLimiter, AIG.analyzeCard as any);
-router.get("/ai-reports", standardLimiter, AIG.getReports as any);
-router.delete("/ai-reports/:id", writeLimiter, AIG.deleteReport as any);
-
-export default router;

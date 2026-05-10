@@ -90,6 +90,9 @@ export const identifyCardFromUrl = async (
 // ─── AI Grading ───────────────────────────────────────────────────────────────
 
 export interface GradingAnalysis {
+  // Gemini's own overall score (1.0-10.0 to one decimal)
+  overallScore: number;
+
   // Sub-grades (1-10 in 0.5 increments)
   centering: number;
   corners: number;
@@ -231,6 +234,11 @@ const GRADING_PROMPT = (
 
 Analyze this card image with the precision of a professional grader. Examine all four criteria:
 
+OVERALL SCORE — your holistic 1.0-10.0 assessment (to one decimal):
+10.0 = perfect in every way | 9.5+ = exceptional, minor flaws only under magnification
+9.0 = excellent, sharp and clean | 8.5 = very good, minor issues | 8.0 = good with visible but minor flaws
+7.0-7.9 = noticeable issues | 6.0-6.9 = significant wear | below 6 = heavy wear
+
 CENTERING — measure border ratios left/right and top/bottom:
 10 = exactly 50/50 | 9.5 = 52/48 | 9 = 55/45 | 8.5 = 58/42 | 8 = 60/40 | 7.5 = 62/38 | 7 = 65/35
 
@@ -251,6 +259,7 @@ SURFACE — front and back for scratches, print lines, holo scratches, dents, fi
 
 Return ONLY valid JSON — no markdown, no code blocks:
 {
+  "overall_score": <1.0-10.0 to one decimal place — your holistic assessment of this card's condition>,
   "centering": <1-10 in 0.5 increments>,
   "corners": <1-10 in 0.5 increments>,
   "edges": <1-10 in 0.5 increments>,
@@ -348,7 +357,13 @@ export const analyzeCardForGrading = async (
   const e = clamp(parsed.edges ?? 7);
   const s = clamp(parsed.surface ?? 7);
 
+  const avg = (c + co + e + s) / 4;
+  const overallScore =
+    Math.round(Math.max(1, Math.min(10, parsed.overall_score ?? avg)) * 10) /
+    10;
+
   return {
+    overallScore,
     centering: c,
     corners: co,
     edges: e,
