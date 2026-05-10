@@ -3,31 +3,29 @@
 // Users manually check off cards they own in their physical binders.
 // Plan limits: Free=1, Collector=3, Pro=unlimited (testing=unlimited)
 
-import { supabaseAdmin } from "../lib/supabase";
+import { supabaseAdmin } from '../lib/supabase';
 
 // ─── Plan limits ──────────────────────────────────────────────────────────────
 // Testing mode: everyone gets unlimited
 const TESTING_MODE = true;
 
 const PLAN_LIMITS: Record<string, number | null> = {
-  free: 1,
+  free:      1,
   collector: 3,
-  pro: null, // unlimited
+  pro:       null, // unlimited
 };
 
-export const getUserPlan = async (
-  userId: string,
-): Promise<"free" | "collector" | "pro"> => {
-  if (TESTING_MODE) return "pro"; // unlimited during testing
+export const getUserPlan = async (userId: string): Promise<'free' | 'collector' | 'pro'> => {
+  if (TESTING_MODE) return 'pro'; // unlimited during testing
 
   const { data } = await supabaseAdmin
-    .from("subscriptions")
-    .select("plan, status")
-    .eq("user_id", userId)
+    .from('subscriptions')
+    .select('plan, status')
+    .eq('user_id', userId)
     .single();
 
-  if (!data || !["active", "trialing"].includes(data.status)) return "free";
-  return data.plan as "collector" | "pro";
+  if (!data || !['active', 'trialing'].includes(data.status)) return 'free';
+  return data.plan as 'collector' | 'pro';
 };
 
 export const canTrackMoreSets = async (userId: string) => {
@@ -35,9 +33,9 @@ export const canTrackMoreSets = async (userId: string) => {
   const limit = PLAN_LIMITS[plan];
 
   const { count } = await supabaseAdmin
-    .from("master_set_tracking")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", userId);
+    .from('master_set_tracking')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId);
 
   const current = count ?? 0;
   return {
@@ -47,6 +45,42 @@ export const canTrackMoreSets = async (userId: string) => {
     plan,
   };
 };
+
+// ─── Rarity sort order for binder grouping ────────────────────────────────────
+
+const RARITY_ORDER: Record<string, number> = {
+  'Common':                    0,
+  'Uncommon':                  1,
+  'Rare':                      2,
+  'Rare Holo':                 3,
+  'Double Rare':               4,
+  'Rare Holo V':               4,
+  'Rare Holo VMAX':            4,
+  'Rare Holo VSTAR':           4,
+  'Ultra Rare':                5,
+  'Rare Ultra':                5,
+  'Illustration Rare':         6,
+  'Special Illustration Rare': 7,
+  'Hyper Rare':                8,
+  'Rare Secret':               8,
+  'Rare Rainbow':              8,
+  'Trainer Gallery Rare Holo': 9,
+  'ACE SPEC Rare':             9,
+};
+
+const raritySort = (rarity: string | null): number =>
+  RARITY_ORDER[rarity ?? ''] ?? 3;
+
+const VARIANT_ORDER: Record<string, number> = {
+  normal:           0,
+  unlimited:        0,
+  holofoil:         1,
+  reverseHolofoil:  2,
+  '1stEdition':     3,
+  '1stEditionHolofoil': 4,
+};
+
+const variantSort = (v: string): number => VARIANT_ORDER[v] ?? 5;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,18 +120,16 @@ export interface MasterSetProgress {
 
 // ─── Get tracked sets ─────────────────────────────────────────────────────────
 
-export const getTrackedSets = async (
-  userId: string,
-): Promise<MasterSetProgress[]> => {
+export const getTrackedSets = async (userId: string): Promise<MasterSetProgress[]> => {
   const { data: tracked } = await supabaseAdmin
-    .from("master_set_tracking")
-    .select("set_id")
-    .eq("user_id", userId);
+    .from('master_set_tracking')
+    .select('set_id')
+    .eq('user_id', userId);
 
   if (!tracked?.length) return [];
 
   const results = await Promise.all(
-    tracked.map((t) => getSetProgress(userId, t.set_id)),
+    tracked.map((t) => getSetProgress(userId, t.set_id))
   );
 
   return results
@@ -109,39 +141,37 @@ export const getTrackedSets = async (
 
 export const getSetProgress = async (
   userId: string,
-  setId: string,
+  setId: string
 ): Promise<MasterSetProgress | null> => {
   const { data: set } = await supabaseAdmin
-    .from("sets")
-    .select("id, name, series, logo_url, symbol_url")
-    .eq("id", setId)
+    .from('sets')
+    .select('id, name, series, logo_url, symbol_url')
+    .eq('id', setId)
     .single();
 
   if (!set) return null;
 
   const { data: cards } = await supabaseAdmin
-    .from("cards")
-    .select("id")
-    .eq("set_id", setId);
+    .from('cards')
+    .select('id')
+    .eq('set_id', setId);
 
   if (!cards?.length) return null;
 
   const { data: variants } = await supabaseAdmin
-    .from("card_variants")
-    .select("card_id, variant_type")
-    .eq("set_id", setId);
+    .from('card_variants')
+    .select('card_id, variant_type')
+    .eq('set_id', setId);
 
   const totalVariants = variants?.length || cards.length;
 
   const { data: collected } = await supabaseAdmin
-    .from("master_set_cards")
-    .select("card_id, variant_type, quantity")
-    .eq("user_id", userId)
-    .eq("set_id", setId);
+    .from('master_set_cards')
+    .select('card_id, variant_type, quantity')
+    .eq('user_id', userId)
+    .eq('set_id', setId);
 
-  const ownedSet = new Set(
-    (collected ?? []).map((c) => `${c.card_id}::${c.variant_type}`),
-  );
+  const ownedSet = new Set((collected ?? []).map((c) => `${c.card_id}::${c.variant_type}`));
   const dupeCount = (collected ?? []).filter((c) => c.quantity > 1).length;
   const ownedVariants = ownedSet.size;
 
@@ -154,8 +184,7 @@ export const getSetProgress = async (
     totalCards: cards.length,
     totalVariants,
     ownedVariants,
-    completionPct:
-      totalVariants > 0 ? Math.round((ownedVariants / totalVariants) * 100) : 0,
+    completionPct: totalVariants > 0 ? Math.round((ownedVariants / totalVariants) * 100) : 0,
     needCount: totalVariants - ownedVariants,
     dupeCount,
   };
@@ -165,16 +194,17 @@ export const getSetProgress = async (
 
 export const getSetCards = async (
   userId: string,
-  setId: string,
+  setId: string
 ): Promise<{ progress: MasterSetProgress | null; cards: MasterSetCard[] }> => {
+
   const progress = await getSetProgress(userId, setId);
   if (!progress) return { progress: null, cards: [] };
 
   // Get all cards
   const { data: rawCards } = await supabaseAdmin
-    .from("cards")
-    .select("id, name, number, rarity, image_small, image_large")
-    .eq("set_id", setId);
+    .from('cards')
+    .select('id, name, number, rarity, image_small, image_large')
+    .eq('set_id', setId);
 
   if (!rawCards?.length) return { progress, cards: [] };
 
@@ -182,10 +212,10 @@ export const getSetCards = async (
 
   // Get variants
   const { data: variants } = await supabaseAdmin
-    .from("card_variants")
-    .select("card_id, variant_type, label, color, sort_order")
-    .eq("set_id", setId)
-    .order("sort_order");
+    .from('card_variants')
+    .select('card_id, variant_type, label, color, sort_order')
+    .eq('set_id', setId)
+    .order('sort_order');
 
   // Group variants by card
   const variantsByCard = new Map<string, typeof variants>();
@@ -196,10 +226,10 @@ export const getSetCards = async (
 
   // Get what user has collected
   const { data: collected } = await supabaseAdmin
-    .from("master_set_cards")
-    .select("card_id, variant_type, quantity")
-    .eq("user_id", userId)
-    .eq("set_id", setId);
+    .from('master_set_cards')
+    .select('card_id, variant_type, quantity')
+    .eq('user_id', userId)
+    .eq('set_id', setId);
 
   const collectedMap = new Map<string, number>();
   for (const c of collected ?? []) {
@@ -208,27 +238,19 @@ export const getSetCards = async (
 
   // Get prices
   const { data: prices } = await supabaseAdmin
-    .from("market_prices")
-    .select("card_id, market_price")
-    .in("card_id", cardIds)
-    .eq("source", "tcgplayer")
-    .is("grade", null)
-    .eq("variant", "normal");
+    .from('market_prices')
+    .select('card_id, market_price')
+    .in('card_id', cardIds)
+    .eq('source', 'tcgplayer')
+    .is('grade', null)
+    .eq('variant', 'normal');
 
-  const priceMap = new Map(
-    prices?.map((p) => [p.card_id, p.market_price]) ?? [],
-  );
+  const priceMap = new Map(prices?.map((p) => [p.card_id, p.market_price]) ?? []);
 
   // Build result
   const cards: MasterSetCard[] = rawCards.map((card) => {
     const cardVariants = variantsByCard.get(card.id) ?? [
-      {
-        card_id: card.id,
-        variant_type: "normal",
-        label: "Normal",
-        color: "#E5C97E",
-        sort_order: 0,
-      },
+      { card_id: card.id, variant_type: 'normal', label: 'Normal', color: '#E5C97E', sort_order: 0 }
     ];
 
     const variantData = cardVariants.map((v) => {
@@ -276,30 +298,28 @@ export const toggleCard = async (
   userId: string,
   setId: string,
   cardId: string,
-  variantType: string,
+  variantType: string
 ): Promise<{ haveCount: number }> => {
+  const key = `${cardId}::${variantType}`;
   const { data: existing } = await supabaseAdmin
-    .from("master_set_cards")
-    .select("id, quantity")
-    .eq("user_id", userId)
-    .eq("set_id", setId)
-    .eq("card_id", cardId)
-    .eq("variant_type", variantType)
+    .from('master_set_cards')
+    .select('id, quantity')
+    .eq('user_id', userId)
+    .eq('set_id', setId)
+    .eq('card_id', cardId)
+    .eq('variant_type', variantType)
     .single();
 
   if (!existing) {
     // Mark as collected
-    await supabaseAdmin.from("master_set_cards").insert({
-      user_id: userId,
-      set_id: setId,
-      card_id: cardId,
-      variant_type: variantType,
-      quantity: 1,
+    await supabaseAdmin.from('master_set_cards').insert({
+      user_id: userId, set_id: setId, card_id: cardId,
+      variant_type: variantType, quantity: 1,
     });
     return { haveCount: 1 };
   } else {
     // Remove
-    await supabaseAdmin.from("master_set_cards").delete().eq("id", existing.id);
+    await supabaseAdmin.from('master_set_cards').delete().eq('id', existing.id);
     return { haveCount: 0 };
   }
 };
@@ -311,29 +331,19 @@ export const updateCardQuantity = async (
   setId: string,
   cardId: string,
   variantType: string,
-  quantity: number,
+  quantity: number
 ): Promise<void> => {
   if (quantity <= 0) {
-    await supabaseAdmin
-      .from("master_set_cards")
-      .delete()
-      .eq("user_id", userId)
-      .eq("set_id", setId)
-      .eq("card_id", cardId)
-      .eq("variant_type", variantType);
+    await supabaseAdmin.from('master_set_cards').delete()
+      .eq('user_id', userId).eq('set_id', setId)
+      .eq('card_id', cardId).eq('variant_type', variantType);
     return;
   }
 
-  await supabaseAdmin.from("master_set_cards").upsert(
-    {
-      user_id: userId,
-      set_id: setId,
-      card_id: cardId,
-      variant_type: variantType,
-      quantity,
-    },
-    { onConflict: "user_id,set_id,card_id,variant_type" },
-  );
+  await supabaseAdmin.from('master_set_cards').upsert({
+    user_id: userId, set_id: setId, card_id: cardId,
+    variant_type: variantType, quantity,
+  }, { onConflict: 'user_id,set_id,card_id,variant_type' });
 };
 
 // ─── Track / untrack a set ────────────────────────────────────────────────────
@@ -341,28 +351,17 @@ export const updateCardQuantity = async (
 export const trackSet = async (userId: string, setId: string) => {
   const limit = await canTrackMoreSets(userId);
   if (!limit.allowed) {
-    return {
-      success: false,
-      error: `Upgrade to track more sets. Current limit: ${limit.limit}`,
-    };
+    return { success: false, error: `Upgrade to track more sets. Current limit: ${limit.limit}` };
   }
   const { error } = await supabaseAdmin
-    .from("master_set_tracking")
-    .upsert(
-      { user_id: userId, set_id: setId },
-      { onConflict: "user_id,set_id", ignoreDuplicates: true },
-    );
+    .from('master_set_tracking')
+    .insert({ user_id: userId, set_id: setId })
+    .onConflict('user_id,set_id').ignore();
 
   return error ? { success: false, error: error.message } : { success: true };
 };
 
-export const untrackSet = async (
-  userId: string,
-  setId: string,
-): Promise<void> => {
-  await supabaseAdmin
-    .from("master_set_tracking")
-    .delete()
-    .eq("user_id", userId)
-    .eq("set_id", setId);
+export const untrackSet = async (userId: string, setId: string): Promise<void> => {
+  await supabaseAdmin.from('master_set_tracking').delete()
+    .eq('user_id', userId).eq('set_id', setId);
 };

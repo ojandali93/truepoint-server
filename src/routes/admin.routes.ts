@@ -58,6 +58,54 @@ router.post(
   }
 );
 
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+router.get(
+  '/analytics/users',
+  authenticateUser,
+  requireAdmin,
+  async (_req: Request, res: Response) => {
+    try {
+      const { getUserStats } = await import('../services/adminAnalytics.service');
+      const stats = await getUserStats();
+      res.json({ data: stats });
+    } catch {
+      res.status(500).json({ error: 'Failed to get user stats' });
+    }
+  }
+);
+
+router.get(
+  '/analytics/collection',
+  authenticateUser,
+  requireAdmin,
+  async (_req: Request, res: Response) => {
+    try {
+      const { getCollectionStats } = await import('../services/adminAnalytics.service');
+      const stats = await getCollectionStats();
+      res.json({ data: stats });
+    } catch {
+      res.status(500).json({ error: 'Failed to get collection stats' });
+    }
+  }
+);
+
+router.get(
+  '/analytics/sets',
+  authenticateUser,
+  requireAdmin,
+  async (_req: Request, res: Response) => {
+    try {
+      const { getSetAnalytics } = await import('../services/adminAnalytics.service');
+      const stats = await getSetAnalytics();
+      res.json({ data: stats });
+    } catch {
+      res.status(500).json({ error: 'Failed to get set analytics' });
+    }
+  }
+);
+
 export default router;
 
 

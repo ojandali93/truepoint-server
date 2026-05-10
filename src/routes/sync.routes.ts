@@ -423,7 +423,7 @@ router.post(
     } catch {
       res.status(500).json({ error: "Failed to map TCGdex IDs" });
     }
-  },
+  }
 );
 
 // GET /sync/sets/mappings
@@ -447,7 +447,7 @@ router.get(
     } catch {
       res.status(500).json({ error: "Failed to get mappings" });
     }
-  },
+  }
 );
 
 // ─── TCGdex card fill ─────────────────────────────────────────────────────────
@@ -501,6 +501,7 @@ router.post(
   },
 );
 
+
 // ─── CardMarket price sync ────────────────────────────────────────────────────
 // Primary price source. Fetches TCGPlayer + CardMarket + graded prices
 // for every card using the RapidAPI CardMarket endpoint.
@@ -515,13 +516,11 @@ router.post(
         message: "CardMarket bulk price sync started — syncing all sets",
         timestamp: new Date().toISOString(),
       });
-      const { syncAllPricesFromCardMarket } =
-        await import("../services/cardMarketPriceSync.service");
+      const { syncAllPricesFromCardMarket } = await import(
+        "../services/cardMarketPriceSync.service"
+      );
       syncAllPricesFromCardMarket().catch((err: any) =>
-        console.error(
-          "[SyncRoute] CardMarket price sync failed:",
-          err?.message,
-        ),
+        console.error("[SyncRoute] CardMarket price sync failed:", err?.message),
       );
     } catch {
       res.status(500).json({ error: "Failed to start CardMarket price sync" });
@@ -537,8 +536,9 @@ router.post(
     try {
       const { setId } = req.params;
       res.json({ message: `CardMarket price sync started for ${setId}` });
-      const { syncSetPricesFromCardMarket } =
-        await import("../services/cardMarketPriceSync.service");
+      const { syncSetPricesFromCardMarket } = await import(
+        "../services/cardMarketPriceSync.service"
+      );
       syncSetPricesFromCardMarket(setId).catch((err: any) =>
         console.error(
           `[SyncRoute] CardMarket price sync failed for ${setId}:`,
@@ -550,6 +550,7 @@ router.post(
     }
   },
 );
+
 
 // ─── pokemontcg.io USD price sync ────────────────────────────────────────────
 // Syncs accurate TCGPlayer USD prices per variant for all cards.
@@ -563,22 +564,20 @@ router.post(
   async (_req: Request, res: Response) => {
     try {
       res.json({
-        message:
-          "pokemontcg.io USD price sync started — this takes 2-3 hours for all 20k cards",
+        message: "pokemontcg.io USD price sync started — this takes 2-3 hours for all 20k cards",
         timestamp: new Date().toISOString(),
       });
-      const { syncAllTCGPlayerPrices } =
-        await import("../services/pokemontcgPriceSync.service");
+      const { syncAllTCGPlayerPrices } = await import(
+        "../services/pokemontcgPriceSync.service"
+      );
       syncAllTCGPlayerPrices().catch((err: any) =>
-        console.error(
-          "[SyncRoute] pokemontcg price sync failed:",
-          err?.message,
-        ),
+        console.error("[SyncRoute] pokemontcg price sync failed:", err?.message),
       );
     } catch {
       res.status(500).json({ error: "Failed to start pokemontcg price sync" });
     }
   },
 );
+
 
 export default router;

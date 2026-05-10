@@ -1,11 +1,9 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
-import { supabaseAdmin } from "../lib/supabase";
 import * as CardService from "../services/card.service";
 import * as CardIdentificationService from "../services/cardIdentification.service";
 import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
-import { syncAllPricesFromCardMarket } from "../services/cardMarketPriceSync.service";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -202,16 +200,17 @@ export const adminTriggerPriceSync = async (
 ) => {
   try {
     res.json({ message: "Price sync started in background" });
-    syncAllPricesFromCardMarket().catch((err: unknown) =>
-      console.error(
-        "[PriceSync] Failed:",
-        err instanceof Error ? err.message : err,
-      ),
+    syncAllCardPrices().catch((err) =>
+      console.error("[PriceSync] Failed:", err?.message),
     );
   } catch (err) {
     handleError(res, err);
   }
 };
+
+// ─── Add to src/controllers/card.controller.ts ───────────────────────────────
+
+import { supabaseAdmin } from "../lib/supabase";
 
 // GET /api/v1/cards/sets/:setId/prices
 // Returns all cached raw card prices for every card in a set.
