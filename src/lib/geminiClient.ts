@@ -310,16 +310,37 @@ export const analyzeCardForGrading = async (
         ],
       },
     ],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 1024 },
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 1024,
+      // Disable thinking mode — not needed for grading, just adds noise before JSON
+      // @ts-ignore — thinkingConfig is valid for gemini-2.5-flash
+      thinkingConfig: { thinkingBudget: 0 },
+    },
   });
 
   const raw = result.response.text().trim();
+  console.log(
+    "[AIGrading] Raw Gemini response (first 500 chars):",
+    raw.substring(0, 500),
+  );
 
   let parsed: any;
   try {
-    parsed = JSON.parse(raw.replace(/```json\n?|```\n?/g, "").trim());
-  } catch {
-    throw new Error("Failed to parse Gemini grading response");
+    // Gemini 2.5 Flash includes thinking tokens — strip everything before the first {
+    const stripped = raw.replace(/```json\n?|```\n?/g, "").trim();
+    // Find the first { and last } to extract just the JSON object
+    const start = stripped.indexOf("{");
+    const end = stripped.lastIndexOf("}");
+    if (start === -1 || end === -1) {
+      throw new Error(
+        `No JSON object found in response. Raw: ${raw.substring(0, 200)}`,
+      );
+    }
+    const jsonStr = stripped.substring(start, end + 1);
+    parsed = JSON.parse(jsonStr);
+  } catch (e: any) {
+    throw new Error(`Failed to parse Gemini grading response: ${e?.message}`);
   }
 
   const c = clamp(parsed.centering ?? 7);
