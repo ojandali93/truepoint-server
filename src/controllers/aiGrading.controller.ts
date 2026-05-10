@@ -1,3 +1,5 @@
+// src/controllers/aiGrading.controller.ts
+
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import { analyzeCardForGrading, GradingAnalysis } from "../lib/geminiClient";
@@ -5,11 +7,9 @@ import { supabaseAdmin } from "../lib/supabase";
 
 const handleError = (res: Response, err: unknown) => {
   console.error("[AIGrading]", err);
-  res
-    .status(500)
-    .json({
-      error: err instanceof Error ? err.message : "Internal server error",
-    });
+  res.status(500).json({
+    error: err instanceof Error ? err.message : "Internal server error",
+  });
 };
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
@@ -19,59 +19,48 @@ const computeRecommendation = (
 ): { recommendation: "grade" | "skip" | "borderline"; reason: string } => {
   const { centering, corners, edges, surface, predictions } = analysis;
   const avg = (centering + corners + edges + surface) / 4;
-  const lowest = Math.min(centering, corners, edges, surface);
   const psaGrade = predictions.psa.grade;
-
-  // Strong grade candidates
-  if (psaGrade === 10 && avg >= 9.5) {
-    return {
-      recommendation: "grade",
-      reason: `Predicted PSA 10 with strong subgrades (avg ${avg.toFixed(2)}). Excellent grading candidate — high potential ROI.`,
-    };
-  }
 
   if (predictions.bgs.isBlackLabel) {
     return {
       recommendation: "grade",
       reason:
-        "All four subgrades scored 10 — potential BGS Black Label. Submit immediately. This is exceptionally rare.",
+        "All four subgrades scored 10 — potential BGS Black Label. Submit immediately. Exceptionally rare.",
     };
   }
-
   if (predictions.cgc.isPristine || predictions.tag.isPristine) {
     return {
       recommendation: "grade",
       reason: `Predicted ${predictions.cgc.isPristine ? "CGC Pristine 10" : "TAG Pristine"} — an elite designation. Strong grading candidate.`,
     };
   }
-
+  if (psaGrade === 10 && avg >= 9.5) {
+    return {
+      recommendation: "grade",
+      reason: `Predicted PSA 10 with strong subgrades (avg ${avg.toFixed(2)}). Excellent candidate — high potential ROI.`,
+    };
+  }
   if (psaGrade >= 9 && avg >= 9.0) {
     return {
       recommendation: "grade",
       reason: `Predicted PSA ${psaGrade} with solid subgrades (avg ${avg.toFixed(2)}). Worth grading if the card has market value.`,
     };
   }
-
-  // Borderline
-  if (psaGrade >= 8 && lowest >= 7.5) {
+  if (psaGrade >= 8 && Math.min(centering, corners, edges, surface) >= 7.5) {
     return {
       recommendation: "borderline",
-      reason: `Predicted PSA ${psaGrade}. ${
-        lowest < 8.5
-          ? `Weakest subgrade is ${Math.min(centering, corners, edges, surface).toFixed(1)} — address condition issues before submitting.`
-          : "Could grade well on a good day. Consider the card's value vs grading cost before submitting."
-      }`,
+      reason: `Predicted PSA ${psaGrade}. Consider the card's value vs grading cost. Improving image quality may refine this estimate.`,
     };
   }
-
-  // Skip
   return {
     recommendation: "skip",
-    reason: `Predicted PSA ${psaGrade} with average subgrades of ${avg.toFixed(2)}. Grading cost likely exceeds value added at this grade. Keep raw or find a better copy.`,
+    reason: `Predicted PSA ${psaGrade} with average subgrades of ${avg.toFixed(2)}. Grading cost likely exceeds value added at this grade.`,
   };
 };
 
 // ─── POST /grading/ai-analyze ─────────────────────────────────────────────────
+// Responds IMMEDIATELY with a reportId, then processes in background.
+// Gemini can take 30-120 seconds — we never make the client wait.
 
 export const analyzeCard = async (
   req: AuthenticatedRequest,
@@ -95,74 +84,107 @@ export const analyzeCard = async (
       return;
     }
 
-    const validMimes = ["image/jpeg", "image/png", "image/webp"];
-    if (
-      !validMimes.includes(frontMime ?? "image/jpeg") ||
-      !validMimes.includes(backMime ?? "image/jpeg")
-    ) {
-      res
-        .status(400)
-        .json({
-          error:
-            "Invalid mimeType. Must be image/jpeg, image/png, or image/webp",
-        });
-      return;
-    }
-
-    console.log(
-      `[AIGrading] Analyzing${cardName ? ` ${cardName}` : ""} (front + back) for user ${req.user.id}`,
-    );
-
-    const analysis = await analyzeCardForGrading(
-      frontBase64,
-      frontMime ?? "image/jpeg",
-      backBase64,
-      backMime ?? "image/jpeg",
-      cardName,
-      setName,
-    );
-
-    const { recommendation, reason } = computeRecommendation(analysis);
-
-    console.log(
-      `[AIGrading] Result — PSA: ${analysis.predictions.psa.grade}, BGS: ${analysis.predictions.bgs.label}, recommendation: ${recommendation}`,
-    );
-
-    // Save report to DB
-    const { data: report, error: saveError } = await supabaseAdmin
+    // Create a pending report immediately so we have an ID to return
+    const { data: pendingReport, error: createError } = await supabaseAdmin
       .from("ai_grading_reports")
       .insert({
         user_id: req.user.id,
         card_name: cardName ?? null,
         set_name: setName ?? null,
-        centering: analysis.centering,
-        corners: analysis.corners,
-        edges: analysis.edges,
-        surface: analysis.surface,
-        centering_ratio_front: analysis.centeringRatio.front,
-        centering_ratio_back: analysis.centeringRatio.back,
-        predictions: analysis.predictions,
-        issues: analysis.issues,
-        strengths: analysis.strengths,
-        confidence: analysis.confidence,
-        notes: analysis.notes,
-        recommendation,
-        recommendation_reason: reason,
+        status: "processing",
+        // placeholder values — will be updated when Gemini completes
+        centering: 0,
+        corners: 0,
+        edges: 0,
+        surface: 0,
+        predictions: {},
+        confidence: 0,
+        recommendation: "skip",
+        recommendation_reason: "Processing...",
+        issues: [],
+        strengths: [],
       })
       .select("id")
       .single();
 
-    if (saveError) {
-      console.error("[AIGrading] Failed to save report:", saveError.message);
+    if (createError || !pendingReport) {
+      res.status(500).json({ error: "Failed to create grading report" });
+      return;
     }
 
+    const reportId = pendingReport.id;
+    console.log(
+      `[AIGrading] Created pending report ${reportId} for user ${req.user.id}${cardName ? ` — ${cardName}` : ""}`,
+    );
+
+    // Respond immediately — client doesn't wait for Gemini
     res.json({
       data: {
-        ...analysis,
-        recommendation,
-        recommendationReason: reason,
-        reportId: report?.id ?? null,
+        reportId,
+        status: "processing",
+        message:
+          "Your grading report is being processed. Check My Reports in a few minutes.",
       },
+    });
+
+    // Process in background — no await, runs after response is sent
+    setImmediate(async () => {
+      try {
+        console.log(
+          `[AIGrading] Starting Gemini analysis for report ${reportId}...`,
+        );
+
+        const analysis = await analyzeCardForGrading(
+          frontBase64,
+          frontMime ?? "image/jpeg",
+          backBase64,
+          backMime ?? "image/jpeg",
+          cardName,
+          setName,
+        );
+
+        const { recommendation, reason } = computeRecommendation(analysis);
+
+        console.log(
+          `[AIGrading] Report ${reportId} complete — PSA: ${analysis.predictions.psa.grade}, BGS: ${analysis.predictions.bgs.label}`,
+        );
+
+        // Update the pending report with real results
+        await supabaseAdmin
+          .from("ai_grading_reports")
+          .update({
+            status: "completed",
+            centering: analysis.centering,
+            corners: analysis.corners,
+            edges: analysis.edges,
+            surface: analysis.surface,
+            centering_ratio_front: analysis.centeringRatio.front,
+            centering_ratio_back: analysis.centeringRatio.back,
+            predictions: analysis.predictions,
+            issues: analysis.issues,
+            strengths: analysis.strengths,
+            confidence: analysis.confidence,
+            notes: analysis.notes,
+            recommendation,
+            recommendation_reason: reason,
+          })
+          .eq("id", reportId);
+
+        console.log(`[AIGrading] Report ${reportId} saved to DB`);
+      } catch (err: any) {
+        console.error(
+          `[AIGrading] Background analysis failed for report ${reportId}:`,
+          err?.message,
+        );
+        // Mark as failed so user knows something went wrong
+        await supabaseAdmin
+          .from("ai_grading_reports")
+          .update({
+            status: "failed",
+            recommendation_reason: `Analysis failed: ${err?.message ?? "Unknown error"}`,
+          })
+          .eq("id", reportId);
+      }
     });
   } catch (err) {
     handleError(res, err);
@@ -207,3 +229,22 @@ export const deleteReport = async (
     handleError(res, err);
   }
 };
+
+// ─── src/routes/aiGrading.routes.ts ──────────────────────────────────────────
+
+import { Router } from "express";
+import { authenticateUser } from "../middleware/auth.middleware";
+import {
+  standardLimiter,
+  writeLimiter,
+} from "../middleware/rateLimit.middleware";
+import * as AIG from "../controllers/aiGrading.controller";
+
+const router = Router();
+router.use(authenticateUser as any);
+
+router.post("/ai-analyze", writeLimiter, AIG.analyzeCard as any);
+router.get("/ai-reports", standardLimiter, AIG.getReports as any);
+router.delete("/ai-reports/:id", writeLimiter, AIG.deleteReport as any);
+
+export default router;
