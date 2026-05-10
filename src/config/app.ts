@@ -15,6 +15,7 @@ import variantRoutes from "../routes/variant.route";
 import adminRoutes from "../routes/admin.routes";
 import gradingRoutes from "../routes/grading.routes";
 import gradingLifecycleRoutes from "../routes/gradingLifecycle.routes";
+import aiGradingRoutes from "../routes/aiGrading.routes";
 import masterSetRoutes from "../routes/masterSet.routes";
 
 dotenv.config();
@@ -38,6 +39,7 @@ app.use("/api/v1/variants", variantRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
+app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 
 // Add BEFORE express.json() so the webhook route gets the raw body
