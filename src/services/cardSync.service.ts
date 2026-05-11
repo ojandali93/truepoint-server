@@ -2,9 +2,9 @@
 // Key fix: isSetSynced now compares DB card count against the set's totalCards
 // from the sets table so incomplete syncs are detected and re-run.
 
-import { supabaseAdmin } from '../lib/supabase';
-import { findAllSets } from '../repositories/card.repository';
-import { pokemonTcgClient } from '../lib/pokemonTcgClient';
+import axios from "axios";
+import { supabaseAdmin } from "../lib/supabase";
+import { findAllSets } from "../repositories/card.repository";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -37,8 +37,8 @@ const upsertCardBatch = async (cards: any[]): Promise<void> => {
   }));
 
   const { error } = await supabaseAdmin
-    .from('cards')
-    .upsert(rows, { onConflict: 'id' });
+    .from("cards")
+    .upsert(rows, { onConflict: "id" });
 
   if (error) throw error;
 };
@@ -51,18 +51,18 @@ const upsertCardBatch = async (cards: any[]): Promise<void> => {
 const isSetComplete = async (setId: string): Promise<boolean> => {
   // Get expected card count from sets table
   const { data: set } = await supabaseAdmin
-    .from('sets')
-    .select('printed_total, total')
-    .eq('id', setId)
+    .from("sets")
+    .select("printed_total, total")
+    .eq("id", setId)
     .single();
 
   const expected = set?.printed_total ?? set?.total ?? 0;
 
   // Get actual count in DB
   const { count } = await supabaseAdmin
-    .from('cards')
-    .select('id', { count: 'exact', head: true })
-    .eq('set_id', setId);
+    .from("cards")
+    .select("id", { count: "exact", head: true })
+    .eq("set_id", setId);
 
   const actual = count ?? 0;
 
@@ -77,28 +77,36 @@ const isSetComplete = async (setId: string): Promise<boolean> => {
 
   if (!isComplete) {
     console.log(
-      `[CardSync] ⚠️  ${setId}: ${actual}/${expected} cards — incomplete, will re-sync`
+      `[CardSync] ⚠️  ${setId}: ${actual}/${expected} cards — incomplete, will re-sync`,
     );
   }
 
   return isComplete;
 };
 
-// Sync a single set — fetches all pages from pokemontcg.io API
+// Sync a single set — fetches all pages
 const syncSet = async (setId: string, setName: string): Promise<number> => {
   let page = 1;
   let totalSynced = 0;
 
   while (true) {
-    const result = await pokemonTcgClient.getCardsBySet(setId, page, 250);
-    if (result.data.length === 0) break;
+    const response = await axios.get("https://api.pokemontcg.io/v2/cards", {
+      params: { q: `set.id:${setId}`, page, pageSize: 250, orderBy: "number" },
+      headers: process.env.POKEMON_TCG_API_KEY
+        ? { "X-Api-Key": process.env.POKEMON_TCG_API_KEY }
+        : {},
+      timeout: 120000,
+    });
 
-    await upsertCardBatch(result.data);
-    totalSynced += result.data.length;
+    const cards = response.data?.data ?? [];
+    if (cards.length === 0) break;
 
-    console.log(`  [${setName}] Page ${page}: ${result.data.length} cards`);
+    await upsertCardBatch(cards);
+    totalSynced += cards.length;
 
-    if (result.data.length < 250) break;
+    console.log(`  [${setName}] Page ${page}: ${cards.length} cards`);
+
+    if (cards.length < 250) break;
     page++;
 
     await delay(300);
@@ -143,8 +151,8 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
   const durationMs = Date.now() - start;
   console.log(
     `[CardSync] Backfill complete: ${totalCards} new cards, ` +
-    `${skippedSets.length} sets skipped (already complete), ` +
-    `${failedSets.length} failed in ${(durationMs / 1000).toFixed(1)}s`
+      `${skippedSets.length} sets skipped (already complete), ` +
+      `${failedSets.length} failed in ${(durationMs / 1000).toFixed(1)}s`,
   );
 
   return {
@@ -173,31 +181,41 @@ export const syncSingleSet = async (setId: string): Promise<number> => {
 export const getSyncStatus = async (): Promise<{
   totalSets: number;
   completeSets: number;
-  incompleteSets: { id: string; name: string; dbCount: number; expected: number }[];
+  incompleteSets: {
+    id: string;
+    name: string;
+    dbCount: number;
+    expected: number;
+  }[];
   totalCards: number;
 }> => {
   const sets = await findAllSets();
 
   const { count: totalCards } = await supabaseAdmin
-    .from('cards')
-    .select('id', { count: 'exact', head: true });
+    .from("cards")
+    .select("id", { count: "exact", head: true });
 
   // Check each set for completeness
-  const incompleteSets: { id: string; name: string; dbCount: number; expected: number }[] = [];
+  const incompleteSets: {
+    id: string;
+    name: string;
+    dbCount: number;
+    expected: number;
+  }[] = [];
 
   for (const set of sets) {
     const { data: setData } = await supabaseAdmin
-      .from('sets')
-      .select('printed_total, total, name')
-      .eq('id', set.id)
+      .from("sets")
+      .select("printed_total, total, name")
+      .eq("id", set.id)
       .single();
 
     const expected = setData?.printed_total ?? setData?.total ?? 0;
 
     const { count: dbCount } = await supabaseAdmin
-      .from('cards')
-      .select('id', { count: 'exact', head: true })
-      .eq('set_id', set.id);
+      .from("cards")
+      .select("id", { count: "exact", head: true })
+      .eq("set_id", set.id);
 
     const actual = dbCount ?? 0;
 

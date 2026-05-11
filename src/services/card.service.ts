@@ -1,6 +1,7 @@
 import {
   findAllSets,
   findSetById,
+  upsertSets,
   getLastSyncTime,
 } from "../repositories/card.repository";
 import { TTLCache, TTL } from "../lib/cache";
@@ -123,13 +124,30 @@ export const syncSets = async (): Promise<{
   duration: number;
 }> => {
   const start = Date.now();
-  console.log("[SyncSets] Starting set sync...");
+  console.log("[SyncSets] Starting set sync from pokemontcg.io...");
 
-  // Sets are managed via admin panel — no external sync needed
+  // Fetch all sets directly from pokemontcg.io
+  const axios = await import("axios");
+  const response = await axios.default.get(
+    "https://api.pokemontcg.io/v2/sets",
+    {
+      params: { orderBy: "-releaseDate", pageSize: 250 },
+      headers: process.env.POKEMON_TCG_API_KEY
+        ? { "X-Api-Key": process.env.POKEMON_TCG_API_KEY }
+        : {},
+      timeout: 60000,
+    },
+  );
+
+  const sets = response.data?.data ?? [];
+  if (sets.length === 0) throw new Error("No sets returned from pokemontcg.io");
+
+  await upsertSets(sets);
   setsCache.delete("sets:all");
+
   const duration = Date.now() - start;
-  console.log("[SyncSets] Set cache cleared");
-  return { synced: 0, duration };
+  console.log(`[SyncSets] Synced ${sets.length} sets in ${duration}ms`);
+  return { synced: sets.length, duration };
 };
 
 export const shouldSync = async (): Promise<boolean> => {
