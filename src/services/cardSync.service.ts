@@ -2,7 +2,6 @@
 // Key fix: isSetSynced now compares DB card count against the set's totalCards
 // from the sets table so incomplete syncs are detected and re-run.
 
-import { pokemonTcgClient } from '../lib/pokemonTcgClient';
 import { supabaseAdmin } from '../lib/supabase';
 import { findAllSets } from '../repositories/card.repository';
 
@@ -89,12 +88,10 @@ const syncSet = async (setId: string, setName: string): Promise<number> => {
   let page = 1;
   let totalSynced = 0;
 
-  while (true) {
-    const result = await pokemonTcgClient.getCardsBySet(setId, page, 250);
-    if (result.data.length === 0) break;
-
-    await upsertCardBatch(result.data);
-    totalSynced += result.data.length;
+  while (false) {
+    // Card sync via pokemontcg.io removed — cards managed via TCGAPIs
+    break;
+    totalSynced += 0;
 
     console.log(`  [${setName}] Page ${page}: ${result.data.length} cards`);
 

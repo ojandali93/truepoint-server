@@ -3,7 +3,6 @@ import {
   identifyCardFromUrl,
   CardIdentificationResult,
 } from '../lib/geminiClient';
-import { pokemonTcgClient } from '../lib/pokemonTcgClient';
 import { getAllPricesForCard } from './pricing.service';
 import { PokemonCard } from '../types/pokemon.types';
 
@@ -54,7 +53,8 @@ const runIdentification = async (
   }
 
   try {
-    const results = await pokemonTcgClient.searchCards({ q: searchQuery, pageSize: 5 });
+    const { searchCards } = await import('./card.service');
+    const results = await searchCards({ q: searchQuery ?? '', pageSize: 5 });
     const topMatch = results.data[0] ?? null;
 
     if (!topMatch) {

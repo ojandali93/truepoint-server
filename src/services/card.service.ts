@@ -1,8 +1,6 @@
-import { pokemonTcgClient } from "../lib/pokemonTcgClient";
 import {
   findAllSets,
   findSetById,
-  upsertSets,
   getLastSyncTime,
 } from "../repositories/card.repository";
 import { TTLCache, TTL } from "../lib/cache";
@@ -39,9 +37,7 @@ export const getAllSets = async (): Promise<PokemonSet[]> => {
     return sets;
   }
 
-  const sets = await pokemonTcgClient.getSets();
-  setsCache.set("sets:all", sets, TTL.SETS);
-  return sets;
+  return [];
 };
 
 export const getSetById = async (setId: string): Promise<PokemonSet> => {
@@ -62,7 +58,7 @@ export const getSetById = async (setId: string): Promise<PokemonSet> => {
     };
   }
 
-  return pokemonTcgClient.getSetById(setId);
+  throw { status: 404, message: `Set ${setId} not found` };
 };
 
 // ─── Cards ────────────────────────────────────────────────────────────────────
@@ -116,13 +112,8 @@ export const getCardsBySet = async (
     return result;
   }
 
-  // Fallback to external API if cards not in DB yet
-  console.log(
-    `[CardService] No local cards for set ${setId}, falling back to API`,
-  );
-  const result = await pokemonTcgClient.getCardsBySet(setId, page, pageSize);
-  searchCache.set(cacheKey, result, TTL.CARDS);
-  return result;
+  // No cards in DB for this set
+  return { data: [], page, pageSize, count: 0, totalCount: 0 };
 };
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
@@ -134,13 +125,11 @@ export const syncSets = async (): Promise<{
   const start = Date.now();
   console.log("[SyncSets] Starting set sync...");
 
-  const sets = await pokemonTcgClient.getSets();
-  await upsertSets(sets);
+  // Sets are managed via admin panel — no external sync needed
   setsCache.delete("sets:all");
-
   const duration = Date.now() - start;
-  console.log(`[SyncSets] Synced ${sets.length} sets in ${duration}ms`);
-  return { synced: sets.length, duration };
+  console.log("[SyncSets] Set cache cleared");
+  return { synced: 0, duration };
 };
 
 export const shouldSync = async (): Promise<boolean> => {
@@ -184,13 +173,7 @@ export const getCardById = async (cardId: string): Promise<PokemonCard> => {
     return card;
   }
 
-  // Fallback to external API
-  console.log(
-    `[CardService] Card ${cardId} not in local DB, fetching from API`,
-  );
-  const card = await pokemonTcgClient.getCardById(cardId);
-  cardCache.set(cardId, card, TTL.CARDS);
-  return card;
+  throw { status: 404, message: `Card ${cardId} not found` };
 };
 
 export const searchCards = async (

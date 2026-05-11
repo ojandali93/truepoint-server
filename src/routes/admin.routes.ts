@@ -1,6 +1,6 @@
 // src/routes/admin.routes.ts
-import { Router, Response, Request } from 'express';
-import { supabaseAdmin } from '../lib/supabase';
+import { Router } from 'express';
+
 import { authenticateUser, requireAdmin } from '../middleware/auth.middleware';
 
 const router = Router();
