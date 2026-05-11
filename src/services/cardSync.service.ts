@@ -4,6 +4,7 @@
 
 import { supabaseAdmin } from '../lib/supabase';
 import { findAllSets } from '../repositories/card.repository';
+import { pokemonTcgClient } from '../lib/pokemonTcgClient';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -83,15 +84,17 @@ const isSetComplete = async (setId: string): Promise<boolean> => {
   return isComplete;
 };
 
-// Sync a single set — fetches all pages
+// Sync a single set — fetches all pages from pokemontcg.io API
 const syncSet = async (setId: string, setName: string): Promise<number> => {
   let page = 1;
   let totalSynced = 0;
 
-  while (false) {
-    // Card sync via pokemontcg.io removed — cards managed via TCGAPIs
-    break;
-    totalSynced += 0;
+  while (true) {
+    const result = await pokemonTcgClient.getCardsBySet(setId, page, 250);
+    if (result.data.length === 0) break;
+
+    await upsertCardBatch(result.data);
+    totalSynced += result.data.length;
 
     console.log(`  [${setName}] Page ${page}: ${result.data.length} cards`);
 

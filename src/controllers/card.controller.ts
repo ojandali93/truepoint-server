@@ -5,6 +5,7 @@ import * as CardService from "../services/card.service";
 import * as CardIdentificationService from "../services/cardIdentification.service";
 import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
+import { refreshAllPrices } from "../services/tcgapisSync.service";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -195,6 +196,13 @@ export const adminSyncSingleSet = async (
   }
 };
 
+export const adminTriggerPriceSync = async (
+  _req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    res.json({ message: "Price sync started in background" });
+    refreshAllPrices().catch((err: unknown) =>
       console.error(
         "[PriceSync] Failed:",
         err instanceof Error ? err.message : err,
