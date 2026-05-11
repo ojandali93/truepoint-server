@@ -25,7 +25,7 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(",") ?? "*" }));
-app.use(express.json({ limit: "20mb" })); // 20mb for base64 images
+app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use(morgan("combined"));
 
@@ -42,22 +42,17 @@ app.use("/api/v1/grading", gradingLifecycleRoutes);
 app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 
-// Add BEFORE express.json() so the webhook route gets the raw body
 app.use(
   "/api/v1/billing/webhook",
   express.raw({ type: "application/json" }),
-  (_req, _res, next) => {
-    next();
-  },
+  (_req, _res, next) => { next(); },
 );
-
 app.use("/api/v1/billing", billingRoutes);
 
 app.post("/debug/token", async (req, res) => {
   const authHeader = req.headers.authorization;
   const token = authHeader?.split(" ")[1];
   if (!token) return res.json({ error: "no token" });
-
   const { data, error } = await supabase.auth.getUser(token);
   return res.json({
     user: data?.user?.email,
