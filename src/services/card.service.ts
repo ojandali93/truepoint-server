@@ -66,25 +66,23 @@ export const getSetById = async (setId: string): Promise<PokemonSet> => {
 
 export const getCardsBySet = async (
   setId: string,
-  page = 1,
+  _page = 1, // kept for API compat — returns ALL cards, no 250 cap
 ): Promise<ApiListResponse<PokemonCard>> => {
-  const pageSize = 250;
-  const offset = (page - 1) * pageSize;
-  const cacheKey = `cards:set:${setId}:${page}`;
+  const cacheKey = `cards:set:${setId}:all`;
 
   const cached = searchCache.get(cacheKey);
   if (cached) return cached;
 
-  // Read from local Supabase cards table first
+  // Fetch ALL cards from local DB — no 250 page limit.
+  // Sets like Ascended Heroes (me2pt5) have 295 cards; capping at 250 breaks the browser.
   const { data, error, count } = await supabaseAdmin
     .from("cards")
     .select("*", { count: "exact" })
     .eq("set_id", setId)
     .order("number")
-    .range(offset, offset + pageSize - 1);
+    .limit(2000); // safety ceiling — no TCG set exceeds this
 
   if (!error && data && data.length > 0) {
-    // Map DB columns to PokemonCard shape
     const cards = data.map((row: any) => ({
       id: row.id,
       name: row.name,
@@ -94,7 +92,7 @@ export const getCardsBySet = async (
       hp: row.hp,
       types: row.types ?? [],
       rarity: row.rarity,
-      set: { id: row.set_id, name: "" }, // name not stored in cards table
+      set: { id: row.set_id, name: "" },
       images: {
         small: row.image_small,
         large: row.image_large,
@@ -103,8 +101,8 @@ export const getCardsBySet = async (
 
     const result: ApiListResponse<PokemonCard> = {
       data: cards,
-      page,
-      pageSize,
+      page: 1,
+      pageSize: data.length,
       count: data.length,
       totalCount: count ?? data.length,
     };
@@ -113,8 +111,7 @@ export const getCardsBySet = async (
     return result;
   }
 
-  // No cards in DB for this set
-  return { data: [], page, pageSize, count: 0, totalCount: 0 };
+  return { data: [], page: 1, pageSize: 0, count: 0, totalCount: 0 };
 };
 
 // ─── Sync ─────────────────────────────────────────────────────────────────────
