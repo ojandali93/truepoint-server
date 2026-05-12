@@ -13,7 +13,6 @@ import {
   saveSetVariants,
 } from "../controllers/variant.controller";
 
-// ─── New platform management controllers ──────────────────────────────────────
 import {
   platformStats,
   listErrorLogs,
