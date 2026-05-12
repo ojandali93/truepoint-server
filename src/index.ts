@@ -11,7 +11,7 @@ app.listen(PORT, async () => {
     const needsSetSync = await CardService.shouldSync();
     if (needsSetSync) {
       CardService.syncSets().catch((err) =>
-        console.error("[Startup] Set sync failed:", err?.message)
+        console.error("[Startup] Set sync failed:", err?.message),
       );
     }
   } catch (err: any) {

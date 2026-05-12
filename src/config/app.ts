@@ -1,8 +1,11 @@
+// src/config/app.ts
+
 import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
 import dotenv from "dotenv";
+
 import userRoutes from "../routes/user.routes";
 import cardRoutes from "../routes/card.routes";
 import centeringRoutes from "../routes/centering.routes";
@@ -17,6 +20,7 @@ import gradingRoutes from "../routes/grading.routes";
 import gradingLifecycleRoutes from "../routes/gradingLifecycle.routes";
 import aiGradingRoutes from "../routes/aiGrading.routes";
 import masterSetRoutes from "../routes/masterSet.routes";
+import { errorLoggerMiddleware } from "../middleware/errorLogger.middleware";
 
 dotenv.config();
 
@@ -45,13 +49,14 @@ app.use("/api/v1/master-sets", masterSetRoutes);
 app.use(
   "/api/v1/billing/webhook",
   express.raw({ type: "application/json" }),
-  (_req, _res, next) => { next(); },
+  (_req, _res, next) => {
+    next();
+  },
 );
 app.use("/api/v1/billing", billingRoutes);
 
 app.post("/debug/token", async (req, res) => {
-  const authHeader = req.headers.authorization;
-  const token = authHeader?.split(" ")[1];
+  const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.json({ error: "no token" });
   const { data, error } = await supabase.auth.getUser(token);
   return res.json({
@@ -64,5 +69,9 @@ app.post("/debug/token", async (req, res) => {
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
+
+// Global error logger — MUST be registered last
+// Catches any unhandled error from routes and logs it to error_logs table
+app.use(errorLoggerMiddleware as any);
 
 export default app;

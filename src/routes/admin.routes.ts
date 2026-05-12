@@ -1,65 +1,78 @@
 // src/routes/admin.routes.ts
-import { Router } from 'express';
 
-import { authenticateUser, requireAdmin } from '../middleware/auth.middleware';
+import { Router } from "express";
+import { requireAdmin } from "../middleware/auth.middleware";
+
+// ─── Existing admin controllers ───────────────────────────────────────────────
+import {
+  getUserStats,
+  getCollectionStats,
+  getSetAnalytics,
+} from "../services/adminAnalytics.service";
+import {
+  getSetRules,
+  saveSetVariants,
+} from "../controllers/variant.controller";
+
+// ─── New platform management controllers ──────────────────────────────────────
+import {
+  platformStats,
+  listErrorLogs,
+  errorLogSummary,
+  resolveError,
+  listActivityLogs,
+  listUsers,
+  getUser,
+  getUserErrors,
+  overrideUserPlan,
+  listFeatureFlags,
+  updateFeatureFlag,
+  listGradingCosts,
+  updateCost,
+  listAppSettings,
+  updateSetting,
+} from "../controllers/adminPlatform.controller";
 
 const router = Router();
 
-// ─── Analytics ────────────────────────────────────────────────────────────────
+router.use(requireAdmin as any);
 
-router.get('/analytics/users', authenticateUser, requireAdmin, async (_req, res) => {
-  try {
-    const { getUserStats } = await import('../services/adminAnalytics.service');
-    res.json({ data: await getUserStats() });
-  } catch { res.status(500).json({ error: 'Failed to get user stats' }); }
-});
+// ─── Overview ─────────────────────────────────────────────────────────────────
+router.get("/stats", platformStats as any);
 
-router.get('/analytics/collection', authenticateUser, requireAdmin, async (_req, res) => {
-  try {
-    const { getCollectionStats } = await import('../services/adminAnalytics.service');
-    res.json({ data: await getCollectionStats() });
-  } catch { res.status(500).json({ error: 'Failed to get collection stats' }); }
-});
+// ─── Analytics (existing) ─────────────────────────────────────────────────────
+router.get("/analytics/users", getUserStats as any);
+router.get("/analytics/collection", getCollectionStats as any);
+router.get("/analytics/sets", getSetAnalytics as any);
 
-router.get('/analytics/sets', authenticateUser, requireAdmin, async (_req, res) => {
-  try {
-    const { getSetAnalytics } = await import('../services/adminAnalytics.service');
-    res.json({ data: await getSetAnalytics() });
-  } catch { res.status(500).json({ error: 'Failed to get set analytics' }); }
-});
+// ─── Error logs ───────────────────────────────────────────────────────────────
+router.get("/logs/errors/summary", errorLogSummary as any);
+router.get("/logs/errors", listErrorLogs as any);
+router.patch("/logs/errors/:id/resolve", resolveError as any);
 
-// ─── TCGAPIs sync controls (admin-triggered from UI) ─────────────────────────
+// ─── Activity logs ────────────────────────────────────────────────────────────
+router.get("/logs/activity", listActivityLogs as any);
 
-router.post('/sync/map-sets', authenticateUser, requireAdmin, async (_req, res) => {
-  try {
-    const { syncSetGroupIds } = await import('../services/tcgapisSync.service');
-    const result = await syncSetGroupIds();
-    res.json({ data: result });
-  } catch (err: any) { res.status(500).json({ error: err?.message }); }
-});
+// ─── User management ──────────────────────────────────────────────────────────
+router.get("/users", listUsers as any);
+router.get("/users/:userId", getUser as any);
+router.get("/users/:userId/errors", getUserErrors as any);
+router.patch("/users/:userId/plan", overrideUserPlan as any);
 
-router.post('/sync/all', authenticateUser, requireAdmin, async (_req, res) => {
-  try {
-    res.json({ data: { message: 'Full TCGAPIs sync started in background.' } });
-    const { syncAllSets } = await import('../services/tcgapisSync.service');
-    setImmediate(() => syncAllSets().catch(console.error));
-  } catch (err: any) { res.status(500).json({ error: err?.message }); }
-});
+// ─── Feature flags ────────────────────────────────────────────────────────────
+router.get("/flags", listFeatureFlags as any);
+router.patch("/flags/:key", updateFeatureFlag as any);
 
-router.post('/sync/set/:setId', authenticateUser, requireAdmin, async (req, res) => {
-  try {
-    res.json({ data: { message: `Syncing set ${req.params.setId}...` } });
-    const { syncSetCards } = await import('../services/tcgapisSync.service');
-    setImmediate(() => syncSetCards(req.params.setId).catch(console.error));
-  } catch (err: any) { res.status(500).json({ error: err?.message }); }
-});
+// ─── Grading costs ────────────────────────────────────────────────────────────
+router.get("/grading-costs", listGradingCosts as any);
+router.patch("/grading-costs/:id", updateCost as any);
 
-router.post('/sync/prices', authenticateUser, requireAdmin, async (_req, res) => {
-  try {
-    res.json({ data: { message: 'Price refresh started in background.' } });
-    const { refreshAllPrices } = await import('../services/tcgapisSync.service');
-    setImmediate(() => refreshAllPrices().catch(console.error));
-  } catch (err: any) { res.status(500).json({ error: err?.message }); }
-});
+// ─── App settings ─────────────────────────────────────────────────────────────
+router.get("/settings", listAppSettings as any);
+router.patch("/settings/:key", updateSetting as any);
+
+// ─── Variants (existing) ──────────────────────────────────────────────────────
+router.get("/variants", getSetRules as any);
+router.post("/variants", saveSetVariants as any);
 
 export default router;
