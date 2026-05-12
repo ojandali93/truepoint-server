@@ -132,7 +132,16 @@ export const handleWebhookEvent = async (
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!,
     );
-  } catch {
+  } catch (err: any) {
+    await logError({
+      source: "handle-webhook-event", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     throw { status: 400, message: "Invalid webhook signature" };
   }
 

@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as BillingService from "../services/billing.service";
+import { logError } from "../lib/Logger";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -23,8 +24,17 @@ export const createCheckoutSession = async (
       plan,
     );
     res.json({ data: result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "create-checkout-session", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -39,7 +49,17 @@ export const verifySession = async (
       req.user.id,
     );
     res.json({ data: subscription });
-  } catch (err) {
+  } catch (err: any) {
+    await logError({
+      source: "verify-session", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
     handleError(res, err);
   }
 };
@@ -51,8 +71,17 @@ export const getMySubscription = async (
   try {
     const subscription = await BillingService.getSubscription(req.user.id);
     res.json({ data: subscription });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-subscription", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -65,8 +94,17 @@ export const cancelMySubscription = async (
     res.json({
       message: "Subscription cancelled — access continues until period end",
     });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "cancel-subscription", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -83,7 +121,16 @@ export const handleWebhook = async (
     }
     await BillingService.handleWebhookEvent(req.body as Buffer, signature);
     res.json({ received: true });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "handle-webhook", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };

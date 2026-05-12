@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as UserService from "../services/user.service";
+import { logError } from "../lib/Logger";
 
 const handleError = (res: Response, err: any) => {
   if (err?.status) {
@@ -19,8 +20,17 @@ export const getMyProfile = async (
   try {
     const profile = await UserService.getProfileById(req.user.id);
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-my-profile", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -31,8 +41,17 @@ export const createMyProfile = async (
   try {
     const profile = await UserService.createProfile(req.user.id, req.body);
     res.status(201).json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "create-my-profile", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -45,8 +64,17 @@ export const updateMyProfile = async (
     const profile = await UserService.updateProfile(req.user.id, req.body);
     console.log("updateMyProfile post", profile);
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "inventory", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -57,8 +85,17 @@ export const deleteMyAccount = async (
   try {
     await UserService.deleteAccount(req.user.id);
     res.status(204).send();
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "delete-my-account", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -69,8 +106,17 @@ export const getProfileById = async (
   try {
     const profile = await UserService.getPublicProfile(req.params.id);
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-profile-by-id", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -83,8 +129,17 @@ export const searchProfileByUsername = async (
       req.query.username as string,
     );
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "search-profile-by-username", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -97,8 +152,17 @@ export const getMyNotificationSettings = async (
   try {
     const settings = await UserService.getNotificationSettings(req.user.id);
     res.json({ data: settings });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-my-notification-settings", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -112,8 +176,17 @@ export const createMyNotificationSettings = async (
       req.body,
     );
     res.status(201).json({ data: settings });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "create-my-notification-settings", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -127,8 +200,17 @@ export const updateMyNotificationSettings = async (
       req.body,
     );
     res.json({ data: settings });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "update-my-notification-settings", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -141,8 +223,17 @@ export const getMyDevices = async (
   try {
     const devices = await UserService.getDevices(req.user.id);
     res.json({ data: devices });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-my-devices", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -153,8 +244,17 @@ export const registerMyDevice = async (
   try {
     const device = await UserService.registerDevice(req.user.id, req.body);
     res.status(201).json({ data: device });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "register-my-device", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -165,8 +265,17 @@ export const removeMyDevice = async (
   try {
     await UserService.removeDevice(req.params.deviceId, req.user.id);
     res.status(204).send();
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "remove-my-device", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -180,8 +289,17 @@ export const pingMyDevice = async (
       req.user.id,
     );
     res.json({ data: device });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "ping-my-device", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -195,8 +313,17 @@ export const getMyActivity = async (
     const page = parseInt(req.query.page as string) || 1;
     const logs = await UserService.getActivityLogs(req.user.id, page);
     res.json({ data: logs });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-my-activity", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -207,8 +334,17 @@ export const logMyActivity = async (
   try {
     await UserService.logActivity(req.user.id, req.body);
     res.status(204).send();
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "log-my-activity", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -222,8 +358,17 @@ export const adminGetAllUsers = async (
     const page = parseInt(req.query.page as string) || 1;
     const users = await UserService.adminGetAllUsers(page);
     res.json({ data: users });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-get-all-users", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -234,8 +379,17 @@ export const adminGetUserById = async (
   try {
     const profile = await UserService.getProfileById(req.params.id);
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-get-user-by-id", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -246,8 +400,17 @@ export const adminUpdateUser = async (
   try {
     const profile = await UserService.adminUpdateUser(req.params.id, req.body);
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-update-user", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -264,8 +427,17 @@ export const adminCreateStandardUser = async (
       full_name,
     );
     res.status(201).json({ data: result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-create-standard-user", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -282,8 +454,17 @@ export const adminCreateAdminUser = async (
       full_name,
     );
     res.status(201).json({ data: result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-create-admin-user", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -298,8 +479,17 @@ export const adminToggleProMember = async (
       isPro,
     );
     res.json({ data: profile });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-toggle-pro-member", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -311,7 +501,16 @@ export const adminGetUserActivity = async (
     const page = parseInt(req.query.page as string) || 1;
     const logs = await UserService.getActivityLogs(req.params.id, page);
     res.json({ data: logs });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-get-user-activity", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };

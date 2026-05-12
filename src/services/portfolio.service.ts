@@ -1,3 +1,4 @@
+import { logError } from "../lib/Logger";
 import {
   findSnapshotsByUser,
   upsertSnapshot,
@@ -103,10 +104,15 @@ export const createSnapshotForUser = async (userId: string): Promise<void> => {
       `[Portfolio] Snapshot created for user ${userId}: $${summary.totalMarketValue.toFixed(2)}`,
     );
   } catch (err: any) {
-    console.error(
-      `[Portfolio] Snapshot failed for user ${userId}:`,
-      err?.message,
-    );
+    await logError({
+      source: "create-snapshot-for-user", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     throw err;
   }
 };
@@ -130,8 +136,21 @@ export const syncAllPortfolios = async (): Promise<{
     try {
       await createSnapshotForUser(userId);
       succeeded++;
-    } catch {
+    } catch (err: any) {
+      await logError({
+        source: "sync-all-portfolios", // ← change per controller
+        message: err?.message ?? "Unknown error",
+        error: err,
+        userId: null,
+        requestPath: "",
+        requestMethod: "",
+        metadata: {},
+      });
       failed++;
+      console.error(
+        `[Portfolio] Snapshot failed for user ${userId}:`,
+        err?.message,
+      );
     }
     // Small delay to avoid hammering the DB
     await new Promise((res) => setTimeout(res, 200));

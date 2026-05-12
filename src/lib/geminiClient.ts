@@ -4,6 +4,7 @@ import {
   HarmCategory,
   HarmBlockThreshold,
 } from "@google/generative-ai";
+import { logError } from "./Logger";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
 
@@ -348,8 +349,17 @@ export const analyzeCardForGrading = async (
     }
     const jsonStr = stripped.substring(start, end + 1);
     parsed = JSON.parse(jsonStr);
-  } catch (e: any) {
-    throw new Error(`Failed to parse Gemini grading response: ${e?.message}`);
+  } catch (err: any) {
+    await logError({
+      source: "inventory", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    throw new Error(`Failed to parse Gemini grading response: ${err?.message}`);
   }
 
   const c = clamp(parsed.centering ?? 7);

@@ -2,6 +2,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as VariantService from "../services/variant.service";
+import { logError } from "../lib/Logger";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -20,8 +21,17 @@ export const getSetStatus = async (
   try {
     const status = await VariantService.getSetVariantStatus(req.params.setId);
     res.json({ data: { status } });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "variant-set-status", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -34,8 +44,17 @@ export const getSetVariants = async (
   try {
     const data = await VariantService.getSetVariantData(req.params.setId);
     res.json({ data });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "variant-set-variants", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -48,8 +67,17 @@ export const getCardsWithVariants = async (
   try {
     const cards = await VariantService.getCardsWithVariants(req.params.setId);
     res.json({ data: cards });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "variant-set-cards-with-variants", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -59,8 +87,17 @@ export const getSetRules = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const rules = await VariantService.getSetVariantRules(req.params.setId);
     res.json({ data: rules });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "variant-set-rules", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -81,7 +118,16 @@ export const saveSetVariants = async (
       data: result,
       message: `Saved ${result.saved} variant records`,
     });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "variant-set-save", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };

@@ -16,6 +16,7 @@ import {
   refreshAllPrices,
   refreshPricesForSet,
 } from "../services/tcgapisSync.service";
+import { logError } from "../lib/Logger";
 
 const router = Router();
 
@@ -36,6 +37,15 @@ router.post("/sets", requireSyncKey, async (_req, res) => {
     const result = await CardService.syncSets();
     res.json({ data: result, message: `Synced ${result.synced} sets` });
   } catch (err: any) {
+    await logError({
+      source: "sync-pokemon-sets", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -54,6 +64,15 @@ router.post("/cards", requireSyncKey, async (_req, res) => {
       console.log("[SyncRoute] Card backfill complete:", result);
     });
   } catch (err: any) {
+    await logError({
+      source: "sync-pokemon-cards", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -69,6 +88,15 @@ router.post("/cards/:setId", requireSyncKey, async (req, res) => {
       );
     });
   } catch (err: any) {
+    await logError({
+      source: "get-sync-status", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -94,6 +122,15 @@ router.post("/tcgapis/map-sets", requireSyncKey, async (_req, res) => {
       message: `Mapped ${result.mapped} sets. ${result.unmatched.length} unmatched.`,
     });
   } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-map-sets", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -110,6 +147,15 @@ router.post("/tcgapis/all", requireSyncKey, async (_req, res) => {
       console.log("[SyncRoute] Full TCGAPIs sync complete:", result);
     });
   } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-all", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -123,6 +169,15 @@ router.post("/tcgapis/set/:setId", requireSyncKey, async (req, res) => {
       console.log(`[SyncRoute] Set sync ${req.params.setId}:`, result);
     });
   } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-set", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -139,6 +194,15 @@ router.post("/tcgapis/prices", requireSyncKey, async (_req, res) => {
       console.log("[SyncRoute] Price refresh complete:", result);
     });
   } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-prices", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -152,6 +216,15 @@ router.post("/tcgapis/prices/:setId", requireSyncKey, async (req, res) => {
       console.log(`[SyncRoute] Price refresh ${req.params.setId}:`, result);
     });
   } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-prices-set", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: err?.message });
   }
 });
@@ -169,6 +242,15 @@ router.post("/portfolio", requireSyncKey, async (_req, res) => {
       console.error("[SyncRoute] Portfolio sync failed:", err?.message),
     );
   } catch {
+    await logError({
+      source: "sync-portfolio", // ← change per controller
+      message: "Failed to start portfolio sync",
+      error: null,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: "Failed to start portfolio sync" });
   }
 });

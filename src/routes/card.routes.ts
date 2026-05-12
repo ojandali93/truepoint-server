@@ -12,6 +12,7 @@ import {
 } from "../schemas/card.schemas";
 import * as CardController from "../controllers/card.controller";
 import { supabaseAdmin } from "../lib/supabase";
+import { logError } from "../lib/Logger";
 
 const router = Router();
 
@@ -119,7 +120,16 @@ router.get("/sealed/:setCode", standardLimiter, async (req, res) => {
       .order("product_type");
 
     res.json({ data: products ?? [] });
-  } catch (err) {
+  } catch (err: any) {
+    await logError({
+      source: "get-sealed-products", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     res.status(500).json({ error: "Failed to fetch products" });
   }
 });
@@ -161,8 +171,17 @@ router.get("/search/global", standardLimiter, async (req, res) => {
         products: productsResult.data ?? [],
       },
     });
-  } catch (err) {
-    res.status(500).json({ error: "Search failed" });
+  } catch (err: any) {
+    await logError({
+      source: "get-global-search", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
   }
 });
 

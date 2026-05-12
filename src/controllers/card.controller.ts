@@ -6,6 +6,7 @@ import * as CardIdentificationService from "../services/cardIdentification.servi
 import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
 import { refreshAllPrices } from "../services/tcgapisSync.service";
+import { logError } from "../lib/Logger";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -22,8 +23,17 @@ export const getAllSets = async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const sets = await CardService.getAllSets();
     res.json({ data: sets, count: sets.length });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-all-sets", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (_req as any)?.userId ?? null,
+      requestPath: _req.path,
+      requestMethod: _req.method,
+      metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -31,8 +41,17 @@ export const getSetById = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const set = await CardService.getSetById(req.params.setId);
     res.json({ data: set });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-set-by-id", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -44,8 +63,17 @@ export const getCardsBySet = async (
     const page = parseInt(req.query.page as string) || 1;
     const result = await CardService.getCardsBySet(req.params.setId, page);
     res.json(result);
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-cards-by-set", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -55,8 +83,17 @@ export const getCardById = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const card = await CardService.getCardById(req.params.cardId);
     res.json({ data: card });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-card-by-id", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -94,8 +131,17 @@ export const getCardPrices = async (
         prices,
       },
     });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-card-prices", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -112,8 +158,17 @@ export const identifyCardFromBase64 = async (
       mimeType,
     );
     res.json({ data: result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "identify-card-from-base64", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -125,8 +180,17 @@ export const identifyCardFromUrl = async (
     const { imageUrl } = req.body;
     const result = await CardIdentificationService.identifyFromUrl(imageUrl);
     res.json({ data: result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "identify-card-from-url", // ← c  hange per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -139,8 +203,17 @@ export const adminSyncSets = async (
   try {
     const result = await CardService.syncSets();
     res.json({ message: "Sync complete", ...result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-sync-sets", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (_req as any)?.userId ?? null,
+      requestPath: _req.path,
+      requestMethod: _req.method,
+      metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -153,8 +226,17 @@ export const adminPurgeExpiredPrices = async (
       await import("../repositories/card.repository");
     await purgeExpiredPrices();
     res.json({ message: "Expired price cache purged" });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-purge-expired-prices", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (_req as any)?.userId ?? null,
+      requestPath: _req.path,
+      requestMethod: _req.method,
+      metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -165,8 +247,17 @@ export const adminGetSyncStatus = async (
   try {
     const status = await CardSyncService.getSyncStatus();
     res.json({ data: status });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-get-sync-status", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (_req as any)?.userId ?? null,
+      requestPath: _req.path,
+      requestMethod: _req.method,
+      metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -179,8 +270,17 @@ export const adminBackfillCards = async (
     CardSyncService.backfillAllCards().catch((err) =>
       console.error("[BackfillCards] Failed:", err?.message),
     );
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-backfill-cards", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (_req as any)?.userId ?? null,
+      requestPath: _req.path,
+      requestMethod: _req.method,
+      metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -191,8 +291,17 @@ export const adminSyncSingleSet = async (
   try {
     const count = await CardSyncService.syncSingleSet(req.params.setId);
     res.json({ message: `Synced ${count} cards`, count });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-sync-single-set", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -208,8 +317,17 @@ export const adminTriggerPriceSync = async (
         err instanceof Error ? err.message : err,
       ),
     );
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "admin-trigger-price-sync", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (_req as any)?.userId ?? null,
+      requestPath: _req.path,
+      requestMethod: _req.method,
+      metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -272,9 +390,17 @@ export const getSetPrices = async (
     }
 
     return res.json({ data: priceMap });
-  } catch (err) {
-    console.error("[CardController] getSetPrices error:", err);
-    return res.status(500).json({ error: "Failed to fetch set prices" });
+  } catch (err: any) {
+    await logError({
+      source: "get-set-prices", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 

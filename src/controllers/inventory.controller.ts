@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as InventoryService from "../services/inventory.service";
+import { logError } from "../lib/Logger";
 
 const handleError = (res: Response, err: unknown) => {
   if (err && typeof err === "object" && "status" in err) {
@@ -20,8 +21,17 @@ export const getInventory = async (
   try {
     const result = await InventoryService.getInventory(req.user.id);
     res.json({ data: result });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-inventory", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -59,8 +69,17 @@ export const addInventoryItem = async (
     });
 
     res.status(201).json({ data: item });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "add-inventory-item", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -97,8 +116,16 @@ export const editInventoryItem = async (
     );
 
     res.json({ data: item });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "edit-inventory-item", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
   }
 };
 
@@ -110,8 +137,16 @@ export const removeInventoryItem = async (
   try {
     await InventoryService.removeInventoryItem(req.params.id, req.user.id);
     res.status(204).send();
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "remove-inventory-item", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
   }
 };
 
@@ -142,8 +177,16 @@ export const openSealedProduct = async (
       data: result,
       message: `Product opened — ${result.inserted} cards added to inventory`,
     });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "open-sealed-product", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
   }
 };
 
@@ -200,7 +243,16 @@ export const batchAddInventoryItems = async (
       data: { inserted },
       message: `${inserted} item${inserted !== 1 ? "s" : ""} added to inventory`,
     });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "batch-add-inventory-items", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };

@@ -2,15 +2,7 @@ import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import { analyzeCardForGrading, GradingAnalysis } from "../lib/geminiClient";
 import { supabaseAdmin } from "../lib/supabase";
-
-const handleError = (res: Response, err: unknown) => {
-  console.error("[AIGrading]", err);
-  res
-    .status(500)
-    .json({
-      error: err instanceof Error ? err.message : "Internal server error",
-    });
-};
+import { logError } from "../lib/Logger";
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
 
@@ -100,7 +92,16 @@ export const analyzeCard = async (
 
         return data.publicUrl;
       } catch (err: any) {
-        console.error(`[AIGrading] Upload error (${side}):`, err?.message);
+        await logError({
+          source: "upload-image", // ← change per controller
+          message: err?.message ?? "Unknown error",
+          error: err,
+          userId: (req as any)?.userId ?? null,
+          requestPath: req.path,
+          requestMethod: req.method,
+          metadata: { params: req.params, query: req.query },
+        });
+        res.status(500).json({ error: err?.message });
         return null;
       }
     };
@@ -229,8 +230,17 @@ export const analyzeCard = async (
           .eq("id", reportId);
       }
     });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "analyze-card", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -250,8 +260,17 @@ export const getReports = async (
 
     if (error) throw error;
     res.json({ data: data ?? [] });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "get-reports", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -268,7 +287,16 @@ export const deleteReport = async (
       .eq("id", req.params.id)
       .eq("user_id", req.user.id);
     res.json({ data: { deleted: true } });
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "delete-report", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };

@@ -1,3 +1,4 @@
+import { logError } from "../lib/Logger";
 import * as UserRepository from "../repositories/user.repository";
 import { Profile, NotificationSettings, UserDevice } from "../types/user.types";
 
@@ -41,6 +42,15 @@ export const updateProfile = async (
     console.log("updateProfile payload", payload, userId);
     return await UserRepository.updateProfile(userId, payload);
   } catch (err: any) {
+    await logError({
+      source: "update-profile", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     console.log("updateProfile error", err);
     if (err.code === "23505")
       throw { status: 409, message: "Username is already taken" };

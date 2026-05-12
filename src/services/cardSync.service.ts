@@ -5,6 +5,7 @@
 import axios from "axios";
 import { supabaseAdmin } from "../lib/supabase";
 import { findAllSets } from "../repositories/card.repository";
+import { logError } from "../lib/Logger";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -143,7 +144,15 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
       console.log(`[CardSync] ✓ ${set.name}: ${count} cards`);
       await delay(500);
     } catch (err: any) {
-      console.error(`[CardSync] ✗ Failed ${set.name}:`, err?.message);
+      await logError({
+        source: "sync-set", // ← change per controller
+        message: err?.message ?? "Unknown error",
+        error: err,
+        userId: null,
+        requestPath: "",
+        requestMethod: "",
+        metadata: {},
+      });
       failedSets.push(set.id);
     }
   }
