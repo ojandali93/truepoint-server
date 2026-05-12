@@ -5,15 +5,13 @@ import {
   insertInventoryBatch,
   updateInventoryItem,
   deleteInventoryItem,
+  fetchCardPrices,
   fetchProductPrices,
   CreateInventoryInput,
   UpdateInventoryInput,
   InventoryRow,
   GradingCompany,
-  ItemType,
 } from "../repositories/inventory.repository";
-import { batchResolveMarketValues } from "./pricing.service";
-import { supabaseAdmin } from "../lib/supabase";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -44,22 +42,65 @@ export interface InventorySummary {
 // Determine the best market price for an inventory item
 const resolveMarketValue = (
   item: InventoryRow,
-  cardPrices: Map<string, number | null>,
+  cardPrices: Map<string, Record<string, number>>,
   productPrices: Map<string, number>,
 ): MarketValue => {
   // Sealed product
   if (item.item_type === "sealed_product" && item.product_id) {
     const price = productPrices.get(item.product_id) ?? null;
-    return { marketPrice: price, source: price ? "tcgplayer" : null };
-  }
-
-  // Raw or graded card
-  if (item.card_id) {
-    const price = cardPrices.get(item.card_id) ?? null;
     return {
       marketPrice: price,
-      source: price ? "tcgplayer" : null,
+      source: price ? "tcgplayer/cardmarket" : null,
     };
+  }
+
+  // Raw card — use TCGPlayer market, fallback to CardMarket
+  if (item.item_type === "raw_card" && item.card_id) {
+    const prices = cardPrices.get(item.card_id);
+    if (!prices) return { marketPrice: null, source: null };
+
+    if (prices.raw_market)
+      return { marketPrice: prices.raw_market, source: "tcgplayer" };
+    if (prices.cm_market)
+      return { marketPrice: prices.cm_market, source: "cardmarket" };
+    return { marketPrice: null, source: null };
+  }
+
+  // Graded card — look up graded price for matching company + grade
+  if (
+    item.item_type === "graded_card" &&
+    item.card_id &&
+    item.grading_company &&
+    item.grade
+  ) {
+    const prices = cardPrices.get(item.card_id);
+    if (!prices) return { marketPrice: null, source: null };
+
+    // Map grading company to source key used in cached_card_prices
+    const sourceMap: Record<GradingCompany, string> = {
+      PSA: "psa",
+      BGS: "bgs",
+      CGC: "cgc",
+      SGC: "sgc",
+      TAG: "tag",
+    };
+
+    const sourceKey = sourceMap[item.grading_company];
+    const gradeKey = `${sourceKey}_${item.grade}`;
+
+    if (prices[gradeKey]) {
+      return { marketPrice: prices[gradeKey], source: item.grading_company };
+    }
+
+    // Fallback — use raw price if no graded price available
+    if (prices.raw_market) {
+      return {
+        marketPrice: prices.raw_market,
+        source: "tcgplayer (raw fallback)",
+      };
+    }
+
+    return { marketPrice: null, source: null };
   }
 
   return { marketPrice: null, source: null };
@@ -69,8 +110,9 @@ const resolveMarketValue = (
 
 export const getInventory = async (
   userId: string,
+  collectionId?: string | null,
 ): Promise<{ items: InventoryItemWithValue[]; summary: InventorySummary }> => {
-  const rows = await findInventoryByUser(userId);
+  const rows = await findInventoryByUser(userId, collectionId);
 
   if (!rows.length) {
     return {
@@ -92,6 +134,7 @@ export const getInventory = async (
   const cardIds = [
     ...new Set(rows.filter((r) => r.card_id).map((r) => r.card_id!)),
   ];
+
   const productIds = [
     ...new Set(
       rows
@@ -100,17 +143,18 @@ export const getInventory = async (
     ),
   ];
 
-  // Single DB query for all card prices (reads from market_prices table)
+  // Fetch all prices in two queries
   const [cardPrices, productPrices] = await Promise.all([
-    batchResolveMarketValues(cardIds),
-    fetchProductPrices(productIds), // existing function reads product_price_cache
+    fetchCardPrices(cardIds),
+    fetchProductPrices(productIds),
   ]);
 
+  // Attach market values and calculate gain/loss
   let totalCostBasis = 0;
   let totalMarketValue = 0;
-  let rawCards = 0,
-    gradedCards = 0,
-    sealedProducts = 0;
+  let rawCards = 0;
+  let gradedCards = 0;
+  let sealedProducts = 0;
 
   const items: InventoryItemWithValue[] = rows.map((row) => {
     const marketValue = resolveMarketValue(row, cardPrices, productPrices);
@@ -139,19 +183,18 @@ export const getInventory = async (
   const totalGainLossPct =
     totalCostBasis > 0 ? (totalGainLoss / totalCostBasis) * 100 : null;
 
-  return {
-    items,
-    summary: {
-      totalItems: rows.length,
-      rawCards,
-      gradedCards,
-      sealedProducts,
-      totalCostBasis,
-      totalMarketValue,
-      totalGainLoss,
-      totalGainLossPct,
-    },
+  const summary: InventorySummary = {
+    totalItems: rows.length,
+    rawCards,
+    gradedCards,
+    sealedProducts,
+    totalCostBasis,
+    totalMarketValue,
+    totalGainLoss,
+    totalGainLossPct,
   };
+
+  return { items, summary };
 };
 
 export const addInventoryItem = async (
@@ -275,55 +318,10 @@ export const openSealedProduct = async (
 // ─── Portfolio snapshot helper ────────────────────────────────────────────────
 // Called by the portfolio cron to record today's total value
 
-export const getCurrentTotalValue = async (userId: string): Promise<number> => {
-  const { summary } = await getInventory(userId);
-  return summary.totalMarketValue;
-};
-
-export interface BatchItem {
-  itemType: ItemType;
-  cardId?: string | null;
-  productId?: string | null;
-  variantType?: string | null;
-  gradingCompany?: GradingCompany | null;
-  grade?: string | null;
-  isSealed?: boolean | null;
-  purchasePrice?: number | null;
-  purchaseDate?: string | null;
-  notes?: string | null;
-}
-
-export const batchAddInventoryItems = async (
+export const getCurrentTotalValue = async (
   userId: string,
-  items: BatchItem[],
+  collectionId?: string | null,
 ): Promise<number> => {
-  if (!items.length) return 0;
-
-  const rows = items.map((item) => ({
-    user_id: userId,
-    item_type: item.itemType,
-    card_id: item.cardId ?? null,
-    product_id: item.productId ?? null,
-    variant_type: item.variantType ?? null,
-    grading_company: item.gradingCompany ?? null,
-    grade: item.grade ?? null,
-    is_sealed: item.isSealed ?? null,
-    purchase_price: item.purchasePrice ?? null,
-    purchase_date: item.purchaseDate ?? null,
-    notes: item.notes ?? null,
-  }));
-
-  // Insert in chunks of 200 to avoid payload limits
-  const CHUNK = 200;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    const { error } = await supabaseAdmin
-      .from("inventory")
-      .insert(rows.slice(i, i + CHUNK));
-    if (error) {
-      console.error("[InventoryService] batchAdd error:", error);
-      throw error;
-    }
-  }
-
-  return rows.length;
+  const { summary } = await getInventory(userId, collectionId);
+  return summary.totalMarketValue;
 };

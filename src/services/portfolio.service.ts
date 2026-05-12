@@ -1,4 +1,3 @@
-import { logError } from "../lib/Logger";
 import {
   findSnapshotsByUser,
   upsertSnapshot,
@@ -69,9 +68,12 @@ export interface TopPerformer {
 
 // ─── Snapshot creation ────────────────────────────────────────────────────────
 
-export const createSnapshotForUser = async (userId: string): Promise<void> => {
+export const createSnapshotForUser = async (
+  userId: string,
+  collectionId?: string | null,
+): Promise<void> => {
   try {
-    const { items, summary } = await getInventory(userId);
+    const { items, summary } = await getInventory(userId, collectionId);
 
     // Calculate value per type
     let rawCardValue = 0;
@@ -87,6 +89,7 @@ export const createSnapshotForUser = async (userId: string): Promise<void> => {
 
     await upsertSnapshot({
       userId,
+      collectionId: collectionId ?? null,
       snapshotDate: new Date().toISOString().split("T")[0],
       totalValue: summary.totalMarketValue,
       totalCostBasis: summary.totalCostBasis,
@@ -104,15 +107,10 @@ export const createSnapshotForUser = async (userId: string): Promise<void> => {
       `[Portfolio] Snapshot created for user ${userId}: $${summary.totalMarketValue.toFixed(2)}`,
     );
   } catch (err: any) {
-    await logError({
-      source: "create-snapshot-for-user", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
+    console.error(
+      `[Portfolio] Snapshot failed for user ${userId}:`,
+      err?.message,
+    );
     throw err;
   }
 };
@@ -136,21 +134,8 @@ export const syncAllPortfolios = async (): Promise<{
     try {
       await createSnapshotForUser(userId);
       succeeded++;
-    } catch (err: any) {
-      await logError({
-        source: "sync-all-portfolios", // ← change per controller
-        message: err?.message ?? "Unknown error",
-        error: err,
-        userId: null,
-        requestPath: "",
-        requestMethod: "",
-        metadata: {},
-      });
+    } catch {
       failed++;
-      console.error(
-        `[Portfolio] Snapshot failed for user ${userId}:`,
-        err?.message,
-      );
     }
     // Small delay to avoid hammering the DB
     await new Promise((res) => setTimeout(res, 200));
@@ -167,11 +152,12 @@ export const syncAllPortfolios = async (): Promise<{
 export const getPortfolio = async (
   userId: string,
   days = 90,
+  collectionId?: string | null,
 ): Promise<PortfolioData> => {
   // Run inventory fetch and history fetch in parallel
   const [inventoryData, snapshots] = await Promise.all([
-    getInventory(userId),
-    findSnapshotsByUser(userId, days),
+    getInventory(userId, collectionId),
+    findSnapshotsByUser(userId, days, collectionId),
   ]);
 
   const { items, summary } = inventoryData;

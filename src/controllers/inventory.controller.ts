@@ -1,7 +1,15 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as InventoryService from "../services/inventory.service";
-import { logError } from "../lib/Logger";
+
+const handleError = (res: Response, err: unknown) => {
+  if (err && typeof err === "object" && "status" in err) {
+    const e = err as { status: number; message?: string };
+    return res.status(e.status).json({ error: e.message ?? "Error" });
+  }
+  console.error("[InventoryController]", err);
+  return res.status(500).json({ error: "An unexpected error occurred" });
+};
 
 // GET /inventory
 // Returns all inventory items with live market prices + summary totals
@@ -10,19 +18,14 @@ export const getInventory = async (
   res: Response,
 ) => {
   try {
-    const result = await InventoryService.getInventory(req.user.id);
+    const collectionId = req.query.collectionId as string | undefined;
+    const result = await InventoryService.getInventory(
+      req.user.id,
+      collectionId ?? null,
+    );
     res.json({ data: result });
-  } catch (err: any) {
-    await logError({
-      source: "get-inventory", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
+  } catch (err) {
+    handleError(res, err);
   }
 };
 
@@ -44,6 +47,7 @@ export const addInventoryItem = async (
       purchasePrice,
       purchaseDate,
       notes,
+      collection_id,
     } = req.body;
 
     const item = await InventoryService.addInventoryItem(req.user.id, {
@@ -57,20 +61,48 @@ export const addInventoryItem = async (
       purchasePrice: purchasePrice ? Number(purchasePrice) : null,
       purchaseDate: purchaseDate ?? null,
       notes: notes ?? null,
+      collection_id: collection_id ?? null,
     });
 
     res.status(201).json({ data: item });
-  } catch (err: any) {
-    await logError({
-      source: "add-inventory-item", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// POST /inventory/batch — same body shape as POST / per entry in `items`
+export const batchAddInventoryItems = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: "items must be a non-empty array" });
+      return;
+    }
+
+    const data = [];
+    for (const row of items) {
+      const item = await InventoryService.addInventoryItem(req.user.id, {
+        itemType: row.itemType,
+        cardId: row.cardId ?? null,
+        productId: row.productId ?? null,
+        gradingCompany: row.gradingCompany ?? null,
+        grade: row.grade ?? null,
+        serialNumber: row.serialNumber ?? null,
+        isSealed: row.isSealed ?? null,
+        purchasePrice: row.purchasePrice ? Number(row.purchasePrice) : null,
+        purchaseDate: row.purchaseDate ?? null,
+        notes: row.notes ?? null,
+        collection_id: row.collection_id ?? null,
+      });
+      data.push(item);
+    }
+
+    res.status(201).json({ data });
+  } catch (err) {
+    handleError(res, err);
   }
 };
 
@@ -107,16 +139,8 @@ export const editInventoryItem = async (
     );
 
     res.json({ data: item });
-  } catch (err: any) {
-    await logError({
-      source: "edit-inventory-item", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
+  } catch (err) {
+    handleError(res, err);
   }
 };
 
@@ -128,16 +152,8 @@ export const removeInventoryItem = async (
   try {
     await InventoryService.removeInventoryItem(req.params.id, req.user.id);
     res.status(204).send();
-  } catch (err: any) {
-    await logError({
-      source: "remove-inventory-item", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
+  } catch (err) {
+    handleError(res, err);
   }
 };
 
@@ -168,82 +184,7 @@ export const openSealedProduct = async (
       data: result,
       message: `Product opened — ${result.inserted} cards added to inventory`,
     });
-  } catch (err: any) {
-    await logError({
-      source: "open-sealed-product", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-  }
-};
-
-export const batchAddInventoryItems = async (
-  req: AuthenticatedRequest,
-  res: Response,
-): Promise<void> => {
-  try {
-    const { items } = req.body;
-
-    if (!Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: "items must be a non-empty array" });
-      return;
-    }
-
-    if (items.length > 500) {
-      res.status(400).json({ error: "Maximum 500 items per batch" });
-      return;
-    }
-
-    // Expand items by quantity into individual rows
-    const expanded: InventoryService.BatchItem[] = [];
-
-    for (const item of items) {
-      const qty = Math.max(1, Math.min(99, parseInt(item.quantity) || 1));
-
-      if (!item.itemType) {
-        res.status(400).json({ error: "Each item must have an itemType" });
-        return;
-      }
-
-      for (let i = 0; i < qty; i++) {
-        expanded.push({
-          itemType: item.itemType,
-          cardId: item.cardId ?? null,
-          productId: item.productId ?? null,
-          variantType: item.variantType ?? null,
-          gradingCompany: item.gradingCompany ?? null,
-          grade: item.grade ?? null,
-          isSealed:
-            item.isSealed ?? (item.itemType === "sealed_product" ? true : null),
-          purchasePrice: item.purchasePrice ? Number(item.purchasePrice) : null,
-          purchaseDate: item.purchaseDate ?? null,
-          notes: item.notes ?? null,
-        });
-      }
-    }
-
-    const inserted = await import("../services/inventory.service").then((s) =>
-      s.batchAddInventoryItems(req.user.id, expanded),
-    );
-
-    res.status(201).json({
-      data: { inserted },
-      message: `${inserted} item${inserted !== 1 ? "s" : ""} added to inventory`,
-    });
-  } catch (err: any) {
-    await logError({
-      source: "batch-add-inventory-items", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
+  } catch (err) {
+    handleError(res, err);
   }
 };

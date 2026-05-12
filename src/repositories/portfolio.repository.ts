@@ -21,6 +21,7 @@ export interface PortfolioSnapshot {
 
 export interface SnapshotInsert {
   userId: string;
+  collectionId?: string | null;
   snapshotDate: string;
   totalValue: number;
   totalCostBasis: number;
@@ -59,16 +60,23 @@ const rowToSnapshot = (row: any): PortfolioSnapshot => ({
 export const findSnapshotsByUser = async (
   userId: string,
   days = 90,
+  collectionId?: string | null,
 ): Promise<PortfolioSnapshot[]> => {
   const since = new Date();
   since.setDate(since.getDate() - days);
 
-  const { data, error } = await supabaseAdmin
+  let q = supabaseAdmin
     .from("portfolio_snapshots")
     .select("*")
     .eq("user_id", userId)
     .gte("snapshot_date", since.toISOString().split("T")[0])
     .order("snapshot_date", { ascending: true });
+
+  if (collectionId) {
+    q = q.eq("collection_id", collectionId);
+  }
+
+  const { data, error } = await q;
 
   if (error) {
     console.error("[PortfolioRepo] findSnapshots error:", error);
@@ -102,6 +110,7 @@ export const upsertSnapshot = async (
     .upsert(
       {
         user_id: input.userId,
+        collection_id: input.collectionId ?? null,
         snapshot_date: input.snapshotDate,
         total_value: input.totalValue,
         total_cost_basis: input.totalCostBasis,
@@ -114,7 +123,10 @@ export const upsertSnapshot = async (
         graded_cards: input.gradedCards,
         sealed_products: input.sealedProducts,
       },
-      { onConflict: "user_id,snapshot_date" },
+      {
+        onConflict: "user_id,collection_id,snapshot_date",
+        ignoreDuplicates: false,
+      },
     )
     .select()
     .single();

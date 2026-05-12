@@ -20,6 +20,7 @@ import gradingRoutes from "../routes/grading.routes";
 import gradingLifecycleRoutes from "../routes/gradingLifecycle.routes";
 import aiGradingRoutes from "../routes/aiGrading.routes";
 import masterSetRoutes from "../routes/masterSet.routes";
+import collectionRoutes from "../routes/collection.routes";
 import { errorLoggerMiddleware } from "../middleware/errorLogger.middleware";
 
 dotenv.config();
@@ -45,6 +46,7 @@ app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
 app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
+app.use("/api/v1/collections", collectionRoutes);
 
 app.use(
   "/api/v1/billing/webhook",

@@ -18,6 +18,7 @@ export interface InventoryRow {
   purchase_price: number | null;
   purchase_date: string | null;
   notes: string | null;
+  collection_id: string | null;
   added_at: string;
   updated_at: string;
   // Joined
@@ -53,6 +54,7 @@ export interface InventoryRow {
 }
 
 export interface CreateInventoryInput {
+  collection_id?: string | null;
   itemType: ItemType;
   cardId?: string | null;
   productId?: string | null;
@@ -92,12 +94,18 @@ const INVENTORY_SELECT = `
 
 export const findInventoryByUser = async (
   userId: string,
+  collectionId?: string | null,
 ): Promise<InventoryRow[]> => {
-  const { data, error } = await supabaseAdmin
+  let q = supabaseAdmin
     .from("inventory")
     .select(INVENTORY_SELECT)
-    .eq("user_id", userId)
-    .order("added_at", { ascending: false });
+    .eq("user_id", userId);
+
+  if (collectionId) {
+    q = q.eq("collection_id", collectionId);
+  }
+
+  const { data, error } = await q.order("added_at", { ascending: false });
 
   console.log("findInventoryByUser", data, error);
   if (error) {
@@ -228,6 +236,78 @@ export const insertInventoryBatch = async (
   }
 };
 
+/** Flattened per-card prices for inventory.service resolveMarketValue */
+export const fetchCardPrices = async (
+  cardIds: string[],
+): Promise<Map<string, Record<string, number>>> => {
+  if (!cardIds.length) return new Map();
+
+  const { data, error } = await supabaseAdmin
+    .from("market_prices")
+    .select("card_id, source, variant, grade, market_price")
+    .in("card_id", cardIds)
+    .gt("expires_at", new Date().toISOString());
+
+  if (error) {
+    console.error("[InventoryRepo] fetchCardPrices error:", error);
+    return new Map();
+  }
+
+  type RawCand = { variant: string | null; price: number };
+  const tcgRawByCard = new Map<string, RawCand[]>();
+  const cmRawByCard = new Map<string, number>();
+  const gradedByCard = new Map<string, Record<string, number>>();
+
+  const bestRawTcg = (cands: RawCand[]): number | undefined => {
+    if (!cands.length) return undefined;
+    const prefer = cands.find(
+      (c) =>
+        (c.variant === "normal" || c.variant === "unlimited") && c.price != null,
+    );
+    if (prefer) return prefer.price;
+    const any = cands.find((c) => c.price != null);
+    return any?.price;
+  };
+
+  for (const row of data ?? []) {
+    const cid = row.card_id as string;
+    const mp = row.market_price;
+    if (mp == null) continue;
+
+    if (!row.grade) {
+      if (row.source === "tcgplayer") {
+        const list = tcgRawByCard.get(cid) ?? [];
+        list.push({ variant: row.variant ?? null, price: mp });
+        tcgRawByCard.set(cid, list);
+      } else if (row.source === "cardmarket" && !cmRawByCard.has(cid)) {
+        cmRawByCard.set(cid, mp);
+      }
+      continue;
+    }
+
+    const parts = String(row.grade).trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const flatKey = `${parts[0].toLowerCase()}_${parts.slice(1).join(" ")}`;
+    const bucket = gradedByCard.get(cid) ?? {};
+    const prev = bucket[flatKey];
+    if (prev === undefined || mp > prev) bucket[flatKey] = mp;
+    gradedByCard.set(cid, bucket);
+  }
+
+  const out = new Map<string, Record<string, number>>();
+  for (const cid of cardIds) {
+    const rec: Record<string, number> = {};
+    const raw = bestRawTcg(tcgRawByCard.get(cid) ?? []);
+    if (raw !== undefined) rec.raw_market = raw;
+    const cm = cmRawByCard.get(cid);
+    if (cm !== undefined) rec.cm_market = cm;
+    const g = gradedByCard.get(cid);
+    if (g) Object.assign(rec, g);
+    if (Object.keys(rec).length) out.set(cid, rec);
+  }
+
+  return out;
+};
 
 // Fetch cached product prices for a list of product IDs
 export const fetchProductPrices = async (
