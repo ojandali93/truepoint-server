@@ -3,15 +3,6 @@ import { AuthenticatedRequest } from "../types/user.types";
 import * as PortfolioService from "../services/portfolio.service";
 import { logError } from "../lib/Logger";
 
-const handleError = (res: Response, err: unknown) => {
-  if (err && typeof err === "object" && "status" in err) {
-    const e = err as { status: number; message?: string };
-    return res.status(e.status).json({ error: e.message ?? "Error" });
-  }
-  console.error("[PortfolioController]", err);
-  return res.status(500).json({ error: "An unexpected error occurred" });
-};
-
 // GET /portfolio
 // Full portfolio data — history, breakdown, gainers, losers
 export const getPortfolio = async (

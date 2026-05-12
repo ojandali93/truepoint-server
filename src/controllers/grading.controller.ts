@@ -8,11 +8,6 @@ import {
 } from "../services/gradingArbitrage.service";
 import { logError } from "../lib/Logger";
 
-const handleError = (res: Response, err: unknown) => {
-  console.error("[GradingController]", err);
-  res.status(500).json({ error: "Internal server error" });
-};
-
 // GET /api/v1/grading/arbitrage
 export const getArbitrage = async (
   req: AuthenticatedRequest,

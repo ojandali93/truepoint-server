@@ -3,15 +3,6 @@ import { AuthenticatedRequest } from "../types/user.types";
 import * as InventoryService from "../services/inventory.service";
 import { logError } from "../lib/Logger";
 
-const handleError = (res: Response, err: unknown) => {
-  if (err && typeof err === "object" && "status" in err) {
-    const e = err as { status: number; message?: string };
-    return res.status(e.status).json({ error: e.message ?? "Error" });
-  }
-  console.error("[InventoryController]", err);
-  return res.status(500).json({ error: "An unexpected error occurred" });
-};
-
 // GET /inventory
 // Returns all inventory items with live market prices + summary totals
 export const getInventory = async (

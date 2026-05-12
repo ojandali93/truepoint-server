@@ -3,14 +3,6 @@ import { AuthenticatedRequest } from "../types/user.types";
 import * as UserService from "../services/user.service";
 import { logError } from "../lib/Logger";
 
-const handleError = (res: Response, err: any) => {
-  if (err?.status) {
-    return res.status(err.status).json({ error: err.message });
-  }
-  console.error("[UserController Error]", err?.message ?? err);
-  return res.status(500).json({ error: "An unexpected error occurred" });
-};
-
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
 export const getMyProfile = async (

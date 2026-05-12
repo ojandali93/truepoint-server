@@ -13,11 +13,6 @@ import {
 } from "../services/gradingLifecycle.service";
 import { logError } from "../lib/Logger";
 
-const e = (res: Response, err: unknown) => {
-  console.error("[GradingLifecycle]", err);
-  res.status(500).json({ error: "Internal server error" });
-};
-
 // GET /grading/submissions
 export const listSubmissions = async (
   req: AuthenticatedRequest,

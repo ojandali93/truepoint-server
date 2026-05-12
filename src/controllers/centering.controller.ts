@@ -3,15 +3,6 @@ import { AuthenticatedRequest } from "../types/user.types";
 import * as CenteringService from "../services/centering.service";
 import { logError } from "../lib/Logger";
 
-const handleError = (res: Response, err: unknown) => {
-  if (err && typeof err === "object" && "status" in err) {
-    const e = err as { status: number; message?: string };
-    return res.status(e.status).json({ error: e.message ?? "Error" });
-  }
-  console.error("[CenteringController]", err);
-  return res.status(500).json({ error: "An unexpected error occurred" });
-};
-
 // Live analysis — no DB write, returns calculated results instantly
 // Used by the frontend during interactive line adjustment
 export const analyzeOnly = async (req: AuthenticatedRequest, res: Response) => {

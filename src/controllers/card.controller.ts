@@ -8,15 +8,6 @@ import * as CardSyncService from "../services/cardSync.service";
 import { refreshAllPrices } from "../services/tcgapisSync.service";
 import { logError } from "../lib/Logger";
 
-const handleError = (res: Response, err: unknown) => {
-  if (err && typeof err === "object" && "status" in err) {
-    const e = err as { status: number; message?: string };
-    return res.status(e.status).json({ error: e.message ?? "Error" });
-  }
-  console.error("[CardController Error]", err);
-  return res.status(500).json({ error: "An unexpected error occurred" });
-};
-
 // ─── Sets ─────────────────────────────────────────────────────────────────────
 
 export const getAllSets = async (_req: AuthenticatedRequest, res: Response) => {
@@ -111,8 +102,17 @@ export const searchCards = async (req: AuthenticatedRequest, res: Response) => {
       pageSize: parseInt(pageSize) || 20,
     });
     res.json(result);
-  } catch (err) {
-    handleError(res, err);
+  } catch (err: any) {
+    await logError({
+      source: "search-cards", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
 
@@ -400,7 +400,7 @@ export const getSetPrices = async (
       requestMethod: req.method,
       metadata: { params: req.params, query: req.query },
     });
-    res.status(500).json({ error: err?.message });
+    return res.status(500).json({ error: err?.message });
   }
 };
 
