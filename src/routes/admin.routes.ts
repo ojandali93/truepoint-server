@@ -1,7 +1,6 @@
 // src/routes/admin.routes.ts
 
 import { Router } from "express";
-import { requireAdmin } from "../middleware/auth.middleware";
 
 // ─── Existing admin controllers ───────────────────────────────────────────────
 import {
@@ -35,7 +34,8 @@ import {
 
 const router = Router();
 
-router.use(requireAdmin as any);
+import { authenticateUser, requireAdmin } from "../middleware/auth.middleware";
+router.use(authenticateUser as any, requireAdmin as any);
 
 // ─── Overview ─────────────────────────────────────────────────────────────────
 router.get("/stats", platformStats as any);
