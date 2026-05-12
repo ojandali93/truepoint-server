@@ -1,18 +1,22 @@
 // src/routes/admin.routes.ts
 
 import { Router } from "express";
+import { authenticateUser, requireAdmin } from "../middleware/auth.middleware";
 
-// ─── Existing admin controllers ───────────────────────────────────────────────
+// ─── Analytics controller (wraps service functions as Express handlers) ───────
 import {
-  getUserStats,
-  getCollectionStats,
-  getSetAnalytics,
-} from "../services/adminAnalytics.service";
+  getUserAnalytics,
+  getCollectionAnalytics,
+  getSetAnalyticsHandler,
+} from "../controllers/adminAnalytics.controller";
+
+// ─── Variant controller ───────────────────────────────────────────────────────
 import {
   getSetRules,
   saveSetVariants,
 } from "../controllers/variant.controller";
 
+// ─── Platform management controller ──────────────────────────────────────────
 import {
   platformStats,
   listErrorLogs,
@@ -33,16 +37,16 @@ import {
 
 const router = Router();
 
-import { authenticateUser, requireAdmin } from "../middleware/auth.middleware";
+// Auth + admin check on every admin route
 router.use(authenticateUser as any, requireAdmin as any);
 
 // ─── Overview ─────────────────────────────────────────────────────────────────
 router.get("/stats", platformStats as any);
 
-// ─── Analytics (existing) ─────────────────────────────────────────────────────
-router.get("/analytics/users", getUserStats as any);
-router.get("/analytics/collection", getCollectionStats as any);
-router.get("/analytics/sets", getSetAnalytics as any);
+// ─── Analytics ────────────────────────────────────────────────────────────────
+router.get("/analytics/users", getUserAnalytics as any);
+router.get("/analytics/collection", getCollectionAnalytics as any);
+router.get("/analytics/sets", getSetAnalyticsHandler as any);
 
 // ─── Error logs ───────────────────────────────────────────────────────────────
 router.get("/logs/errors/summary", errorLogSummary as any);
@@ -70,7 +74,7 @@ router.patch("/grading-costs/:id", updateCost as any);
 router.get("/settings", listAppSettings as any);
 router.patch("/settings/:key", updateSetting as any);
 
-// ─── Variants (existing) ──────────────────────────────────────────────────────
+// ─── Variants ─────────────────────────────────────────────────────────────────
 router.get("/variants", getSetRules as any);
 router.post("/variants", saveSetVariants as any);
 
