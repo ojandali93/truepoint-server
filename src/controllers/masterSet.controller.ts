@@ -1,7 +1,7 @@
 // src/controllers/masterSet.controller.ts
 
-import { Response } from 'express';
-import { AuthenticatedRequest } from '../types/user.types';
+import { Response } from "express";
+import { AuthenticatedRequest } from "../types/user.types";
 import {
   getTrackedSets,
   getSetCards,
@@ -10,13 +10,8 @@ import {
   canTrackMoreSets,
   toggleCard,
   updateCardQuantity,
-} from '../services/masterSet.service';
-import { logError } from '../lib/Logger';
-
-const handleError = (res: Response, e: unknown) => {
-  console.error('[MasterSet]', e);
-  res.status(500).json({ error: 'Internal server error' });
-};
+} from "../services/masterSet.service";
+import { logError } from "../lib/Logger";
 
 // GET /master-sets — all tracked sets with progress
 export const getTracked = async (req: AuthenticatedRequest, res: Response) => {
@@ -60,11 +55,14 @@ export const getLimit = async (req: AuthenticatedRequest, res: Response) => {
 };
 
 // GET /master-sets/:setId — full card list with collection status
-export const getSetDetail = async (req: AuthenticatedRequest, res: Response) => {
+export const getSetDetail = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
   try {
     const result = await getSetCards(req.user.id, req.params.setId);
     if (!result.progress) {
-      res.status(404).json({ error: 'Set not found' });
+      res.status(404).json({ error: "Set not found" });
       return;
     }
     res.json({ data: result });
@@ -83,7 +81,10 @@ export const getSetDetail = async (req: AuthenticatedRequest, res: Response) => 
 };
 
 // POST /master-sets/:setId/track — start tracking a set
-export const startTracking = async (req: AuthenticatedRequest, res: Response) => {
+export const startTracking = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
   try {
     const result = await trackSet(req.user.id, req.params.setId);
     if (!result.success) {
@@ -106,11 +107,14 @@ export const startTracking = async (req: AuthenticatedRequest, res: Response) =>
 };
 
 // DELETE /master-sets/:setId/track — stop tracking a set
-export const stopTracking = async (req: AuthenticatedRequest, res: Response) => {
+export const stopTracking = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
   try {
     await untrackSet(req.user.id, req.params.setId);
     res.json({ data: { tracked: false } });
-    } catch (e: any) {
+  } catch (e: any) {
     await logError({
       source: "stop-tracking", // ← change per controller
       message: e?.message ?? "Unknown error",
@@ -126,10 +130,13 @@ export const stopTracking = async (req: AuthenticatedRequest, res: Response) => 
 
 // POST /master-sets/:setId/cards/:cardId/toggle — mark/unmark a card variant
 // Body: { variantType: string }
-export const toggleCardCollected = async (req: AuthenticatedRequest, res: Response) => {
+export const toggleCardCollected = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
   try {
     const { setId, cardId } = req.params;
-    const { variantType = 'normal' } = req.body;
+    const { variantType = "normal" } = req.body;
     const result = await toggleCard(req.user.id, setId, cardId, variantType);
     res.json({ data: result });
   } catch (e: any) {
@@ -148,10 +155,13 @@ export const toggleCardCollected = async (req: AuthenticatedRequest, res: Respon
 
 // PUT /master-sets/:setId/cards/:cardId/quantity — set exact quantity (for dupes)
 // Body: { variantType: string, quantity: number }
-export const setCardQuantity = async (req: AuthenticatedRequest, res: Response) => {
+export const setCardQuantity = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
   try {
     const { setId, cardId } = req.params;
-    const { variantType = 'normal', quantity } = req.body;
+    const { variantType = "normal", quantity } = req.body;
     await updateCardQuantity(req.user.id, setId, cardId, variantType, quantity);
     res.json({ data: { quantity } });
   } catch (e: any) {
