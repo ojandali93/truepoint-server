@@ -134,15 +134,11 @@ export interface UserListFilters {
 }
 
 export const getUsers = async (filters: UserListFilters = {}) => {
+  // subscriptions FK points to auth.users not profiles, so we can't auto-join.
+  // Query profiles and subscriptions separately, merge by user_id in JS.
   let q = supabaseAdmin
     .from("profiles")
-    .select(
-      `
-      id, username, full_name, created_at,
-      subscription:subscriptions(plan, status, current_period_end)
-    `,
-      { count: "exact" },
-    )
+    .select("id, username, full_name, created_at", { count: "exact" })
     .order("created_at", { ascending: false });
 
   if (filters.search) {
@@ -156,9 +152,25 @@ export const getUsers = async (filters: UserListFilters = {}) => {
     (filters.offset ?? 0) + (filters.limit ?? 50) - 1,
   );
 
-  const { data, error, count } = await q;
+  const { data: profiles, error, count } = await q;
   if (error) throw error;
-  return { users: data ?? [], total: count ?? 0 };
+  if (!profiles?.length) return { users: [], total: count ?? 0 };
+
+  // Fetch subscriptions for the returned profiles
+  const ids = profiles.map((p) => p.id);
+  const { data: subs } = await supabaseAdmin
+    .from("subscriptions")
+    .select("user_id, plan, status, current_period_end")
+    .in("user_id", ids);
+
+  const subMap = new Map((subs ?? []).map((s) => [s.user_id, s]));
+
+  const users = profiles.map((p) => ({
+    ...p,
+    subscription: subMap.has(p.id) ? [subMap.get(p.id)] : [],
+  }));
+
+  return { users, total: count ?? 0 };
 };
 
 export const getUserById = async (userId: string) => {
@@ -248,17 +260,15 @@ export const setFeatureFlag = async (
   enabled: boolean,
   updatedBy: string,
 ) => {
-  const { error } = await supabaseAdmin
-    .from("feature_flags")
-    .upsert(
-      {
-        key,
-        enabled,
-        updated_at: new Date().toISOString(),
-        updated_by: updatedBy,
-      },
-      { onConflict: "key" },
-    );
+  const { error } = await supabaseAdmin.from("feature_flags").upsert(
+    {
+      key,
+      enabled,
+      updated_at: new Date().toISOString(),
+      updated_by: updatedBy,
+    },
+    { onConflict: "key" },
+  );
   if (error) throw error;
 };
 
