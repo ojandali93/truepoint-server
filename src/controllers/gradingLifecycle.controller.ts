@@ -15,6 +15,7 @@ import {
   updateSubmissionCard,
 } from "../services/gradingLifecycle.service";
 import { logError } from "../lib/Logger";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 // Shared error handler — logs the real error server-side, sends a generic message to the client.
 const handle = async (
@@ -27,6 +28,7 @@ const handle = async (
     const data = await fn();
     res.status(successStatus).json({ data });
   } catch (err: any) {
+    if (handlePlanError(res, err)) return;
     await logError({
       source: "grading_lifecycle",
       message: err?.message ?? "Unknown error",
@@ -75,7 +77,12 @@ export const getOne = async (req: AuthenticatedRequest, res: Response) => {
 
 // POST /grading/submissions
 export const create = (req: AuthenticatedRequest, res: Response) =>
-  handle(req, res, () => createSubmission(req.user.id, req.body), 201);
+  handle(
+    req,
+    res,
+    () => createSubmission(req.user.id, req.body, req.user.role),
+    201,
+  );
 
 // POST /grading/submissions/:id/advance
 export const advance = (req: AuthenticatedRequest, res: Response) =>

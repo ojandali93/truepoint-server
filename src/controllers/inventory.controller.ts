@@ -1,8 +1,10 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as InventoryService from "../services/inventory.service";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 const handleError = (res: Response, err: unknown) => {
+  if (handlePlanError(res, err)) return;
   if (err && typeof err === "object" && "status" in err) {
     const e = err as { status: number; message?: string };
     return res.status(e.status).json({ error: e.message ?? "Error" });
@@ -50,19 +52,23 @@ export const addInventoryItem = async (
       collection_id,
     } = req.body;
 
-    const item = await InventoryService.addInventoryItem(req.user.id, {
-      itemType,
-      cardId: cardId ?? null,
-      productId: productId ?? null,
-      gradingCompany: gradingCompany ?? null,
-      grade: grade ?? null,
-      serialNumber: serialNumber ?? null,
-      isSealed: isSealed ?? null,
-      purchasePrice: purchasePrice ? Number(purchasePrice) : null,
-      purchaseDate: purchaseDate ?? null,
-      notes: notes ?? null,
-      collection_id: collection_id ?? null,
-    });
+    const item = await InventoryService.addInventoryItem(
+      req.user.id,
+      {
+        itemType,
+        cardId: cardId ?? null,
+        productId: productId ?? null,
+        gradingCompany: gradingCompany ?? null,
+        grade: grade ?? null,
+        serialNumber: serialNumber ?? null,
+        isSealed: isSealed ?? null,
+        purchasePrice: purchasePrice ? Number(purchasePrice) : null,
+        purchaseDate: purchaseDate ?? null,
+        notes: notes ?? null,
+        collection_id: collection_id ?? null,
+      },
+      req.user.role,
+    );
 
     res.status(201).json({ data: item });
   } catch (err) {
@@ -84,19 +90,23 @@ export const batchAddInventoryItems = async (
 
     const data = [];
     for (const row of items) {
-      const item = await InventoryService.addInventoryItem(req.user.id, {
-        itemType: row.itemType,
-        cardId: row.cardId ?? null,
-        productId: row.productId ?? null,
-        gradingCompany: row.gradingCompany ?? null,
-        grade: row.grade ?? null,
-        serialNumber: row.serialNumber ?? null,
-        isSealed: row.isSealed ?? null,
-        purchasePrice: row.purchasePrice ? Number(row.purchasePrice) : null,
-        purchaseDate: row.purchaseDate ?? null,
-        notes: row.notes ?? null,
-        collection_id: row.collection_id ?? null,
-      });
+      const item = await InventoryService.addInventoryItem(
+        req.user.id,
+        {
+          itemType: row.itemType,
+          cardId: row.cardId ?? null,
+          productId: row.productId ?? null,
+          gradingCompany: row.gradingCompany ?? null,
+          grade: row.grade ?? null,
+          serialNumber: row.serialNumber ?? null,
+          isSealed: row.isSealed ?? null,
+          purchasePrice: row.purchasePrice ? Number(row.purchasePrice) : null,
+          purchaseDate: row.purchaseDate ?? null,
+          notes: row.notes ?? null,
+          collection_id: row.collection_id ?? null,
+        },
+        req.user.role,
+      );
       data.push(item);
     }
 
@@ -178,6 +188,7 @@ export const openSealedProduct = async (
       req.params.id,
       req.user.id,
       pulledCards,
+      req.user.role,
     );
 
     res.json({

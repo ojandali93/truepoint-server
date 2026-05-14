@@ -4,24 +4,24 @@ import {
   findAllUsersWithInventory,
 } from "../repositories/portfolio.repository";
 import { getInventory } from "./inventory.service";
+import { requireFeature } from "./plan.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Response shape for GET portfolio (live + snapshot history). */
 export interface PortfolioData {
-  // Current state
-  currentValue: number;
-  costBasis: number;
-  gainLoss: number;
-  gainLossPct: number | null;
-
-  // Breakdown by type
-  breakdown: {
-    rawCards: { value: number; count: number };
-    gradedCards: { value: number; count: number };
-    sealedProducts: { value: number; count: number };
-  };
-
-  // Historical chart data
+  userId: string;
+  collectionId: string | null;
+  totalValue: number;
+  totalCostBasis: number;
+  totalGainLoss: number;
+  totalGainLossPct: number | null;
+  rawCardValue: number;
+  gradedCardValue: number;
+  sealedProductValue: number;
+  rawCards: number;
+  gradedCards: number;
+  sealedProducts: number;
   history: {
     date: string;
     totalValue: number;
@@ -31,8 +31,6 @@ export interface PortfolioData {
     gradedCardValue: number;
     sealedProductValue: number;
   }[];
-
-  // Performance metrics
   allTimeHigh: number;
   allTimeLow: number;
   changeToday: number | null;
@@ -41,12 +39,8 @@ export interface PortfolioData {
   change7dPct: number | null;
   change30d: number | null;
   change30dPct: number | null;
-
-  // Top performers
   topGainers: TopPerformer[];
   topLosers: TopPerformer[];
-
-  // Meta
   totalItems: number;
   lastSnapshotDate: string | null;
   hasHistory: boolean;
@@ -151,9 +145,12 @@ export const syncAllPortfolios = async (): Promise<{
 
 export const getPortfolio = async (
   userId: string,
-  days = 90,
+  days = 30,
   collectionId?: string | null,
+  role: string | null = null,
 ): Promise<PortfolioData> => {
+  await requireFeature(userId, "portfolio_dashboard", role);
+
   // Run inventory fetch and history fetch in parallel
   const [inventoryData, snapshots] = await Promise.all([
     getInventory(userId, collectionId),
@@ -272,18 +269,18 @@ export const getPortfolio = async (
     snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
 
   return {
-    currentValue,
-    costBasis,
-    gainLoss,
-    gainLossPct,
-    breakdown: {
-      rawCards: { value: rawCardValue, count: summary.rawCards },
-      gradedCards: { value: gradedCardValue, count: summary.gradedCards },
-      sealedProducts: {
-        value: sealedProductValue,
-        count: summary.sealedProducts,
-      },
-    },
+    userId,
+    collectionId: collectionId ?? null,
+    totalValue: currentValue,
+    totalCostBasis: costBasis,
+    totalGainLoss: gainLoss,
+    totalGainLossPct: gainLossPct,
+    rawCardValue,
+    gradedCardValue,
+    sealedProductValue,
+    rawCards: summary.rawCards,
+    gradedCards: summary.gradedCards,
+    sealedProducts: summary.sealedProducts,
     history: historyFromSnapshots,
     allTimeHigh,
     allTimeLow,

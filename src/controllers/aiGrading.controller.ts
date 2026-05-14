@@ -3,6 +3,8 @@ import { AuthenticatedRequest } from "../types/user.types";
 import { analyzeCardForGrading, GradingAnalysis } from "../lib/geminiClient";
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
+import { handlePlanError } from "../middleware/plan.middleware";
+import { checkMonthlyLimit, requireFeature } from "../services/plan.service";
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
 
@@ -76,6 +78,10 @@ export const analyzeCard = async (
       side: "front" | "back",
     ): Promise<string | null> => {
       try {
+        // Plan gate
+        await requireFeature(req.user.id, "ai_grading", req.user.role);
+        await checkMonthlyLimit(req.user.id, "ai_grading_reports", req.user.role);
+
         const ext =
           mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
         const path = `${req.user.id}/${Date.now()}_${side}.${ext}`;
@@ -99,6 +105,7 @@ export const analyzeCard = async (
 
         return data.publicUrl;
       } catch (err: any) {
+        if (handlePlanError(res, err)) return null;
         await logError({
           source: "upload-image", // ← change per controller
           message: err?.message ?? "Unknown error",

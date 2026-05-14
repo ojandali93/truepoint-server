@@ -1,6 +1,7 @@
 // src/services/collection.service.ts
 
 import { supabaseAdmin } from "../lib/supabase";
+import { getStaticLimit } from "./plan.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,38 +32,25 @@ export interface CreateCollectionInput {
 
 // ─── Plan limit enforcement ───────────────────────────────────────────────────
 
-const PLAN_LIMITS: Record<string, number> = {
-  collector: 1,
-  pro: 3,
-};
-
-const getUserPlan = async (userId: string): Promise<string> => {
-  const { data } = await supabaseAdmin
-    .from("subscriptions")
-    .select("plan, status")
-    .eq("user_id", userId)
-    .in("status", ["active", "trialing"])
-    .maybeSingle();
-  return data?.plan ?? "collector";
-};
-
-const checkCollectionLimit = async (userId: string): Promise<void> => {
-  const [plan, { count }] = await Promise.all([
-    getUserPlan(userId),
+const checkCollectionLimit = async (
+  userId: string,
+  role: string | null = null,
+): Promise<void> => {
+  const [limit, { count }] = await Promise.all([
+    getStaticLimit(userId, "collections", role),
     supabaseAdmin
       .from("collections")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId),
   ]);
 
-  const limit = PLAN_LIMITS[plan] ?? 1;
   const current = count ?? 0;
+  const effectiveLimit = limit ?? Infinity;
 
-  if (current >= limit) {
-    const planName = plan.charAt(0).toUpperCase() + plan.slice(1);
+  if (current >= effectiveLimit) {
     throw Object.assign(
       new Error(
-        `Your ${planName} plan allows ${limit} collection${limit === 1 ? "" : "s"}. Upgrade to Pro to add more.`,
+        `Your plan allows ${limit} collection${limit === 1 ? "" : "s"}. Upgrade to Pro to add more.`,
       ),
       { status: 403, code: "COLLECTION_LIMIT_REACHED" },
     );
@@ -102,9 +90,10 @@ export const getCollectionById = async (
 export const createCollection = async (
   userId: string,
   input: CreateCollectionInput,
+  role: string | null = null,
 ): Promise<Collection> => {
   // Enforce plan limits
-  await checkCollectionLimit(userId);
+  await checkCollectionLimit(userId, role);
 
   const { data, error } = await supabaseAdmin
     .from("collections")

@@ -57,12 +57,16 @@ export const createColl = async (
       res.status(400).json({ error: "Collection name is required" });
       return;
     }
-    const collection = await createCollection(uid(req), {
-      name,
-      description,
-      color,
-      icon,
-    });
+    const collection = await createCollection(
+      uid(req),
+      {
+        name,
+        description,
+        color,
+        icon,
+      },
+      (req as AuthenticatedRequest).user.role,
+    );
     res.status(201).json({ data: collection });
   } catch (err) {
     fail(res, err);

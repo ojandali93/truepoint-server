@@ -6,6 +6,7 @@
 
 import { supabaseAdmin } from "../lib/supabase";
 import { GRADING_COSTS } from "./gradingArbitrage.service";
+import { checkMonthlyLimit, requireFeature } from "./plan.service";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -348,7 +349,12 @@ export const createSubmission = async (
     notes?: string;
     cards: CreateCardInput[];
   },
+  role: string | null = null,
 ): Promise<GradingSubmission> => {
+  await requireFeature(userId, "submission_tracking", role);
+  await checkMonthlyLimit(userId, "submissions", role);
+
+  if (!input.company) throw new Error("Grading company is required");
   if (!input.company) throw new Error("Grading company is required");
   if (!input.serviceTier) throw new Error("Service tier is required");
   if (!input.cards || input.cards.length === 0) {

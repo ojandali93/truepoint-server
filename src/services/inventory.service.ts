@@ -13,6 +13,8 @@ import {
   GradingCompany,
 } from "../repositories/inventory.repository";
 
+import { requireFeature } from "./plan.service";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface MarketValue {
@@ -212,7 +214,19 @@ export const getInventory = async (
 export const addInventoryItem = async (
   userId: string,
   input: CreateInventoryInput,
+  role: string | null = null,
 ): Promise<InventoryRow> => {
+  // Plan gate — Starter can't add inventory at all; sealed products are Pro-only.
+  if (input.itemType === "sealed_product") {
+    await requireFeature(userId, "sealed_inventory", role);
+  } else {
+    await requireFeature(userId, "inventory_tracking", role);
+  }
+
+  // Validate required fields per type
+  if (input.itemType === "raw_card" && !input.cardId) {
+    throw { status: 400, message: "card_id is required for raw cards" };
+  }
   // Validate required fields per type
   if (input.itemType === "raw_card" && !input.cardId) {
     throw { status: 400, message: "card_id is required for raw cards" };
@@ -278,7 +292,10 @@ export const openSealedProduct = async (
   id: string,
   userId: string,
   pulledCards: PulledCard[],
+  role: string | null = null,
 ): Promise<{ inserted: number }> => {
+  await requireFeature(userId, "pack_opening", role);
+
   const item = await findInventoryItemById(id);
   if (!item) throw { status: 404, message: "Inventory item not found" };
   if (item.user_id !== userId) throw { status: 403, message: "Access denied" };

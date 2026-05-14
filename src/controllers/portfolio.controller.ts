@@ -1,8 +1,10 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as PortfolioService from "../services/portfolio.service";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 const handleError = (res: Response, err: unknown) => {
+  if (handlePlanError(res, err)) return;
   if (err && typeof err === "object" && "status" in err) {
     const e = err as { status: number; message?: string };
     return res.status(e.status).json({ error: e.message ?? "Error" });
@@ -24,6 +26,7 @@ export const getPortfolio = async (
       req.user.id,
       days,
       collectionId ?? null,
+      req.user.role,
     );
     res.json({ data });
   } catch (err) {
