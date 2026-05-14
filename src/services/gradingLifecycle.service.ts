@@ -97,6 +97,7 @@ export interface GradingSubmission {
   updatedAt: string;
   // Aggregates
   cardCount: number;
+  totalGradedValue: number | null; // sum of graded_value across cards (null if none valued)
   cards?: SubmissionCard[]; // populated only on detail fetch
   daysInTransit: number;
   roi: number | null;
@@ -207,6 +208,13 @@ const mapSubmission = (row: any, cardRows: any[] = []): GradingSubmission => {
     roi = basis > 0 ? ((value - basis) / basis) * 100 : null;
   }
 
+  // Sum graded values across all cards (null if none valued yet)
+  const valued = cards.filter((c) => c.gradedValue != null);
+  const totalGradedValue =
+    valued.length > 0
+      ? valued.reduce((s, c) => s + (c.gradedValue ?? 0), 0)
+      : null;
+
   return {
     id: row.id,
     userId: row.user_id,
@@ -230,6 +238,7 @@ const mapSubmission = (row: any, cardRows: any[] = []): GradingSubmission => {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     cardCount: cards.length,
+    totalGradedValue,
     cards: cardRows.length > 0 ? cards : undefined,
     daysInTransit,
     roi,
@@ -244,7 +253,9 @@ export const getSubmissions = async (
 ): Promise<GradingSubmission[]> => {
   let q = supabaseAdmin
     .from("grading_submissions")
-    .select("*, submission_cards(id, card_image, card_name)")
+    .select(
+      "*, submission_cards(id, card_image, card_name, graded_value, declared_value, grading_cost)",
+    )
     .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
@@ -257,6 +268,14 @@ export const getSubmissions = async (
     const sub = mapSubmission(row, []);
     const childCards = row.submission_cards ?? [];
     sub.cardCount = childCards.length;
+
+    // Total value across ALL cards in this envelope (null if none valued)
+    const valued = childCards.filter((c: any) => c.graded_value != null);
+    sub.totalGradedValue =
+      valued.length > 0
+        ? valued.reduce((s: number, c: any) => s + Number(c.graded_value), 0)
+        : null;
+
     // Expose a small preview (first 4 card thumbnails) for the list UI
     sub.cards = childCards
       .slice(0, 4)
@@ -299,7 +318,8 @@ export const getSubmission = async (
   submission.cards = cards;
   submission.cardCount = cards.length;
 
-  // Recompute ROI now that cards are populated (mapSubmission was called with [])
+  // Recompute ROI + totalGradedValue now that cards are populated
+  // (mapSubmission was called with empty [])
   const returnedCards = cards.filter((c) => c.gradedValue != null);
   if (returnedCards.length > 0) {
     const value = returnedCards.reduce((s, c) => s + (c.gradedValue ?? 0), 0);
@@ -308,6 +328,9 @@ export const getSubmission = async (
       0,
     );
     submission.roi = basis > 0 ? ((value - basis) / basis) * 100 : null;
+    submission.totalGradedValue = value;
+  } else {
+    submission.totalGradedValue = null;
   }
 
   return submission;
@@ -613,22 +636,38 @@ export const updateSubmissionCard = async (
     .single();
   if (error) throw error;
 
-  // If a grade just got assigned and a linked inventory item exists,
-  // promote that inventory row to a graded_card.
-  if (updates.gradeReceived && lookup.inventory_id) {
-    const company = (lookup.grading_submissions as any).company;
-    await supabaseAdmin
-      .from("inventory")
-      .update({
-        item_type: "graded_card",
-        grading_company: company,
-        grade: updates.gradeReceived,
-        notes: `${company} ${updates.gradeReceived}${
-          updates.certNumber ? ` — Cert #${updates.certNumber}` : ""
-        }`,
-      })
-      .eq("id", lookup.inventory_id)
-      .eq("user_id", userId);
+  // Sync changes back to the linked inventory item (if any).
+  // Two paths:
+  //   (a) Grade was just assigned → promote the row to a graded_card
+  //   (b) Graded value was entered → mirror to manual_market_value so the
+  //       portfolio/inventory view reflects it before the nightly pricing
+  //       API catches up.
+  if (lookup.inventory_id) {
+    const inventoryPatch: any = { updated_at: new Date().toISOString() };
+
+    if (updates.gradeReceived) {
+      const company = (lookup.grading_submissions as any).company;
+      inventoryPatch.item_type = "graded_card";
+      inventoryPatch.grading_company = company;
+      inventoryPatch.grade = updates.gradeReceived;
+      inventoryPatch.notes = `${company} ${updates.gradeReceived}${
+        updates.certNumber ? ` — Cert #${updates.certNumber}` : ""
+      }`;
+    }
+
+    if (updates.gradedValue !== undefined) {
+      inventoryPatch.manual_market_value = updates.gradedValue;
+      inventoryPatch.manual_market_value_source = "grading_return";
+    }
+
+    // Only write if there's actually something to update
+    if (Object.keys(inventoryPatch).length > 1) {
+      await supabaseAdmin
+        .from("inventory")
+        .update(inventoryPatch)
+        .eq("id", lookup.inventory_id)
+        .eq("user_id", userId);
+    }
   }
 
   await recomputeEnvelopeTotals(lookup.submission_id);
@@ -665,37 +704,50 @@ const recomputeEnvelopeTotals = async (submissionId: string): Promise<void> => {
 // ─── Pipeline summary (envelope-level totals) ──────────────────────────────
 
 export const getPipelineSummary = async (userId: string) => {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
   const { data: envelopes } = await supabaseAdmin
     .from("grading_submissions")
-    .select("id, status, total_cost, company")
+    .select("id, status, total_cost, company, returned_at")
     .eq("user_id", userId);
 
   const all = envelopes ?? [];
   const active = all.filter((r: any) => r.status !== "returned");
   const returned = all.filter((r: any) => r.status === "returned");
 
-  // Sum returned cards' graded values for ROI
-  const returnedIds = returned.map((r: any) => r.id);
-  let returnedCards: any[] = [];
-  if (returnedIds.length > 0) {
+  // Cards from envelopes returned in the last 365 days — used for net P/L
+  // and ROI. We restrict to the past year so the KPIs reflect recent
+  // performance rather than lifetime totals.
+  const recentReturnedIds = returned
+    .filter((r: any) => r.returned_at && new Date(r.returned_at) >= oneYearAgo)
+    .map((r: any) => r.id);
+
+  let recentCards: any[] = [];
+  if (recentReturnedIds.length > 0) {
     const { data } = await supabaseAdmin
       .from("submission_cards")
       .select("declared_value, grading_cost, graded_value")
-      .in("submission_id", returnedIds);
-    returnedCards = data ?? [];
+      .in("submission_id", recentReturnedIds);
+    recentCards = data ?? [];
   }
+
+  // Only cards with a graded_value contribute to P/L — un-valued cards are
+  // excluded so a missing value doesn't show as a $0 loss.
+  const valuedCards = recentCards.filter((c) => c.graded_value != null);
+  const totalReturnedValue = valuedCards.reduce(
+    (s, c) => s + Number(c.graded_value),
+    0,
+  );
+  const totalCostBasis = valuedCards.reduce(
+    (s, c) =>
+      s + (Number(c.declared_value) || 0) + (Number(c.grading_cost) || 0),
+    0,
+  );
+  const netProfitLoss1Year = totalReturnedValue - totalCostBasis;
 
   const totalSpent = all.reduce(
     (s: number, r: any) => s + (Number(r.total_cost) || 0),
-    0,
-  );
-  const totalReturnedValue = returnedCards.reduce(
-    (s, c) => s + (Number(c.graded_value) || 0),
-    0,
-  );
-  const totalCostBasis = returnedCards.reduce(
-    (s, c) =>
-      s + (Number(c.declared_value) || 0) + (Number(c.grading_cost) || 0),
     0,
   );
 
@@ -703,12 +755,12 @@ export const getPipelineSummary = async (userId: string) => {
     totalSubmissions: all.length,
     activeInPipeline: active.length,
     returned: returned.length,
-    totalSpentOnGrading: totalSpent,
-    totalReturnedValue,
+    totalSpentOnGrading: totalSpent, // lifetime cost, kept for reference
+    totalReturnedValue, // 1-year window
+    netProfitLoss1Year, // 1-year window
+    valuedCardCount: valuedCards.length, // for "—" vs $0 disambiguation on the client
     totalROI:
-      totalCostBasis > 0
-        ? ((totalReturnedValue - totalCostBasis) / totalCostBasis) * 100
-        : null,
+      totalCostBasis > 0 ? (netProfitLoss1Year / totalCostBasis) * 100 : null,
     byStatus: STATUS_ORDER.reduce(
       (acc, s) => {
         acc[s] = all.filter((r: any) => r.status === s).length;

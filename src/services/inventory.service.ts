@@ -45,6 +45,18 @@ const resolveMarketValue = (
   cardPrices: Map<string, Record<string, number>>,
   productPrices: Map<string, number>,
 ): MarketValue => {
+  // Manual override — takes precedence over all API-sourced prices.
+  // Set when (a) a graded card is returned from the grader and the user
+  // enters its value, or (b) the user manually edits an inventory item's
+  // value. The nightly pricing job is responsible for clearing this once
+  // it has real market data.
+  if (item.manual_market_value != null) {
+    return {
+      marketPrice: Number(item.manual_market_value),
+      source: item.manual_market_value_source ?? "manual",
+    };
+  }
+
   // Sealed product
   if (item.item_type === "sealed_product" && item.product_id) {
     const price = productPrices.get(item.product_id) ?? null;

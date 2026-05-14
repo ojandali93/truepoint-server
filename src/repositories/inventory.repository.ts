@@ -18,6 +18,8 @@ export interface InventoryRow {
   purchase_price: number | null;
   purchase_date: string | null;
   notes: string | null;
+  manual_market_value: number | null;
+  manual_market_value_source: string | null;
   collection_id: string | null;
   added_at: string;
   updated_at: string;
@@ -262,7 +264,8 @@ export const fetchCardPrices = async (
     if (!cands.length) return undefined;
     const prefer = cands.find(
       (c) =>
-        (c.variant === "normal" || c.variant === "unlimited") && c.price != null,
+        (c.variant === "normal" || c.variant === "unlimited") &&
+        c.price != null,
     );
     if (prefer) return prefer.price;
     const any = cands.find((c) => c.price != null);
