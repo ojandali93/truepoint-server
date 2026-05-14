@@ -35,6 +35,23 @@ export const STATUS_ORDER: SubmissionStatus[] = [
   "returned",
 ];
 
+export interface AIReportSummary {
+  id: string;
+  status: string; // 'processing' | 'completed' | 'failed'
+  overallScore: number | null;
+  centering: number;
+  corners: number;
+  edges: number;
+  surface: number;
+  confidence: number;
+  recommendation: string; // 'grade' | 'skip' | 'borderline'
+  recommendationReason: string | null;
+  predictions: any; // { psa, bgs, cgc, tag }
+  frontImage: string | null;
+  backImage: string | null;
+  createdAt: string;
+}
+
 export interface SubmissionCard {
   id: string;
   submissionId: string;
@@ -52,6 +69,7 @@ export interface SubmissionCard {
   certNumber: string | null;
   gradedValue: number | null;
   aiGradingReportId: string | null;
+  aiReport: AIReportSummary | null; // populated on detail fetch
   position: number;
   notes: string | null;
   createdAt: string;
@@ -115,11 +133,55 @@ const mapCard = (row: any): SubmissionCard => ({
   certNumber: row.cert_number,
   gradedValue: row.graded_value != null ? Number(row.graded_value) : null,
   aiGradingReportId: row.ai_grading_report_id,
+  aiReport: null, // populated later via attachAIReports()
   position: row.position ?? 0,
   notes: row.notes,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
+
+// Fetch and attach AI report summaries for a set of cards in bulk.
+const attachAIReports = async (cards: SubmissionCard[]): Promise<void> => {
+  const reportIds = cards
+    .map((c) => c.aiGradingReportId)
+    .filter((v): v is string => Boolean(v));
+  if (reportIds.length === 0) return;
+
+  const { data: reports } = await supabaseAdmin
+    .from("ai_grading_reports")
+    .select(
+      "id, status, overall_score, centering, corners, edges, surface, confidence, recommendation, recommendation_reason, predictions, front_image, back_image, created_at",
+    )
+    .in("id", reportIds);
+
+  const byId = Object.fromEntries(
+    (reports ?? []).map((r: any) => [
+      r.id,
+      {
+        id: r.id,
+        status: r.status,
+        overallScore: r.overall_score != null ? Number(r.overall_score) : null,
+        centering: Number(r.centering) || 0,
+        corners: Number(r.corners) || 0,
+        edges: Number(r.edges) || 0,
+        surface: Number(r.surface) || 0,
+        confidence: Number(r.confidence) || 0,
+        recommendation: r.recommendation,
+        recommendationReason: r.recommendation_reason,
+        predictions: r.predictions,
+        frontImage: r.front_image,
+        backImage: r.back_image,
+        createdAt: r.created_at,
+      } as AIReportSummary,
+    ]),
+  );
+
+  cards.forEach((c) => {
+    if (c.aiGradingReportId && byId[c.aiGradingReportId]) {
+      c.aiReport = byId[c.aiGradingReportId];
+    }
+  });
+};
 
 const mapSubmission = (row: any, cardRows: any[] = []): GradingSubmission => {
   const cards = cardRows.map(mapCard);
@@ -229,7 +291,26 @@ export const getSubmission = async (
 
   if (cardErr) throw cardErr;
 
-  return mapSubmission(data, cardRows ?? []);
+  const cards = (cardRows ?? []).map(mapCard);
+  await attachAIReports(cards);
+
+  // Replace the raw rows in mapSubmission with mapped+enriched cards
+  const submission = mapSubmission(data, []);
+  submission.cards = cards;
+  submission.cardCount = cards.length;
+
+  // Recompute ROI now that cards are populated (mapSubmission was called with [])
+  const returnedCards = cards.filter((c) => c.gradedValue != null);
+  if (returnedCards.length > 0) {
+    const value = returnedCards.reduce((s, c) => s + (c.gradedValue ?? 0), 0);
+    const basis = returnedCards.reduce(
+      (s, c) => s + (c.declaredValue ?? 0) + (c.gradingCost ?? 0),
+      0,
+    );
+    submission.roi = basis > 0 ? ((value - basis) / basis) * 100 : null;
+  }
+
+  return submission;
 };
 
 // ─── Create submission with cards ───────────────────────────────────────────

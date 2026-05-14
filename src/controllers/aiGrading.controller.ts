@@ -59,8 +59,15 @@ export const analyzeCard = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { frontBase64, frontMime, backBase64, backMime, cardName, setName } =
-      req.body;
+    const {
+      frontBase64,
+      frontMime,
+      backBase64,
+      backMime,
+      cardName,
+      setName,
+      submissionCardId, // optional — when provided, link the report to a submission card
+    } = req.body;
 
     // Upload images to Supabase Storage bucket "Ai Grading Images"
     const uploadImage = async (
@@ -159,6 +166,30 @@ export const analyzeCard = async (
     console.log(
       `[AIGrading] Created pending report ${reportId} for user ${req.user.id}${cardName ? ` — ${cardName}` : ""}`,
     );
+
+    // If this report was triggered from a submission card, link it.
+    // We verify ownership through the parent envelope's user_id before writing.
+    if (submissionCardId) {
+      const { data: ownership } = await supabaseAdmin
+        .from("submission_cards")
+        .select("id, grading_submissions!inner(user_id)")
+        .eq("id", submissionCardId)
+        .maybeSingle();
+
+      if (
+        ownership &&
+        (ownership.grading_submissions as any).user_id === req.user.id
+      ) {
+        await supabaseAdmin
+          .from("submission_cards")
+          .update({ ai_grading_report_id: reportId })
+          .eq("id", submissionCardId);
+      } else {
+        console.warn(
+          `[AIGrading] submissionCardId ${submissionCardId} ownership mismatch — skipping link`,
+        );
+      }
+    }
 
     // Respond immediately — client doesn't wait for Gemini
     res.json({
