@@ -1,263 +1,375 @@
 // src/services/gradingLifecycle.service.ts
+//
+// Multi-card grading submissions (envelope model).
+// One `grading_submissions` row = one envelope (e.g. "BGS submission with 13 cards").
+// Each `submission_cards` row = one card inside that envelope.
 
-import { supabaseAdmin } from '../lib/supabase';
-import { GRADING_COSTS } from './gradingArbitrage.service';
+import { supabaseAdmin } from "../lib/supabase";
+import { GRADING_COSTS } from "./gradingArbitrage.service";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 export type SubmissionStatus =
-  | 'submitted'
-  | 'received'
-  | 'grading'
-  | 'shipped_back'
-  | 'returned';
+  | "preparing"
+  | "submitted"
+  | "received"
+  | "grading"
+  | "shipped_back"
+  | "returned";
 
 export const STATUS_LABELS: Record<SubmissionStatus, string> = {
-  submitted:    'Submitted',
-  received:     'Received by Grader',
-  grading:      'Being Graded',
-  shipped_back: 'Shipped Back',
-  returned:     'Returned',
+  preparing: "Preparing",
+  submitted: "Submitted",
+  received: "Received by Grader",
+  grading: "Being Graded",
+  shipped_back: "Shipped Back",
+  returned: "Returned",
 };
 
+// Advance order skips 'preparing' — a created submission starts at 'submitted'.
 export const STATUS_ORDER: SubmissionStatus[] = [
-  'submitted', 'received', 'grading', 'shipped_back', 'returned',
+  "submitted",
+  "received",
+  "grading",
+  "shipped_back",
+  "returned",
 ];
+
+export interface SubmissionCard {
+  id: string;
+  submissionId: string;
+  inventoryId: string | null;
+  cardId: string | null;
+  cardName: string;
+  cardSet: string | null;
+  cardNumber: string | null;
+  cardImage: string | null;
+  variant: string | null;
+  declaredValue: number | null;
+  gradingCost: number | null;
+  serviceTier: string | null;
+  gradeReceived: string | null;
+  certNumber: string | null;
+  gradedValue: number | null;
+  aiGradingReportId: string | null;
+  position: number;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface GradingSubmission {
   id: string;
   userId: string;
-  inventoryItemId: string | null;
-  cardId: string | null;
-  cardName: string;
-  cardSet: string;
-  cardNumber: string | null;
-  cardImage: string | null;
-  gradingCompany: string;
-  serviceTier: string;
-  declaredValue: number | null;
-  gradingCost: number | null;
+  company: string;
+  serviceTier: string | null;
   status: SubmissionStatus;
-  submittedAt: string;
+  submissionNumber: string | null;
+  trackingToGrader: string | null;
+  trackingFromGrader: string | null;
+  declaredValueTotal: number | null;
+  totalCost: number | null;
+  notes: string | null;
+  submittedAt: string | null;
   receivedAt: string | null;
   gradedAt: string | null;
   shippedBackAt: string | null;
   returnedAt: string | null;
-  submissionNumber: string | null;
-  trackingToGrader: string | null;
-  trackingFromGrader: string | null;
-  gradeReceived: string | null;
-  certNumber: string | null;
-  gradedValue: number | null;
-  notes: string | null;
-  // Computed
+  createdAt: string;
+  updatedAt: string;
+  // Aggregates
+  cardCount: number;
+  cards?: SubmissionCard[]; // populated only on detail fetch
   daysInTransit: number;
   roi: number | null;
 }
 
-const mapRow = (row: any): GradingSubmission => {
-  const submitted = new Date(row.submitted_at);
+export interface CreateCardInput {
+  inventoryId?: string;
+  cardId?: string;
+  cardName: string;
+  cardSet?: string;
+  cardNumber?: string;
+  cardImage?: string;
+  variant?: string;
+  declaredValue?: number;
+  notes?: string;
+}
+
+// ─── Mappers ─────────────────────────────────────────────────────────────────
+
+const mapCard = (row: any): SubmissionCard => ({
+  id: row.id,
+  submissionId: row.submission_id,
+  inventoryId: row.inventory_id,
+  cardId: row.card_id,
+  cardName: row.card_name,
+  cardSet: row.card_set,
+  cardNumber: row.card_number,
+  cardImage: row.card_image,
+  variant: row.variant,
+  declaredValue: row.declared_value != null ? Number(row.declared_value) : null,
+  gradingCost: row.grading_cost != null ? Number(row.grading_cost) : null,
+  serviceTier: row.service_tier,
+  gradeReceived: row.grade_received,
+  certNumber: row.cert_number,
+  gradedValue: row.graded_value != null ? Number(row.graded_value) : null,
+  aiGradingReportId: row.ai_grading_report_id,
+  position: row.position ?? 0,
+  notes: row.notes,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapSubmission = (row: any, cardRows: any[] = []): GradingSubmission => {
+  const cards = cardRows.map(mapCard);
+  const submitted = row.submitted_at
+    ? new Date(row.submitted_at)
+    : row.created_at
+      ? new Date(row.created_at)
+      : new Date();
   const returned = row.returned_at ? new Date(row.returned_at) : null;
   const daysInTransit = Math.floor(
-    ((returned ?? new Date()).getTime() - submitted.getTime()) / (1000 * 60 * 60 * 24)
+    ((returned ?? new Date()).getTime() - submitted.getTime()) / 86_400_000,
   );
 
+  // ROI computed across returned cards only
+  const returnedCards = cards.filter((c) => c.gradedValue != null);
   let roi: number | null = null;
-  if (row.graded_value && row.declared_value && row.grading_cost) {
-    const totalCost = (row.declared_value ?? 0) + row.grading_cost;
-    roi = totalCost > 0 ? ((row.graded_value - totalCost) / totalCost) * 100 : null;
+  if (returnedCards.length > 0) {
+    const value = returnedCards.reduce((s, c) => s + (c.gradedValue ?? 0), 0);
+    const basis = returnedCards.reduce(
+      (s, c) => s + (c.declaredValue ?? 0) + (c.gradingCost ?? 0),
+      0,
+    );
+    roi = basis > 0 ? ((value - basis) / basis) * 100 : null;
   }
 
   return {
     id: row.id,
     userId: row.user_id,
-    inventoryItemId: row.inventory_item_id,
-    cardId: row.card_id,
-    cardName: row.card_name,
-    cardSet: row.card_set,
-    cardNumber: row.card_number,
-    cardImage: row.card_image,
-    gradingCompany: row.grading_company,
+    company: row.company,
     serviceTier: row.service_tier,
-    declaredValue: row.declared_value,
-    gradingCost: row.grading_cost,
     status: row.status,
+    submissionNumber: row.submission_number,
+    trackingToGrader: row.tracking_to_grader,
+    trackingFromGrader: row.tracking_from_grader,
+    declaredValueTotal:
+      row.declared_value_total != null
+        ? Number(row.declared_value_total)
+        : null,
+    totalCost: row.total_cost != null ? Number(row.total_cost) : null,
+    notes: row.notes,
     submittedAt: row.submitted_at,
     receivedAt: row.received_at,
     gradedAt: row.graded_at,
     shippedBackAt: row.shipped_back_at,
     returnedAt: row.returned_at,
-    submissionNumber: row.submission_number,
-    trackingToGrader: row.tracking_to_grader,
-    trackingFromGrader: row.tracking_from_grader,
-    gradeReceived: row.grade_received,
-    certNumber: row.cert_number,
-    gradedValue: row.graded_value,
-    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    cardCount: cards.length,
+    cards: cardRows.length > 0 ? cards : undefined,
     daysInTransit,
     roi,
   };
 };
 
-// ─── Get all submissions ──────────────────────────────────────────────────────
+// ─── List submissions (envelopes only, with card count) ─────────────────────
 
 export const getSubmissions = async (
   userId: string,
-  status?: SubmissionStatus
+  status?: SubmissionStatus,
 ): Promise<GradingSubmission[]> => {
   let q = supabaseAdmin
-    .from('grading_submissions')
-    .select('*')
-    .eq('user_id', userId)
-    .order('submitted_at', { ascending: false });
+    .from("grading_submissions")
+    .select("*, submission_cards(id, card_image, card_name)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
 
-  if (status) q = q.eq('status', status);
+  if (status) q = q.eq("status", status);
 
-  const { data } = await q;
-  return (data ?? []).map(mapRow);
+  const { data, error } = await q;
+  if (error) throw error;
+
+  return (data ?? []).map((row: any) => {
+    const sub = mapSubmission(row, []);
+    const childCards = row.submission_cards ?? [];
+    sub.cardCount = childCards.length;
+    // Expose a small preview (first 4 card thumbnails) for the list UI
+    sub.cards = childCards
+      .slice(0, 4)
+      .map((c: any, i: number) =>
+        mapCard({ ...c, submission_id: sub.id, position: i }),
+      );
+    return sub;
+  });
 };
 
-// ─── Get one submission ───────────────────────────────────────────────────────
+// ─── Get one submission with ALL cards ──────────────────────────────────────
 
 export const getSubmission = async (
   userId: string,
-  id: string
+  id: string,
 ): Promise<GradingSubmission | null> => {
-  const { data } = await supabaseAdmin
-    .from('grading_submissions')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('id', id)
-    .single();
+  const { data, error } = await supabaseAdmin
+    .from("grading_submissions")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("id", id)
+    .maybeSingle();
 
-  return data ? mapRow(data) : null;
+  if (error) throw error;
+  if (!data) return null;
+
+  const { data: cardRows, error: cardErr } = await supabaseAdmin
+    .from("submission_cards")
+    .select("*")
+    .eq("submission_id", id)
+    .order("position", { ascending: true });
+
+  if (cardErr) throw cardErr;
+
+  return mapSubmission(data, cardRows ?? []);
 };
 
-// ─── Create submission ────────────────────────────────────────────────────────
+// ─── Create submission with cards ───────────────────────────────────────────
 
 export const createSubmission = async (
   userId: string,
   input: {
-    inventoryItemId?: string;
-    cardId?: string;
-    cardName: string;
-    cardSet: string;
-    cardNumber?: string;
-    cardImage?: string;
-    gradingCompany: string;
+    company: string;
     serviceTier: string;
-    declaredValue?: number;
     submissionNumber?: string;
     trackingToGrader?: string;
     notes?: string;
-  }
+    cards: CreateCardInput[];
+  },
 ): Promise<GradingSubmission> => {
-  const gradingCost =
-    GRADING_COSTS[input.gradingCompany]?.[input.serviceTier] ?? null;
-
-  // If linked to inventory item, mark it as "sent for grading"
-  if (input.inventoryItemId) {
-    await supabaseAdmin
-      .from('inventory')
-      .update({ notes: `Sent to ${input.gradingCompany} for grading` })
-      .eq('id', input.inventoryItemId)
-      .eq('user_id', userId);
+  if (!input.company) throw new Error("Grading company is required");
+  if (!input.serviceTier) throw new Error("Service tier is required");
+  if (!input.cards || input.cards.length === 0) {
+    throw new Error("At least one card is required");
   }
 
-  const { data, error } = await supabaseAdmin
-    .from('grading_submissions')
+  const perCardCost = GRADING_COSTS[input.company]?.[input.serviceTier] ?? 0;
+  const totalCost = perCardCost * input.cards.length;
+  const declaredValueTotal = input.cards.reduce(
+    (s, c) => s + (c.declaredValue ?? 0),
+    0,
+  );
+  const now = new Date().toISOString();
+
+  // 1. Insert the envelope
+  const { data: envelope, error: envErr } = await supabaseAdmin
+    .from("grading_submissions")
     .insert({
       user_id: userId,
-      inventory_item_id: input.inventoryItemId ?? null,
-      card_id: input.cardId ?? null,
-      card_name: input.cardName,
-      card_set: input.cardSet,
-      card_number: input.cardNumber ?? null,
-      card_image: input.cardImage ?? null,
-      grading_company: input.gradingCompany,
+      company: input.company,
       service_tier: input.serviceTier,
-      declared_value: input.declaredValue ?? null,
-      grading_cost: gradingCost,
-      status: 'submitted',
+      status: "submitted",
       submission_number: input.submissionNumber ?? null,
       tracking_to_grader: input.trackingToGrader ?? null,
       notes: input.notes ?? null,
+      total_cost: totalCost,
+      declared_value_total: declaredValueTotal,
+      submitted_at: now,
     })
     .select()
     .single();
 
-  if (error) throw error;
-  return mapRow(data);
+  if (envErr) throw envErr;
+
+  // 2. Insert line items
+  const cardRows = input.cards.map((c, i) => ({
+    submission_id: envelope.id,
+    inventory_id: c.inventoryId ?? null,
+    card_id: c.cardId ?? null,
+    card_name: c.cardName,
+    card_set: c.cardSet ?? null,
+    card_number: c.cardNumber ?? null,
+    card_image: c.cardImage ?? null,
+    variant: c.variant ?? null,
+    declared_value: c.declaredValue ?? null,
+    service_tier: input.serviceTier,
+    grading_cost: perCardCost,
+    position: i,
+    notes: c.notes ?? null,
+  }));
+
+  const { data: insertedCards, error: cardErr } = await supabaseAdmin
+    .from("submission_cards")
+    .insert(cardRows)
+    .select();
+
+  if (cardErr) {
+    // Roll back envelope if line items failed
+    await supabaseAdmin
+      .from("grading_submissions")
+      .delete()
+      .eq("id", envelope.id);
+    throw cardErr;
+  }
+
+  // 3. Annotate any inventory items linked to this submission
+  const inventoryIds = input.cards
+    .map((c) => c.inventoryId)
+    .filter((v): v is string => Boolean(v));
+  if (inventoryIds.length > 0) {
+    await supabaseAdmin
+      .from("inventory")
+      .update({ notes: `Sent to ${input.company} for grading` })
+      .in("id", inventoryIds)
+      .eq("user_id", userId);
+  }
+
+  return mapSubmission(envelope, insertedCards ?? []);
 };
 
-// ─── Advance status ───────────────────────────────────────────────────────────
+// ─── Advance status ─────────────────────────────────────────────────────────
 
 export const advanceStatus = async (
   userId: string,
   id: string,
   updates: {
     trackingFromGrader?: string;
-    gradeReceived?: string;
-    certNumber?: string;
-    gradedValue?: number;
     notes?: string;
-  } = {}
+  } = {},
 ): Promise<GradingSubmission> => {
   const current = await getSubmission(userId, id);
-  if (!current) throw new Error('Submission not found');
+  if (!current) throw new Error("Submission not found");
 
-  const currentIndex = STATUS_ORDER.indexOf(current.status);
-  if (currentIndex >= STATUS_ORDER.length - 1) throw new Error('Already at final status');
+  const idx = STATUS_ORDER.indexOf(current.status);
+  if (idx < 0 || idx >= STATUS_ORDER.length - 1) {
+    throw new Error("Already at final status");
+  }
 
-  const nextStatus = STATUS_ORDER[currentIndex + 1];
+  const nextStatus = STATUS_ORDER[idx + 1];
   const now = new Date().toISOString();
 
-  const dateFields: Record<string, string> = {
-    received:     'received_at',
-    grading:      'graded_at',
-    shipped_back: 'shipped_back_at',
-    returned:     'returned_at',
+  const dateField: Record<string, string> = {
+    received: "received_at",
+    grading: "graded_at",
+    shipped_back: "shipped_back_at",
+    returned: "returned_at",
   };
 
-  const patch: any = {
-    status: nextStatus,
-    updated_at: now,
-    ...updates.trackingFromGrader && { tracking_from_grader: updates.trackingFromGrader },
-    ...updates.gradeReceived && { grade_received: updates.gradeReceived },
-    ...updates.certNumber && { cert_number: updates.certNumber },
-    ...updates.gradedValue && { graded_value: updates.gradedValue },
-    ...updates.notes && { notes: updates.notes },
-  };
+  const patch: any = { status: nextStatus, updated_at: now };
+  if (updates.trackingFromGrader)
+    patch.tracking_from_grader = updates.trackingFromGrader;
+  if (updates.notes) patch.notes = updates.notes;
+  if (dateField[nextStatus]) patch[dateField[nextStatus]] = now;
 
-  if (dateFields[nextStatus]) {
-    patch[dateFields[nextStatus]] = now;
-  }
-
-  // When returned — update inventory item to graded_card with the grade
-  if (nextStatus === 'returned' && current.inventoryItemId && updates.gradeReceived) {
-    await supabaseAdmin
-      .from('inventory')
-      .update({
-        item_type: 'graded_card',
-        grading_company: current.gradingCompany,
-        grade: updates.gradeReceived,
-        notes: `${current.gradingCompany} ${updates.gradeReceived}${updates.certNumber ? ` — Cert #${updates.certNumber}` : ''}`,
-      })
-      .eq('id', current.inventoryItemId)
-      .eq('user_id', userId);
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('grading_submissions')
+  const { error } = await supabaseAdmin
+    .from("grading_submissions")
     .update(patch)
-    .eq('id', id)
-    .eq('user_id', userId)
-    .select()
-    .single();
-
+    .eq("id", id)
+    .eq("user_id", userId);
   if (error) throw error;
-  return mapRow(data);
+
+  return (await getSubmission(userId, id))!;
 };
 
-// ─── Update submission details ────────────────────────────────────────────────
+// ─── Update envelope-level fields ───────────────────────────────────────────
 
 export const updateSubmission = async (
   userId: string,
@@ -266,75 +378,269 @@ export const updateSubmission = async (
     submissionNumber: string;
     trackingToGrader: string;
     trackingFromGrader: string;
+    notes: string;
+    status: SubmissionStatus;
+  }>,
+): Promise<GradingSubmission> => {
+  const patch: any = { updated_at: new Date().toISOString() };
+  if (updates.submissionNumber !== undefined)
+    patch.submission_number = updates.submissionNumber;
+  if (updates.trackingToGrader !== undefined)
+    patch.tracking_to_grader = updates.trackingToGrader;
+  if (updates.trackingFromGrader !== undefined)
+    patch.tracking_from_grader = updates.trackingFromGrader;
+  if (updates.notes !== undefined) patch.notes = updates.notes;
+  if (updates.status !== undefined) patch.status = updates.status;
+
+  const { error } = await supabaseAdmin
+    .from("grading_submissions")
+    .update(patch)
+    .eq("id", id)
+    .eq("user_id", userId);
+  if (error) throw error;
+
+  return (await getSubmission(userId, id))!;
+};
+
+// ─── Delete (cascades to submission_cards) ─────────────────────────────────
+
+export const deleteSubmission = async (
+  userId: string,
+  id: string,
+): Promise<void> => {
+  const { error } = await supabaseAdmin
+    .from("grading_submissions")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", userId);
+  if (error) throw error;
+};
+
+// ─── Add cards to an existing submission ───────────────────────────────────
+
+export const addCardsToSubmission = async (
+  userId: string,
+  submissionId: string,
+  cards: CreateCardInput[],
+): Promise<SubmissionCard[]> => {
+  if (!cards || cards.length === 0) throw new Error("No cards provided");
+
+  const submission = await getSubmission(userId, submissionId);
+  if (!submission) throw new Error("Submission not found");
+
+  const perCardCost =
+    GRADING_COSTS[submission.company]?.[submission.serviceTier ?? ""] ?? 0;
+
+  const rows = cards.map((c, i) => ({
+    submission_id: submissionId,
+    inventory_id: c.inventoryId ?? null,
+    card_id: c.cardId ?? null,
+    card_name: c.cardName,
+    card_set: c.cardSet ?? null,
+    card_number: c.cardNumber ?? null,
+    card_image: c.cardImage ?? null,
+    variant: c.variant ?? null,
+    declared_value: c.declaredValue ?? null,
+    service_tier: submission.serviceTier,
+    grading_cost: perCardCost,
+    position: submission.cardCount + i,
+    notes: c.notes ?? null,
+  }));
+
+  const { data, error } = await supabaseAdmin
+    .from("submission_cards")
+    .insert(rows)
+    .select();
+  if (error) throw error;
+
+  await recomputeEnvelopeTotals(submissionId);
+  return (data ?? []).map(mapCard);
+};
+
+// ─── Remove a card from a submission ────────────────────────────────────────
+
+export const removeCardFromSubmission = async (
+  userId: string,
+  submissionCardId: string,
+): Promise<void> => {
+  // Ownership check via the parent envelope
+  const { data: card, error: lookupErr } = await supabaseAdmin
+    .from("submission_cards")
+    .select("submission_id, grading_submissions!inner(user_id)")
+    .eq("id", submissionCardId)
+    .maybeSingle();
+
+  if (lookupErr) throw lookupErr;
+  if (!card || (card.grading_submissions as any).user_id !== userId) {
+    throw new Error("Card not found");
+  }
+
+  const { error } = await supabaseAdmin
+    .from("submission_cards")
+    .delete()
+    .eq("id", submissionCardId);
+  if (error) throw error;
+
+  await recomputeEnvelopeTotals(card.submission_id);
+};
+
+// ─── Update a single card (grade received, cert#, etc.) ────────────────────
+
+export const updateSubmissionCard = async (
+  userId: string,
+  submissionCardId: string,
+  updates: Partial<{
     declaredValue: number;
     gradeReceived: string;
     certNumber: string;
     gradedValue: number;
+    aiGradingReportId: string;
     notes: string;
-  }>
-): Promise<GradingSubmission> => {
+  }>,
+): Promise<SubmissionCard> => {
+  // Ownership check
+  const { data: lookup, error: lookupErr } = await supabaseAdmin
+    .from("submission_cards")
+    .select(
+      "submission_id, inventory_id, grading_submissions!inner(user_id, company)",
+    )
+    .eq("id", submissionCardId)
+    .maybeSingle();
+
+  if (lookupErr) throw lookupErr;
+  if (!lookup || (lookup.grading_submissions as any).user_id !== userId) {
+    throw new Error("Card not found");
+  }
+
   const patch: any = { updated_at: new Date().toISOString() };
-  if (updates.submissionNumber !== undefined) patch.submission_number = updates.submissionNumber;
-  if (updates.trackingToGrader !== undefined) patch.tracking_to_grader = updates.trackingToGrader;
-  if (updates.trackingFromGrader !== undefined) patch.tracking_from_grader = updates.trackingFromGrader;
-  if (updates.declaredValue !== undefined) patch.declared_value = updates.declaredValue;
-  if (updates.gradeReceived !== undefined) patch.grade_received = updates.gradeReceived;
+  if (updates.declaredValue !== undefined)
+    patch.declared_value = updates.declaredValue;
+  if (updates.gradeReceived !== undefined)
+    patch.grade_received = updates.gradeReceived;
   if (updates.certNumber !== undefined) patch.cert_number = updates.certNumber;
-  if (updates.gradedValue !== undefined) patch.graded_value = updates.gradedValue;
+  if (updates.gradedValue !== undefined)
+    patch.graded_value = updates.gradedValue;
+  if (updates.aiGradingReportId !== undefined)
+    patch.ai_grading_report_id = updates.aiGradingReportId;
   if (updates.notes !== undefined) patch.notes = updates.notes;
 
   const { data, error } = await supabaseAdmin
-    .from('grading_submissions')
+    .from("submission_cards")
     .update(patch)
-    .eq('id', id)
-    .eq('user_id', userId)
+    .eq("id", submissionCardId)
     .select()
     .single();
-
   if (error) throw error;
-  return mapRow(data);
+
+  // If a grade just got assigned and a linked inventory item exists,
+  // promote that inventory row to a graded_card.
+  if (updates.gradeReceived && lookup.inventory_id) {
+    const company = (lookup.grading_submissions as any).company;
+    await supabaseAdmin
+      .from("inventory")
+      .update({
+        item_type: "graded_card",
+        grading_company: company,
+        grade: updates.gradeReceived,
+        notes: `${company} ${updates.gradeReceived}${
+          updates.certNumber ? ` — Cert #${updates.certNumber}` : ""
+        }`,
+      })
+      .eq("id", lookup.inventory_id)
+      .eq("user_id", userId);
+  }
+
+  await recomputeEnvelopeTotals(lookup.submission_id);
+  return mapCard(data);
 };
 
-// ─── Delete submission ────────────────────────────────────────────────────────
+// ─── Helper: recompute envelope totals from line items ─────────────────────
 
-export const deleteSubmission = async (userId: string, id: string): Promise<void> => {
+const recomputeEnvelopeTotals = async (submissionId: string): Promise<void> => {
+  const { data: cards } = await supabaseAdmin
+    .from("submission_cards")
+    .select("declared_value, grading_cost")
+    .eq("submission_id", submissionId);
+
+  const declaredValueTotal = (cards ?? []).reduce(
+    (s, c) => s + (Number(c.declared_value) || 0),
+    0,
+  );
+  const totalCost = (cards ?? []).reduce(
+    (s, c) => s + (Number(c.grading_cost) || 0),
+    0,
+  );
+
   await supabaseAdmin
-    .from('grading_submissions')
-    .delete()
-    .eq('id', id)
-    .eq('user_id', userId);
+    .from("grading_submissions")
+    .update({
+      declared_value_total: declaredValueTotal,
+      total_cost: totalCost,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", submissionId);
 };
 
-// ─── Get pipeline summary ─────────────────────────────────────────────────────
+// ─── Pipeline summary (envelope-level totals) ──────────────────────────────
 
 export const getPipelineSummary = async (userId: string) => {
-  const { data } = await supabaseAdmin
-    .from('grading_submissions')
-    .select('status, grading_cost, declared_value, graded_value, grade_received, grading_company')
-    .eq('user_id', userId);
+  const { data: envelopes } = await supabaseAdmin
+    .from("grading_submissions")
+    .select("id, status, total_cost, company")
+    .eq("user_id", userId);
 
-  const all = data ?? [];
-  const active = all.filter((r) => r.status !== 'returned');
-  const returned = all.filter((r) => r.status === 'returned');
+  const all = envelopes ?? [];
+  const active = all.filter((r: any) => r.status !== "returned");
+  const returned = all.filter((r: any) => r.status === "returned");
 
-  const totalSpent = all.reduce((s, r) => s + (r.grading_cost ?? 0), 0);
-  const totalValue = returned.reduce((s, r) => s + (r.graded_value ?? 0), 0);
-  const totalCostBasis = returned.reduce((s, r) => s + (r.declared_value ?? 0) + (r.grading_cost ?? 0), 0);
+  // Sum returned cards' graded values for ROI
+  const returnedIds = returned.map((r: any) => r.id);
+  let returnedCards: any[] = [];
+  if (returnedIds.length > 0) {
+    const { data } = await supabaseAdmin
+      .from("submission_cards")
+      .select("declared_value, grading_cost, graded_value")
+      .in("submission_id", returnedIds);
+    returnedCards = data ?? [];
+  }
+
+  const totalSpent = all.reduce(
+    (s: number, r: any) => s + (Number(r.total_cost) || 0),
+    0,
+  );
+  const totalReturnedValue = returnedCards.reduce(
+    (s, c) => s + (Number(c.graded_value) || 0),
+    0,
+  );
+  const totalCostBasis = returnedCards.reduce(
+    (s, c) =>
+      s + (Number(c.declared_value) || 0) + (Number(c.grading_cost) || 0),
+    0,
+  );
 
   return {
     totalSubmissions: all.length,
     activeInPipeline: active.length,
     returned: returned.length,
     totalSpentOnGrading: totalSpent,
-    totalReturnedValue: totalValue,
-    totalROI: totalCostBasis > 0 ? ((totalValue - totalCostBasis) / totalCostBasis) * 100 : null,
-    byStatus: STATUS_ORDER.reduce((acc, s) => {
-      acc[s] = all.filter((r) => r.status === s).length;
-      return acc;
-    }, {} as Record<string, number>),
-    byCompany: ['PSA', 'BGS', 'CGC', 'SGC'].reduce((acc, c) => {
-      acc[c] = all.filter((r) => r.grading_company === c).length;
-      return acc;
-    }, {} as Record<string, number>),
+    totalReturnedValue,
+    totalROI:
+      totalCostBasis > 0
+        ? ((totalReturnedValue - totalCostBasis) / totalCostBasis) * 100
+        : null,
+    byStatus: STATUS_ORDER.reduce(
+      (acc, s) => {
+        acc[s] = all.filter((r: any) => r.status === s).length;
+        return acc;
+      },
+      {} as Record<string, number>,
+    ),
+    byCompany: ["PSA", "BGS", "CGC", "SGC", "TAG"].reduce(
+      (acc, c) => {
+        acc[c] = all.filter((r: any) => r.company === c).length;
+        return acc;
+      },
+      {} as Record<string, number>,
+    ),
   };
 };

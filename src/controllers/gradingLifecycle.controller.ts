@@ -10,50 +10,45 @@ import {
   updateSubmission,
   deleteSubmission,
   getPipelineSummary,
+  addCardsToSubmission,
+  removeCardFromSubmission,
+  updateSubmissionCard,
 } from "../services/gradingLifecycle.service";
 import { logError } from "../lib/Logger";
 
-// GET /grading/submissions
-export const listSubmissions = async (
+// Shared error handler — logs the real error server-side, sends a generic message to the client.
+const handle = async (
   req: AuthenticatedRequest,
   res: Response,
+  fn: () => Promise<any>,
+  successStatus = 200,
 ) => {
   try {
-    const status = req.query.status as any;
-    const submissions = await getSubmissions(req.user.id, status);
-    res.json({ data: submissions });
+    const data = await fn();
+    res.status(successStatus).json({ data });
   } catch (err: any) {
     await logError({
-      source: "ai_grading", // ← change per controller
+      source: "grading_lifecycle",
       message: err?.message ?? "Unknown error",
       error: err,
-      userId: (req as any)?.userId ?? null,
+      userId: req.user?.id ?? null,
       requestPath: req.path,
       requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
+      metadata: { params: req.params, query: req.query, body: req.body },
     });
-    res.status(500).json({ error: err?.message });
+    res.status(500).json({ error: "Something went wrong" });
   }
 };
 
+// ─── Envelopes ──────────────────────────────────────────────────────────────
+
+// GET /grading/submissions
+export const listSubmissions = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () => getSubmissions(req.user.id, req.query.status as any));
+
 // GET /grading/submissions/summary
-export const getSummary = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const summary = await getPipelineSummary(req.user.id);
-    res.json({ data: summary });
-  } catch (err: any) {
-    await logError({
-      source: "ai_grading", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
-  }
-};
+export const getSummary = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () => getPipelineSummary(req.user.id));
 
 // GET /grading/submissions/:id
 export const getOne = async (req: AuthenticatedRequest, res: Response) => {
@@ -66,98 +61,56 @@ export const getOne = async (req: AuthenticatedRequest, res: Response) => {
     res.json({ data: submission });
   } catch (err: any) {
     await logError({
-      source: "ai_grading", // ← change per controller
+      source: "grading_lifecycle",
       message: err?.message ?? "Unknown error",
       error: err,
-      userId: (req as any)?.userId ?? null,
+      userId: req.user?.id ?? null,
       requestPath: req.path,
       requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
+      metadata: { params: req.params },
     });
-    res.status(500).json({ error: err?.message });
+    res.status(500).json({ error: "Something went wrong" });
   }
 };
 
 // POST /grading/submissions
-export const create = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const submission = await createSubmission(req.user.id, req.body);
-    res.status(201).json({ data: submission });
-  } catch (err: any) {
-    await logError({
-      source: "ai_grading", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
-  }
-};
+export const create = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () => createSubmission(req.user.id, req.body), 201);
 
 // POST /grading/submissions/:id/advance
-export const advance = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const submission = await advanceStatus(
-      req.user.id,
-      req.params.id,
-      req.body,
-    );
-    res.json({ data: submission });
-  } catch (err: any) {
-    await logError({
-      source: "ai_grading", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
-  }
-};
+export const advance = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () => advanceStatus(req.user.id, req.params.id, req.body));
 
 // PATCH /grading/submissions/:id
-export const update = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const submission = await updateSubmission(
-      req.user.id,
-      req.params.id,
-      req.body,
-    );
-    res.json({ data: submission });
-  } catch (err: any) {
-    await logError({
-      source: "ai_grading", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
-  }
-};
+export const update = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () =>
+    updateSubmission(req.user.id, req.params.id, req.body),
+  );
 
 // DELETE /grading/submissions/:id
-export const remove = async (req: AuthenticatedRequest, res: Response) => {
-  try {
+export const remove = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, async () => {
     await deleteSubmission(req.user.id, req.params.id);
-    res.json({ data: { deleted: true } });
-  } catch (err: any) {
-    await logError({
-      source: "ai_grading", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
-  }
-};
+    return { deleted: true };
+  });
+
+// ─── Line items ─────────────────────────────────────────────────────────────
+
+// POST /grading/submissions/:id/cards   body: { cards: CreateCardInput[] }
+export const addCards = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () =>
+    addCardsToSubmission(req.user.id, req.params.id, req.body?.cards ?? []),
+  );
+
+// PATCH /grading/submission-cards/:cardId
+export const updateCard = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, () =>
+    updateSubmissionCard(req.user.id, req.params.cardId, req.body),
+  );
+
+// DELETE /grading/submission-cards/:cardId
+export const removeCard = (req: AuthenticatedRequest, res: Response) =>
+  handle(req, res, async () => {
+    await removeCardFromSubmission(req.user.id, req.params.cardId);
+    return { deleted: true };
+  });
