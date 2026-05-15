@@ -1,4 +1,7 @@
 // src/routes/auth.routes.ts
+//
+// Split into two routers so there's NO ambiguity about which middleware
+// applies to which route. Public router has no auth middleware at all.
 
 import { Router } from "express";
 import { authenticateUser } from "../middleware/auth.middleware";
@@ -16,28 +19,36 @@ import {
   revokeMyDevice,
 } from "../controllers/auth.controller";
 
-const router = Router();
+// ─── Public router — NO authentication ────────────────────────────────────
+// The token in the request body IS the auth for verify-email.
+const publicRouter = Router();
+publicRouter.post("/auth/verify-email", writeLimiter, verifyEmail as any);
 
-// ─── Public endpoint — token IS the auth ───────────────────────────────────
-router.post("/auth/verify-email", writeLimiter, verifyEmail as any);
+// ─── Authenticated router — requires Bearer token ─────────────────────────
+const authedRouter = Router();
+authedRouter.use(authenticateUser as any);
 
-// ─── Authenticated endpoints ───────────────────────────────────────────────
-router.use(authenticateUser as any);
-
-router.post(
+authedRouter.post(
   "/auth/send-verification-email",
   writeLimiter,
   sendVerification as any,
 );
-router.get(
+authedRouter.get(
   "/auth/verification-status",
   standardLimiter,
   verificationStatus as any,
 );
 
-router.post("/auth/devices", writeLimiter, upsertDevice as any);
-router.post("/auth/devices/logout", writeLimiter, logoutDevice as any);
-router.get("/auth/devices", standardLimiter, listMyDevices as any);
-router.delete("/auth/devices/:id", writeLimiter, revokeMyDevice as any);
+authedRouter.post("/auth/devices", writeLimiter, upsertDevice as any);
+authedRouter.post("/auth/devices/logout", writeLimiter, logoutDevice as any);
+authedRouter.get("/auth/devices", standardLimiter, listMyDevices as any);
+authedRouter.delete("/auth/devices/:id", writeLimiter, revokeMyDevice as any);
+
+// ─── Combined export ──────────────────────────────────────────────────────
+// Mount the public router first so its handler runs before the authed router
+// gets a chance to apply its middleware.
+const router = Router();
+router.use(publicRouter);
+router.use(authedRouter);
 
 export default router;
