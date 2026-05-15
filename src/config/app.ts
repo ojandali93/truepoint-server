@@ -23,6 +23,7 @@ import masterSetRoutes from "../routes/masterSet.routes";
 import collectionRoutes from "../routes/collection.routes";
 import { errorLoggerMiddleware } from "../middleware/errorLogger.middleware";
 import planRoutes from "../routes/plan.routes";
+import authRoutes from "../routes/auth.routes";
 
 dotenv.config();
 
@@ -36,6 +37,8 @@ app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use(morgan("combined"));
 
 app.use("/api/v1", planRoutes);
+app.use("/api/v1", authRoutes); // ← add this line
+
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/cards", cardRoutes);
 app.use("/api/v1/centering", centeringRoutes);
