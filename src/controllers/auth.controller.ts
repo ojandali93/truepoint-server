@@ -7,7 +7,7 @@ import {
   sendVerificationEmail,
   verifyEmailToken,
   getVerificationStatus,
-} from "../lib/emailVerification";
+} from "../services/emailVerification.service";
 import {
   registerDevice,
   deactivateDevice,
@@ -43,12 +43,8 @@ export const sendVerification = async (
       return;
     }
 
+    // Cooldown check — don't let users hammer the resend button
     const status = await getVerificationStatus(req.user.id);
-    if (status.verified) {
-      res.json({ data: { ok: true, alreadyVerified: true } });
-      return;
-    }
-    // Cooldown — don't let users hammer the resend button
     if (!status.canResend) {
       res.status(429).json({
         error: "Please wait a moment before requesting another email.",
