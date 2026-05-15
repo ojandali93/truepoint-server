@@ -12,6 +12,30 @@ import { BillingSubscription } from "../types/billing.types";
 
 const TRIAL_DAYS = 14;
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Stripe moved `current_period_end` from the subscription root to the
+ * subscription_item in newer API versions. This helper looks in all the
+ * places it might be, returning a safe ISO string or null if none found.
+ */
+const extractPeriodEnd = (sub: Stripe.Subscription | any): string | null => {
+  // Old API: on the subscription root
+  if (typeof sub?.current_period_end === "number") {
+    return new Date(sub.current_period_end * 1000).toISOString();
+  }
+  // New API: on the first subscription_item
+  const firstItem = sub?.items?.data?.[0];
+  if (typeof firstItem?.current_period_end === "number") {
+    return new Date(firstItem.current_period_end * 1000).toISOString();
+  }
+  // Fallback: trial_end or null
+  if (typeof sub?.trial_end === "number") {
+    return new Date(sub.trial_end * 1000).toISOString();
+  }
+  return null;
+};
+
 // ─── Checkout Session ─────────────────────────────────────────────────────────
 
 export const createCheckoutSession = async (
@@ -99,8 +123,7 @@ export const verifyCheckoutSession = async (
   const plan = (session.metadata?.plan ?? "collector") as "collector" | "pro";
 
   const trialEnd = subscription.trial_end;
-  const periodEnd = (subscription as unknown as { current_period_end: number })
-    .current_period_end;
+  const periodEndIso = extractPeriodEnd(subscription);
 
   const saved = await upsertSubscription({
     userId,
@@ -109,7 +132,7 @@ export const verifyCheckoutSession = async (
     plan,
     status: subscription.status as BillingSubscription["status"],
     trialEndsAt: trialEnd ? new Date(trialEnd * 1000).toISOString() : null,
-    currentPeriodEnd: new Date(periodEnd * 1000).toISOString(),
+    currentPeriodEnd: periodEndIso,
   });
 
   // Upgrade the user's profile to pro member
@@ -155,12 +178,11 @@ export const handleWebhookEvent = async (
 
     case "customer.subscription.updated": {
       const sub = event.data.object as Stripe.Subscription;
-      const periodEnd = (sub as unknown as { current_period_end: number })
-        .current_period_end;
+      const periodEndIso = extractPeriodEnd(sub);
       await updateSubscriptionStatus(
         sub.id,
         sub.status as BillingSubscription["status"],
-        new Date(periodEnd * 1000).toISOString(),
+        periodEndIso,
       );
       break;
     }
@@ -191,13 +213,8 @@ export const handleWebhookEvent = async (
         .subscription;
       if (subId) {
         const sub = await stripe.subscriptions.retrieve(subId);
-        const periodEnd = (sub as unknown as { current_period_end: number })
-          .current_period_end;
-        await updateSubscriptionStatus(
-          subId,
-          "active",
-          new Date(periodEnd * 1000).toISOString(),
-        );
+        const periodEndIso = extractPeriodEnd(sub);
+        await updateSubscriptionStatus(subId, "active", periodEndIso);
       }
       break;
     }

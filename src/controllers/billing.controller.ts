@@ -51,15 +51,16 @@ export const verifySession = async (
     res.json({ data: subscription });
   } catch (err: any) {
     await logError({
-      source: "verify-session", // ← change per controller
+      source: "verify-session",
       message: err?.message ?? "Unknown error",
       error: err,
-      userId: (req as any)?.userId ?? null,
+      userId: req.user?.id ?? null,
       requestPath: req.path,
       requestMethod: req.method,
       metadata: { params: req.params, query: req.query },
     });
-    res.status(500).json({ error: err?.message });
+    // Use handleError so the caller can see structured plan/auth errors when
+    // applicable; falls through to a generic 500 otherwise.
     handleError(res, err);
   }
 };

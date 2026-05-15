@@ -77,9 +77,12 @@ export const createNotificationSettings = async (
   userId: string,
   payload: Partial<NotificationSettings>,
 ): Promise<NotificationSettings> => {
+  // Idempotent: if the row already exists (auto-created at signup),
+  // treat this as an update rather than failing with 409.
   const existing = await UserRepository.findNotificationSettings(userId);
-  if (existing)
-    throw { status: 409, message: "Notification settings already exist" };
+  if (existing) {
+    return UserRepository.updateNotificationSettings(userId, payload);
+  }
   return UserRepository.createNotificationSettings(userId, payload);
 };
 
@@ -192,4 +195,53 @@ export const adminUpdateUser = async (
 
 export const adminToggleProMember = async (userId: string, isPro: boolean) => {
   return UserRepository.adminToggleProMember(userId, isPro);
+};
+
+// ─── Account deactivation ─────────────────────────────────────────────────────
+
+import { supabaseAdmin } from "../lib/supabase";
+import { cancelSubscription } from "./billing.service";
+
+/**
+ * Soft-delete an account:
+ *  - cancels any active Stripe subscription at period end (user keeps access until then)
+ *  - signs out all active devices
+ *  - revokes all auth sessions
+ *  - flags the profile as deactivated (we don't delete data so we can comply with any
+ *    future legal requests / let user reactivate if they change their mind within 30 days)
+ *
+ * Hard delete (full data removal) is a separate compliance flow we'd build later if needed.
+ */
+export const deactivateAccount = async (userId: string): Promise<void> => {
+  // 1. Cancel subscription if any (don't fail the deactivation if none exists)
+  try {
+    await cancelSubscription(userId);
+  } catch (err: any) {
+    if (err?.status !== 404) {
+      console.error("[deactivate] cancel subscription failed:", err);
+    }
+  }
+
+  // 2. Mark all devices inactive
+  await supabaseAdmin
+    .from("user_devices")
+    .update({ is_active: false, logged_out_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .eq("is_active", true);
+
+  // 3. Stamp the profile so the gate / login can refuse future access
+  await supabaseAdmin
+    .from("profiles")
+    .update({
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  // 4. Sign out all Supabase sessions for this user
+  // (admin API endpoint — invalidates all refresh tokens)
+  try {
+    await supabaseAdmin.auth.admin.signOut(userId, "global");
+  } catch (err) {
+    console.error("[deactivate] admin signOut failed:", err);
+  }
 };

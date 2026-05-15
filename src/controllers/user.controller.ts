@@ -506,3 +506,28 @@ export const adminGetUserActivity = async (
     res.status(500).json({ error: err?.message });
   }
 };
+
+// ─── Account deactivation ─────────────────────────────────────────────────────
+
+export const deactivateMyAccount = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    await UserService.deactivateAccount(req.user.id);
+    res.json({ data: { deactivated: true } });
+  } catch (err: any) {
+    await logError({
+      source: "deactivate-account",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: req.user?.id ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: {},
+    });
+    res
+      .status(500)
+      .json({ error: "Couldn't deactivate account. Please contact support." });
+  }
+};
