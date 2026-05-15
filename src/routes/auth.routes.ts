@@ -51,4 +51,8 @@ const router = Router();
 router.use(publicRouter);
 router.use(authedRouter);
 
+// ─── Combined export ──────────────────────────────────────────────────────
+// Mount the public router first so its handler runs before the authed router
+// gets a chance to apply its middleware.
+
 export default router;
