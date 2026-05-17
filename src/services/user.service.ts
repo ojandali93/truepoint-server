@@ -28,9 +28,22 @@ export const createProfile = async (
   userId: string,
   payload: Partial<Profile>,
 ): Promise<Profile> => {
+  // Idempotent: a profile row may have been auto-created by the
+  // `handle_new_user` DB trigger when the auth.users row was inserted.
+  // In that case, treat this as the user filling in their profile details
+  // for the first time — update the existing row rather than 409.
   const existing = await UserRepository.findProfileById(userId);
-  if (existing)
-    throw { status: 409, message: "Profile already exists for this user" };
+  if (existing) {
+    try {
+      return await UserRepository.updateProfile(userId, payload);
+    } catch (err: any) {
+      // Username uniqueness violation surfaces as Postgres error 23505
+      if (err?.code === "23505") {
+        throw { status: 409, message: "Username is already taken" };
+      }
+      throw err;
+    }
+  }
   return UserRepository.createProfile(userId, payload);
 };
 
