@@ -50,6 +50,9 @@ export const addInventoryItem = async (
       purchaseDate,
       notes,
       collection_id,
+      variantType, // ← new
+      condition, // ← new
+      quantity, // ← new
     } = req.body;
 
     const item = await InventoryService.addInventoryItem(
@@ -66,6 +69,9 @@ export const addInventoryItem = async (
         purchaseDate: purchaseDate ?? null,
         notes: notes ?? null,
         collection_id: collection_id ?? null,
+        variantType: variantType ?? null,
+        condition: condition ?? null,
+        quantity: quantity ?? 1,
       },
       req.user.role,
     );
@@ -104,6 +110,9 @@ export const batchAddInventoryItems = async (
           purchaseDate: row.purchaseDate ?? null,
           notes: row.notes ?? null,
           collection_id: row.collection_id ?? null,
+          variantType: row.variantType ?? null, // ← new
+          condition: row.condition ?? null, // ← new
+          quantity: row.quantity ? Number(row.quantity) : 1, // ← new
         },
         req.user.role,
       );
@@ -131,6 +140,9 @@ export const editInventoryItem = async (
       purchasePrice,
       purchaseDate,
       notes,
+      variantType, // ← new
+      condition, // ← new
+      quantity,
     } = req.body;
 
     const item = await InventoryService.editInventoryItem(
@@ -145,6 +157,9 @@ export const editInventoryItem = async (
           purchasePrice !== undefined ? Number(purchasePrice) : undefined,
         purchaseDate: purchaseDate ?? undefined,
         notes: notes ?? undefined,
+        variantType: variantType ?? undefined, // ← new
+        condition: condition ?? undefined, // ← new
+        quantity: quantity !== undefined ? Number(quantity) : undefined,
       },
     );
 

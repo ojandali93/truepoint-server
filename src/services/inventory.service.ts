@@ -183,12 +183,14 @@ export const getInventory = async (
         ? (gainLoss / row.purchase_price) * 100
         : null;
 
-    if (row.purchase_price) totalCostBasis += row.purchase_price;
-    if (marketValue.marketPrice) totalMarketValue += marketValue.marketPrice;
+    const qty = row.quantity ?? 1;
+    if (row.purchase_price) totalCostBasis += row.purchase_price * qty;
+    if (marketValue.marketPrice)
+      totalMarketValue += marketValue.marketPrice * qty;
 
-    if (row.item_type === "raw_card") rawCards++;
-    else if (row.item_type === "graded_card") gradedCards++;
-    else if (row.item_type === "sealed_product") sealedProducts++;
+    if (row.item_type === "raw_card") rawCards += qty;
+    else if (row.item_type === "graded_card") gradedCards += qty;
+    else if (row.item_type === "sealed_product") sealedProducts += qty;
 
     return { ...row, marketValue, gainLoss, gainLossPct };
   });
@@ -198,7 +200,7 @@ export const getInventory = async (
     totalCostBasis > 0 ? (totalGainLoss / totalCostBasis) * 100 : null;
 
   const summary: InventorySummary = {
-    totalItems: rows.length,
+    totalItems: rows.reduce((sum, r) => sum + (r.quantity ?? 1), 0),
     rawCards,
     gradedCards,
     sealedProducts,

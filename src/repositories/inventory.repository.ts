@@ -4,6 +4,7 @@ import { supabaseAdmin } from "../lib/supabase";
 
 export type ItemType = "raw_card" | "graded_card" | "sealed_product";
 export type GradingCompany = "PSA" | "BGS" | "CGC" | "SGC" | "TAG";
+export type CardCondition = "NM" | "LP" | "MP" | "HP" | "DM";
 
 export interface InventoryRow {
   id: string;
@@ -18,6 +19,9 @@ export interface InventoryRow {
   purchase_price: number | null;
   purchase_date: string | null;
   notes: string | null;
+  variant_type: string | null; // ← new
+  condition: CardCondition | null; // ← new
+  quantity: number; // ← new
   manual_market_value: number | null;
   manual_market_value_source: string | null;
   collection_id: string | null;
@@ -67,6 +71,9 @@ export interface CreateInventoryInput {
   purchasePrice?: number | null;
   purchaseDate?: string | null;
   notes?: string | null;
+  variantType?: string | null; // ← new
+  condition?: CardCondition | null; // ← new
+  quantity?: number;
 }
 
 export interface UpdateInventoryInput {
@@ -77,6 +84,9 @@ export interface UpdateInventoryInput {
   purchasePrice?: number | null;
   purchaseDate?: string | null;
   notes?: string | null;
+  variantType?: string | null; // ← new
+  condition?: CardCondition | null; // ← new
+  quantity?: number;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -179,6 +189,9 @@ export const updateInventoryItem = async (
   if (input.purchaseDate !== undefined)
     updates.purchase_date = input.purchaseDate;
   if (input.notes !== undefined) updates.notes = input.notes;
+  if (input.variantType !== undefined) updates.variant_type = input.variantType; // ← new
+  if (input.condition !== undefined) updates.condition = input.condition; // ← new
+  if (input.quantity !== undefined) updates.quantity = input.quantity;
 
   const { data, error } = await supabaseAdmin
     .from("inventory")
@@ -228,6 +241,9 @@ export const insertInventoryBatch = async (
     purchase_price: input.purchasePrice ?? null,
     purchase_date: input.purchaseDate ?? null,
     notes: input.notes ?? null,
+    condition: input.condition ?? null, // ← new
+    quantity: input.quantity ?? 1, // ← new
+    collection_id: input.collection_id ?? null,
   }));
 
   const { error } = await supabaseAdmin.from("inventory").insert(rows);
