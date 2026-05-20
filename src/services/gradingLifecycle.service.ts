@@ -376,13 +376,13 @@ export const createSubmission = async (
       user_id: userId,
       company: input.company,
       service_tier: input.serviceTier,
-      status: "submitted",
+      status: "preparing",
       submission_number: input.submissionNumber ?? null,
       tracking_to_grader: input.trackingToGrader ?? null,
       notes: input.notes ?? null,
       total_cost: totalCost,
       declared_value_total: declaredValueTotal,
-      submitted_at: now,
+      submitted_at: null,
     })
     .select()
     .single();
