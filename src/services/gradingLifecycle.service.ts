@@ -29,6 +29,7 @@ export const STATUS_LABELS: Record<SubmissionStatus, string> = {
 
 // Advance order skips 'preparing' — a created submission starts at 'submitted'.
 export const STATUS_ORDER: SubmissionStatus[] = [
+  "preparing",
   "submitted",
   "received",
   "grading",
@@ -456,6 +457,7 @@ export const advanceStatus = async (
   const now = new Date().toISOString();
 
   const dateField: Record<string, string> = {
+    submitted: "submitted_at",
     received: "received_at",
     grading: "graded_at",
     shipped_back: "shipped_back_at",
