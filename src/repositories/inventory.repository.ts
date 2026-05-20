@@ -119,7 +119,6 @@ export const findInventoryByUser = async (
 
   const { data, error } = await q.order("added_at", { ascending: false });
 
-  console.log("findInventoryByUser", data, error);
   if (error) {
     console.error("[InventoryRepo] findByUser error:", error);
     throw error;

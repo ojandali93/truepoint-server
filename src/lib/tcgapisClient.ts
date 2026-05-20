@@ -45,7 +45,6 @@ export const tcgapisGet = async <T>(
       });
       const status = err?.response?.status;
       if (status === 429) {
-        console.log("[TCGAPIs] Rate limited — waiting 65s...");
         await sleep(65000);
         continue;
       }

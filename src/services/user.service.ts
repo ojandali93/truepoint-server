@@ -52,7 +52,6 @@ export const updateProfile = async (
   payload: Partial<Profile>,
 ): Promise<Profile> => {
   try {
-    console.log("updateProfile payload", payload, userId);
     return await UserRepository.updateProfile(userId, payload);
   } catch (err: any) {
     await logError({
@@ -64,7 +63,6 @@ export const updateProfile = async (
       requestMethod: "",
       metadata: {},
     });
-    console.log("updateProfile error", err);
     if (err.code === "23505")
       throw { status: 409, message: "Username is already taken" };
     throw err;

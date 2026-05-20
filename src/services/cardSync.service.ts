@@ -77,9 +77,15 @@ const isSetComplete = async (setId: string): Promise<boolean> => {
   const isComplete = actual >= Math.floor(expected * 0.95);
 
   if (!isComplete) {
-    console.log(
-      `[CardSync] ⚠️  ${setId}: ${actual}/${expected} cards — incomplete, will re-sync`,
-    );
+    await logError({
+      source: "is-set-complete", // ← change per controller
+      message: `⚠️ ${setId}: ${actual}/${expected} cards — incomplete, will re-sync`,
+      error: null,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
   }
 
   return isComplete;
@@ -105,7 +111,15 @@ const syncSet = async (setId: string, setName: string): Promise<number> => {
     await upsertCardBatch(cards);
     totalSynced += cards.length;
 
-    console.log(`  [${setName}] Page ${page}: ${cards.length} cards`);
+    await logError({
+      source: "sync-set", // ← change per controller
+      message: `  [${setName}] Page ${page}: ${cards.length} cards`,
+      error: null,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
 
     if (cards.length < 250) break;
     page++;
@@ -126,8 +140,6 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
   let totalCards = 0;
   let completedSets = 0;
 
-  console.log(`[CardSync] Starting backfill for ${sets.length} sets...`);
-
   for (const set of sets) {
     const complete = await isSetComplete(set.id);
     if (complete) {
@@ -137,11 +149,9 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
     }
 
     try {
-      console.log(`[CardSync] Syncing ${set.name} (${set.id})...`);
       const count = await syncSet(set.id, set.name);
       totalCards += count;
       completedSets++;
-      console.log(`[CardSync] ✓ ${set.name}: ${count} cards`);
       await delay(500);
     } catch (err: any) {
       await logError({
@@ -158,11 +168,15 @@ export const backfillAllCards = async (): Promise<SyncProgress> => {
   }
 
   const durationMs = Date.now() - start;
-  console.log(
-    `[CardSync] Backfill complete: ${totalCards} new cards, ` +
-      `${skippedSets.length} sets skipped (already complete), ` +
-      `${failedSets.length} failed in ${(durationMs / 1000).toFixed(1)}s`,
-  );
+  await logError({
+    source: "backfill-all-cards", // ← change per controller
+    message: `Backfill complete: ${totalCards} new cards, ${skippedSets.length} sets skipped (already complete), ${failedSets.length} failed in ${(durationMs / 1000).toFixed(1)}s`,
+    error: null,
+    userId: null,
+    requestPath: "",
+    requestMethod: "",
+    metadata: {},
+  });
 
   return {
     totalSets: sets.length,
@@ -180,9 +194,7 @@ export const syncSingleSet = async (setId: string): Promise<number> => {
   const set = sets.find((s: any) => s.id === setId);
   if (!set) throw { status: 404, message: `Set ${setId} not found` };
 
-  console.log(`[CardSync] Force re-syncing ${set.name} (${setId})...`);
   const count = await syncSet(setId, set.name);
-  console.log(`[CardSync] ✓ ${set.name}: ${count} cards synced`);
   return count;
 };
 

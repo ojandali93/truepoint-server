@@ -330,10 +330,6 @@ export const analyzeCardForGrading = async (
   });
 
   const raw = result.response.text().trim();
-  console.log(
-    "[AIGrading] Raw Gemini response (first 500 chars):",
-    raw.substring(0, 500),
-  );
 
   let parsed: any;
   try {

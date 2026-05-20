@@ -133,8 +133,6 @@ export const editInventoryItem = async (
   req: AuthenticatedRequest,
   res: Response,
 ) => {
-  console.log("[inventory POST body]:", req.body);
-
   try {
     const {
       gradingCompany,

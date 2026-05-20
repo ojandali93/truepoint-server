@@ -52,9 +52,7 @@ export const updateMyProfile = async (
   res: Response,
 ) => {
   try {
-    console.log("updateMyProfile pre", req.body);
     const profile = await UserService.updateProfile(req.user.id, req.body);
-    console.log("updateMyProfile post", profile);
     res.json({ data: profile });
   } catch (err: any) {
     await logError({

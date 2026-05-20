@@ -96,10 +96,6 @@ export const createSnapshotForUser = async (
       gradedCards: summary.gradedCards,
       sealedProducts: summary.sealedProducts,
     });
-
-    console.log(
-      `[Portfolio] Snapshot created for user ${userId}: $${summary.totalMarketValue.toFixed(2)}`,
-    );
   } catch (err: any) {
     console.error(
       `[Portfolio] Snapshot failed for user ${userId}:`,
@@ -116,10 +112,7 @@ export const syncAllPortfolios = async (): Promise<{
   succeeded: number;
   failed: number;
 }> => {
-  console.log("[Portfolio] Starting daily snapshot sync...");
-
   const userIds = await findAllUsersWithInventory();
-  console.log(`[Portfolio] Snapshotting ${userIds.length} users...`);
 
   let succeeded = 0;
   let failed = 0;

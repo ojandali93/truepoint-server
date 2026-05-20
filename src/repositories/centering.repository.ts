@@ -166,7 +166,6 @@ export const findReportsByUser = async (
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
-  console.log("findReportsByUser", data, error);
   if (error) throw error;
   return (data ?? []).map((row) => rowToReport(row as CenteringRow));
 };

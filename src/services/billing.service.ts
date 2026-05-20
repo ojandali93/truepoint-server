@@ -172,7 +172,6 @@ export const handleWebhookEvent = async (
     case "customer.subscription.trial_will_end": {
       const sub = event.data.object as Stripe.Subscription;
       // TODO: trigger push notification via FCM when Phase 5 is built
-      console.log("[Billing] Trial ending soon for subscription:", sub.id);
       break;
     }
 
@@ -220,7 +219,15 @@ export const handleWebhookEvent = async (
     }
 
     default:
-      console.log(`[Billing] Unhandled webhook event: ${event.type}`);
+      await logError({
+        source: "handle-webhook-event", // ← change per controller
+        message: `Unhandled webhook event: ${event.type}`,
+        error: null,
+        userId: null,
+        requestPath: "",
+        requestMethod: "",
+        metadata: {},
+      });
   }
 };
 

@@ -80,7 +80,11 @@ export const analyzeCard = async (
       try {
         // Plan gate
         await requireFeature(req.user.id, "ai_grading", req.user.role);
-        await checkMonthlyLimit(req.user.id, "ai_grading_reports", req.user.role);
+        await checkMonthlyLimit(
+          req.user.id,
+          "ai_grading_reports",
+          req.user.role,
+        );
 
         const ext =
           mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
@@ -170,9 +174,6 @@ export const analyzeCard = async (
     }
 
     const reportId = pendingReport.id;
-    console.log(
-      `[AIGrading] Created pending report ${reportId} for user ${req.user.id}${cardName ? ` — ${cardName}` : ""}`,
-    );
 
     // If this report was triggered from a submission card, link it.
     // We verify ownership through the parent envelope's user_id before writing.
@@ -211,10 +212,6 @@ export const analyzeCard = async (
     // Process in background — no await, runs after response is sent
     setImmediate(async () => {
       try {
-        console.log(
-          `[AIGrading] Starting Gemini analysis for report ${reportId}...`,
-        );
-
         const analysis = await analyzeCardForGrading(
           frontBase64,
           frontMime ?? "image/jpeg",
@@ -225,10 +222,6 @@ export const analyzeCard = async (
         );
 
         const { recommendation, reason } = computeRecommendation(analysis);
-
-        console.log(
-          `[AIGrading] Report ${reportId} complete — PSA: ${analysis.predictions.psa.grade}, BGS: ${analysis.predictions.bgs.label}`,
-        );
 
         // Update the pending report with real results
         await supabaseAdmin
@@ -251,8 +244,6 @@ export const analyzeCard = async (
             recommendation_reason: reason,
           })
           .eq("id", reportId);
-
-        console.log(`[AIGrading] Report ${reportId} saved to DB`);
       } catch (err: any) {
         console.error(
           `[AIGrading] Background analysis failed for report ${reportId}:`,

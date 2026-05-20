@@ -60,8 +60,7 @@ router.post("/cards", requireSyncKey, async (_req, res) => {
       timestamp: new Date().toISOString(),
     });
     setImmediate(async () => {
-      const result = await backfillAllCards();
-      console.log("[SyncRoute] Card backfill complete:", result);
+      await backfillAllCards();
     });
   } catch (err: any) {
     await logError({
@@ -82,10 +81,7 @@ router.post("/cards/:setId", requireSyncKey, async (req, res) => {
   try {
     res.json({ message: `Card sync started for set ${req.params.setId}` });
     setImmediate(async () => {
-      const count = await syncSingleSet(req.params.setId);
-      console.log(
-        `[SyncRoute] Card sync for ${req.params.setId}: ${count} cards`,
-      );
+      await syncSingleSet(req.params.setId);
     });
   } catch (err: any) {
     await logError({
@@ -143,8 +139,7 @@ router.post("/tcgapis/all", requireSyncKey, async (_req, res) => {
       timestamp: new Date().toISOString(),
     });
     setImmediate(async () => {
-      const result = await syncAllSets();
-      console.log("[SyncRoute] Full TCGAPIs sync complete:", result);
+      await syncAllSets();
     });
   } catch (err: any) {
     await logError({
@@ -165,8 +160,7 @@ router.post("/tcgapis/set/:setId", requireSyncKey, async (req, res) => {
   try {
     res.json({ message: `TCGAPIs sync started for ${req.params.setId}` });
     setImmediate(async () => {
-      const result = await syncSetCards(req.params.setId);
-      console.log(`[SyncRoute] Set sync ${req.params.setId}:`, result);
+      await syncSetCards(req.params.setId);
     });
   } catch (err: any) {
     await logError({
@@ -190,8 +184,7 @@ router.post("/tcgapis/prices", requireSyncKey, async (_req, res) => {
       timestamp: new Date().toISOString(),
     });
     setImmediate(async () => {
-      const result = await refreshAllPrices();
-      console.log("[SyncRoute] Price refresh complete:", result);
+      await refreshAllPrices();
     });
   } catch (err: any) {
     await logError({
@@ -212,8 +205,7 @@ router.post("/tcgapis/prices/:setId", requireSyncKey, async (req, res) => {
   try {
     res.json({ message: `Price refresh started for ${req.params.setId}` });
     setImmediate(async () => {
-      const result = await refreshPricesForSet(req.params.setId);
-      console.log(`[SyncRoute] Price refresh ${req.params.setId}:`, result);
+      await refreshPricesForSet(req.params.setId);
     });
   } catch (err: any) {
     await logError({

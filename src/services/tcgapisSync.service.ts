@@ -65,7 +65,6 @@ export const syncSetGroupIds = async (): Promise<{
   mapped: number;
   unmatched: string[];
 }> => {
-  console.log("[TCGAPIs] Fetching Pokemon expansions...");
   const allExpansions: TCGExpansion[] = [];
   let offset = 0;
 
@@ -80,8 +79,6 @@ export const syncSetGroupIds = async (): Promise<{
       break;
     offset += 100;
   }
-
-  console.log(`[TCGAPIs] Got ${allExpansions.length} expansions`);
 
   const { data: ourSets } = await supabaseAdmin
     .from("sets")
@@ -118,12 +115,7 @@ export const syncSetGroupIds = async (): Promise<{
     }
   }
 
-  console.log(`[TCGAPIs] Mapped: ${mapped}, Unmatched: ${unmatched.length}`);
   if (unmatched.length > 0) {
-    console.log(
-      "[TCGAPIs] Unmatched (first 10):",
-      unmatched.slice(0, 10).join(", "),
-    );
   }
 
   return { mapped, unmatched };
@@ -146,13 +138,17 @@ export const syncSetCards = async (
     .single();
 
   if (!set?.tcgapis_group_id) {
-    console.log(`[TCGAPIs] ${setId} — no groupId, skipping`);
+    await logError({
+      source: "tcgapis-sync-set-cards", // ← change per controller
+      message: `${setId} — no groupId, skipping`,
+      error: null,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
     return { cards: 0, variants: 0, prices: 0, skipped: 1 };
   }
-
-  console.log(
-    `[TCGAPIs] Syncing ${set.name} (groupId: ${set.tcgapis_group_id})`,
-  );
 
   // Fetch all cards for this set (paginated)
   const allApiCards: TCGCard[] = [];
@@ -289,11 +285,6 @@ export const syncSetCards = async (
       skipped++;
     }
   }
-
-  console.log(
-    `[TCGAPIs] ${set.name} — cards: ${cardsUpdated}, variants: ${variantsUpserted}, ` +
-      `prices: ${pricesUpserted}, skipped: ${skipped}`,
-  );
   return {
     cards: cardsUpdated,
     variants: variantsUpserted,
@@ -364,8 +355,6 @@ export const syncAllSets = async (): Promise<{
   totalVariants: number;
   totalPrices: number;
 }> => {
-  console.log("[TCGAPIs] Starting full sync...");
-
   await syncSetGroupIds();
   await sleep(2000);
 
@@ -399,19 +388,12 @@ export const syncAllSets = async (): Promise<{
       console.error(`[TCGAPIs] Failed set ${set.name}:`, err?.message);
     }
   }
-
-  console.log(
-    `[TCGAPIs] Full sync done — sets: ${setsProcessed}, ` +
-      `variants: ${totalVariants}, prices: ${totalPrices}`,
-  );
   return { setsProcessed, totalVariants, totalPrices };
 };
 
 // ─── Daily price refresh (all sets) ──────────────────────────────────────────
 
 export const refreshAllPrices = async (): Promise<{ totalPrices: number }> => {
-  console.log("[TCGAPIs] Starting daily price refresh...");
-
   const { data: sets } = await supabaseAdmin
     .from("sets")
     .select("id, name")
@@ -442,7 +424,6 @@ export const refreshAllPrices = async (): Promise<{ totalPrices: number }> => {
     }
   }
 
-  console.log(`[TCGAPIs] Price refresh done — ${totalPrices} prices updated`);
   return { totalPrices };
 };
 

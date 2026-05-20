@@ -152,9 +152,6 @@ export const saveSetVariants = async (
   // 4. Mark set as ready
   await setVariantReady(setId, variantRows.length);
 
-  console.log(
-    `[VariantService] Saved ${variantRows.length} variants for set ${setId}`,
-  );
   return { saved: variantRows.length };
 };
 

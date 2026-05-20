@@ -121,7 +121,6 @@ export const syncSets = async (): Promise<{
   duration: number;
 }> => {
   const start = Date.now();
-  console.log("[SyncSets] Starting set sync from pokemontcg.io...");
 
   // Fetch all sets directly from pokemontcg.io
   const axios = await import("axios");
@@ -143,7 +142,6 @@ export const syncSets = async (): Promise<{
   setsCache.delete("sets:all");
 
   const duration = Date.now() - start;
-  console.log(`[SyncSets] Synced ${sets.length} sets in ${duration}ms`);
   return { synced: sets.length, duration };
 };
 
