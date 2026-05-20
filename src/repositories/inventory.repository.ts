@@ -157,6 +157,10 @@ export const insertInventoryItem = async (
       purchase_price: input.purchasePrice ?? null,
       purchase_date: input.purchaseDate ?? null,
       notes: input.notes ?? null,
+      variant_type: input.variantType ?? null,
+      condition: input.condition ?? null,
+      quantity: input.quantity ?? 1,
+      collection_id: input.collection_id ?? null,
     })
     .select(INVENTORY_SELECT)
     .single();
