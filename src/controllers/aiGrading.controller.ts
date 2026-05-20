@@ -69,6 +69,7 @@ export const analyzeCard = async (
       cardName,
       setName,
       submissionCardId, // optional — when provided, link the report to a submission card
+      inventoryId, // optional — when provided, link the report to an inventory item
     } = req.body;
 
     // Upload images to Supabase Storage bucket "Ai Grading Images"
@@ -164,6 +165,7 @@ export const analyzeCard = async (
         recommendation_reason: "Processing...",
         issues: [],
         strengths: [],
+        inventory_id: inventoryId ?? null,
       })
       .select("id")
       .single();

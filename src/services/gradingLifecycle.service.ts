@@ -367,7 +367,6 @@ export const createSubmission = async (
     (s, c) => s + (c.declaredValue ?? 0),
     0,
   );
-  const now = new Date().toISOString();
 
   // 1. Insert the envelope
   const { data: envelope, error: envErr } = await supabaseAdmin
