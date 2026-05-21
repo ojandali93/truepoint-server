@@ -284,7 +284,16 @@ export const getReports = async (
   try {
     const { data, error } = await supabaseAdmin
       .from("ai_grading_reports")
-      .select("*")
+      .select(
+        `
+    *,
+    submission_card:submission_cards!ai_grading_report_id (
+      id,
+      submission_id,
+      card_name
+    )
+  `,
+      )
       .eq("user_id", req.user.id)
       .order("created_at", { ascending: false })
       .limit(50);
