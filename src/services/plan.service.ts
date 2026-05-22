@@ -161,10 +161,19 @@ export const resolvePlan = async (
     .from("subscriptions")
     .select("plan, status")
     .eq("user_id", userId)
-    .in("status", ["active", "trialing"])
-    .maybeSingle();
+    .in("status", ["active", "trialing"]);
 
-  const plan = (data?.plan as PlanKey) ?? "starter";
+  const rows = data ?? [];
+
+  // Highest active tier across all platforms wins.
+  let plan: PlanKey = "starter";
+  for (const row of rows) {
+    const candidate = row.plan as PlanKey;
+    if (PLAN_RANK[candidate] > PLAN_RANK[plan]) {
+      plan = candidate;
+    }
+  }
+
   return {
     plan,
     effectivePlan: isAdmin ? "pro" : plan,

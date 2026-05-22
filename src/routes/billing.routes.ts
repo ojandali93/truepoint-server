@@ -11,6 +11,7 @@ import {
   verifySessionSchema,
 } from "../schemas/billing.schemas";
 import * as BillingController from "../controllers/billing.controller";
+import * as RevenueCatController from "../controllers/revenuecat.controller";
 
 const router = Router();
 
@@ -48,6 +49,12 @@ router.delete(
   "/subscription",
   writeLimiter,
   BillingController.cancelMySubscription as any,
+);
+
+router.post(
+  "/revenuecat-webhook",
+  express.json(),
+  RevenueCatController.handleRevenueCatWebhook as any,
 );
 
 export default router;

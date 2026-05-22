@@ -458,31 +458,6 @@ export const adminCreateAdminUser = async (
   }
 };
 
-export const adminToggleProMember = async (
-  req: AuthenticatedRequest,
-  res: Response,
-) => {
-  try {
-    const isPro = req.body.is_pro_member as boolean;
-    const profile = await UserService.adminToggleProMember(
-      req.params.id,
-      isPro,
-    );
-    res.json({ data: profile });
-  } catch (err: any) {
-    await logError({
-      source: "admin-toggle-pro-member", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
-  }
-};
-
 export const adminGetUserActivity = async (
   req: AuthenticatedRequest,
   res: Response,

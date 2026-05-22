@@ -139,12 +139,6 @@ router.put(
   validate(adminUpdateUserSchema),
   UserController.adminUpdateUser as any,
 );
-router.put(
-  "/admin/users/:id/pro",
-  adminLimiter,
-  requireAdmin as any,
-  UserController.adminToggleProMember as any,
-);
 router.get(
   "/admin/users/:id/activity",
   adminLimiter,

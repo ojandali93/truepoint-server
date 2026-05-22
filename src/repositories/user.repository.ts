@@ -24,7 +24,7 @@ export const findProfileByUsername = async (
   const { data, error } = await supabaseAdmin
     .from("profiles")
     .select(
-      "id, username, full_name, avatar_url, currency, preferred_grading_company, show_market_values, is_pro_member, created_at, updated_at",
+      "id, username, full_name, avatar_url, currency, preferred_grading_company, show_market_values, created_at, updated_at",
     )
     .ilike("username", username)
     .single();
@@ -225,7 +225,7 @@ export const adminToggleProMember = async (
 ): Promise<Profile> => {
   const { data, error } = await supabaseAdmin
     .from("profiles")
-    .update({ is_pro_member: isPro, updated_at: new Date().toISOString() })
+    .update({ updated_at: new Date().toISOString() })
     .eq("id", userId)
     .select()
     .single();

@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { Request } from "express";
 
 export interface Profile {
   id: string;
@@ -8,7 +8,6 @@ export interface Profile {
   currency: string;
   preferred_grading_company: string;
   show_market_values: boolean;
-  is_pro_member: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -41,7 +40,7 @@ export interface UserActivityLog {
 export interface AuthUser {
   id: string;
   email: string;
-  role: 'user' | 'admin';
+  role: "user" | "admin";
 }
 
 export interface AuthenticatedRequest extends Request {

@@ -135,9 +135,6 @@ export const verifyCheckoutSession = async (
     currentPeriodEnd: periodEndIso,
   });
 
-  // Upgrade the user's profile to pro member
-  await updateProfile(userId, { is_pro_member: true });
-
   return saved;
 };
 
@@ -191,7 +188,6 @@ export const handleWebhookEvent = async (
       const saved = await findSubscriptionByStripeId(sub.id);
       if (saved) {
         await updateSubscriptionStatus(sub.id, "canceled");
-        await updateProfile(saved.userId, { is_pro_member: false });
       }
       break;
     }

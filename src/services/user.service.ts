@@ -13,8 +13,7 @@ export const getProfileById = async (id: string): Promise<Profile> => {
 export const getPublicProfile = async (id: string) => {
   const profile = await UserRepository.findProfileById(id);
   if (!profile) throw { status: 404, message: "Profile not found" };
-  const { show_market_values, is_pro_member, currency, ...publicFields } =
-    profile;
+  const { show_market_values, currency, ...publicFields } = profile;
   return publicFields;
 };
 

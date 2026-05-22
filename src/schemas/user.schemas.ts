@@ -71,7 +71,6 @@ export const adminUpdateUserSchema = z.object({
   full_name: z.string().max(100).optional(),
   currency: z.enum(CURRENCIES).optional(),
   preferred_grading_company: z.enum(GRADING_COMPANIES).optional(),
-  is_pro_member: z.boolean().optional(),
   show_market_values: z.boolean().optional(),
 });
 
