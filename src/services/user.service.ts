@@ -203,10 +203,6 @@ export const adminUpdateUser = async (
   }
 };
 
-export const adminToggleProMember = async (userId: string) => {
-  return UserRepository.adminToggleProMember(userId);
-};
-
 // ─── Account deactivation ─────────────────────────────────────────────────────
 
 import { supabaseAdmin } from "../lib/supabase";

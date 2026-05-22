@@ -218,16 +218,3 @@ export const adminCreateUser = async (
   if (error) throw error;
   return data.user;
 };
-
-export const adminToggleProMember = async (
-  userId: string,
-): Promise<Profile> => {
-  const { data, error } = await supabaseAdmin
-    .from("profiles")
-    .update({ updated_at: new Date().toISOString() })
-    .eq("id", userId)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
-};

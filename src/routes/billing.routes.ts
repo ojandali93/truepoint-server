@@ -22,6 +22,12 @@ router.post(
   BillingController.handleWebhook as any,
 );
 
+router.post(
+  "/revenuecat-webhook",
+  express.json(),
+  RevenueCatController.handleRevenueCatWebhook as any,
+);
+
 // ─── All other billing routes require auth ────────────────────────────────────
 router.use(authenticateUser as any);
 
@@ -49,12 +55,6 @@ router.delete(
   "/subscription",
   writeLimiter,
   BillingController.cancelMySubscription as any,
-);
-
-router.post(
-  "/revenuecat-webhook",
-  express.json(),
-  RevenueCatController.handleRevenueCatWebhook as any,
 );
 
 export default router;

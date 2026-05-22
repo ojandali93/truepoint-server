@@ -7,7 +7,6 @@ import {
   upsertSubscription,
   updateSubscriptionStatus,
 } from "../repositories/billing.repository";
-import { updateProfile } from "../repositories/user.repository";
 import { BillingSubscription } from "../types/billing.types";
 
 const TRIAL_DAYS = 14;
