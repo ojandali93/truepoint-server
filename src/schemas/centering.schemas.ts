@@ -26,5 +26,6 @@ export const analyzeCenteringSchema = z.object({
   label: z.string().max(200).optional(),
 });
 
-export const saveCenteringReportSchema = analyzeCenteringSchema;
-// saving is the same payload as analyzing — backend calculates and persists in one step
+export const saveCenteringReportSchema = analyzeCenteringSchema.extend({
+  imageUrl: z.string().url().nullable().optional(),
+});
