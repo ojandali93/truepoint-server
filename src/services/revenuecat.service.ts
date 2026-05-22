@@ -16,7 +16,6 @@ import {
   updateAppleSubscriptionStatus,
   findSubscriptionByProviderId,
 } from "../repositories/billing.repository";
-import { BillingSubscription } from "../types/billing.types";
 import { logError } from "../lib/Logger";
 
 // Map your App Store product identifiers → plan tiers.

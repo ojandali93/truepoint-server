@@ -221,7 +221,6 @@ export const adminCreateUser = async (
 
 export const adminToggleProMember = async (
   userId: string,
-  isPro: boolean,
 ): Promise<Profile> => {
   const { data, error } = await supabaseAdmin
     .from("profiles")

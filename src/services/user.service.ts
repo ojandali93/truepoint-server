@@ -203,8 +203,8 @@ export const adminUpdateUser = async (
   }
 };
 
-export const adminToggleProMember = async (userId: string, isPro: boolean) => {
-  return UserRepository.adminToggleProMember(userId, isPro);
+export const adminToggleProMember = async (userId: string) => {
+  return UserRepository.adminToggleProMember(userId);
 };
 
 // ─── Account deactivation ─────────────────────────────────────────────────────
