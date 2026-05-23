@@ -24,6 +24,7 @@ import collectionRoutes from "../routes/collection.routes";
 import { errorLoggerMiddleware } from "../middleware/errorLogger.middleware";
 import planRoutes from "../routes/plan.routes";
 import authRoutes from "../routes/auth.routes";
+import feedbackRoutes from "../routes/feedback.routes";
 
 dotenv.config();
 
@@ -52,6 +53,7 @@ app.use("/api/v1/grading", gradingLifecycleRoutes);
 app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
+app.use("/api/v1/feedback", feedbackRoutes);
 
 app.use(
   "/api/v1/billing/webhook",
