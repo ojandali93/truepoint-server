@@ -32,6 +32,13 @@ export const updateProfileSchema = z.object({
   currency: z.enum(CURRENCIES).optional(),
   preferred_grading_company: z.enum(GRADING_COMPANIES).optional(),
   show_market_values: z.boolean().optional(),
+
+  // ── NEW: collector-detail fields (previously not editable) ──
+  favorite_pokemon: z.string().max(100).optional(),
+  favorite_set: z.string().max(100).optional(),
+  collecting_years: z.string().max(50).optional(),
+  collection_type: z.enum(["sealed", "unsealed", "both"]).optional(),
+  collector_style: z.enum(["grading", "singles", "both"]).optional(),
 });
 
 export const createNotificationSettingsSchema = z.object({
