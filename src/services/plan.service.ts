@@ -144,6 +144,7 @@ export interface ResolvedPlan {
   plan: PlanKey;
   effectivePlan: PlanKey; // 'pro' for admins regardless of subscription
   isAdmin: boolean;
+  platform: string | null;
 }
 
 /**
@@ -157,20 +158,23 @@ export const resolvePlan = async (
 ): Promise<ResolvedPlan> => {
   const isAdmin = role === "admin";
 
+  // Fetch ALL active subscriptions across platforms.
   const { data } = await supabaseAdmin
     .from("subscriptions")
-    .select("plan, status")
+    .select("plan, status, platform")
     .eq("user_id", userId)
     .in("status", ["active", "trialing"]);
 
   const rows = data ?? [];
 
-  // Highest active tier across all platforms wins.
+  // Pick the highest-ranked active plan, and remember its platform.
   let plan: PlanKey = "starter";
+  let platform: string | null = null;
   for (const row of rows) {
     const candidate = row.plan as PlanKey;
     if (PLAN_RANK[candidate] > PLAN_RANK[plan]) {
       plan = candidate;
+      platform = (row.platform as string) ?? null;
     }
   }
 
@@ -178,6 +182,7 @@ export const resolvePlan = async (
     plan,
     effectivePlan: isAdmin ? "pro" : plan,
     isAdmin,
+    platform, // null when starter / no active subscription
   };
 };
 
@@ -343,6 +348,7 @@ export const getPlanSnapshot = async (
     plan: resolved.plan,
     effectivePlan: resolved.effectivePlan,
     isAdmin: resolved.isAdmin,
+    subscriptionPlatform: resolved.platform,
     features,
     usage: {
       aiGradingReports: aiGrading,
