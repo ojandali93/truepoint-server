@@ -21,8 +21,8 @@ import { logError } from "../lib/Logger";
 // Map your App Store product identifiers → plan tiers.
 // These must match the product IDs you create in App Store Connect (7.4).
 const PRODUCT_TO_PLAN: Record<string, "collector" | "pro"> = {
-  "com.truepointtcg.app.collector.monthly": "collector",
-  "com.truepointtcg.app.pro.monthly": "pro",
+  collector: "collector",
+  pro: "pro",
 };
 
 // RevenueCat event types we act on.
