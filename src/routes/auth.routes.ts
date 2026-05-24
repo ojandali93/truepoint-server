@@ -1,7 +1,12 @@
 // src/routes/auth.routes.ts
 //
-// Split into two routers so there's NO ambiguity about which middleware
-// applies to which route. Public router has no auth middleware at all.
+// All auth middleware is applied PER-ROUTE, never via router.use(). This
+// matters because this router is mounted at the bare "/api/v1" (alongside
+// planRoutes), and "/api/v1" is a prefix of every other route including
+// "/api/v1/sync/...". A router-level `router.use(authenticateUser)` would
+// fire for ANY request matching the mount path — even ones this router has
+// no handler for — and 401 them before they reach their real router.
+// Per-route middleware only runs when the specific route matches.
 
 import { Router } from "express";
 import { authenticateUser } from "../middleware/auth.middleware";
@@ -19,40 +24,48 @@ import {
   revokeMyDevice,
 } from "../controllers/auth.controller";
 
-// ─── Public router — NO authentication ────────────────────────────────────
-// The token in the request body IS the auth for verify-email.
-const publicRouter = Router();
-publicRouter.post("/auth/verify-email", writeLimiter, verifyEmail as any);
+const router = Router();
 
-// ─── Authenticated router — requires Bearer token ─────────────────────────
-const authedRouter = Router();
-authedRouter.use(authenticateUser as any);
+// ─── Public — the token in the body IS the auth ──────────────────────────────
+router.post("/auth/verify-email", writeLimiter, verifyEmail as any);
 
-authedRouter.post(
+// ─── Authenticated — authenticateUser attached PER ROUTE ─────────────────────
+router.post(
   "/auth/send-verification-email",
+  authenticateUser as any,
   writeLimiter,
   sendVerification as any,
 );
-authedRouter.get(
+router.get(
   "/auth/verification-status",
+  authenticateUser as any,
   standardLimiter,
   verificationStatus as any,
 );
 
-authedRouter.post("/auth/devices", writeLimiter, upsertDevice as any);
-authedRouter.post("/auth/devices/logout", writeLimiter, logoutDevice as any);
-authedRouter.get("/auth/devices", standardLimiter, listMyDevices as any);
-authedRouter.delete("/auth/devices/:id", writeLimiter, revokeMyDevice as any);
-
-// ─── Combined export ──────────────────────────────────────────────────────
-// Mount the public router first so its handler runs before the authed router
-// gets a chance to apply its middleware.
-const router = Router();
-router.use(publicRouter);
-router.use(authedRouter);
-
-// ─── Combined export ──────────────────────────────────────────────────────
-// Mount the public router first so its handler runs before the authed router
-// gets a chance to apply its middleware.
+router.post(
+  "/auth/devices",
+  authenticateUser as any,
+  writeLimiter,
+  upsertDevice as any,
+);
+router.post(
+  "/auth/devices/logout",
+  authenticateUser as any,
+  writeLimiter,
+  logoutDevice as any,
+);
+router.get(
+  "/auth/devices",
+  authenticateUser as any,
+  standardLimiter,
+  listMyDevices as any,
+);
+router.delete(
+  "/auth/devices/:id",
+  authenticateUser as any,
+  writeLimiter,
+  revokeMyDevice as any,
+);
 
 export default router;
