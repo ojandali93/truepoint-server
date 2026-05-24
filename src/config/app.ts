@@ -54,6 +54,7 @@ app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
+app.use("/api/v1/billing", billingRoutes);
 
 app.use(
   "/api/v1/billing/webhook",
