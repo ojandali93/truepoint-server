@@ -3,6 +3,15 @@
 // Base: https://api.tcgapis.com
 // Auth: x-api-key header
 // Pokemon categoryId = 3
+//
+// Docs confirmed endpoints (Unlimited plan):
+//   GET /api/v2/expansions/{categoryId}        — sets
+//   GET /api/v2/cards/{groupId}                — cards in a set
+//   GET /api/v2/prices/{productId}             — product-level (variant) prices
+//   GET /api/v1/skuprices/product/{productId}  — ALL SKU prices for a product (one call)
+//   GET /api/v1/skuprices/{skuId}              — single SKU price
+//   GET /api/v2/sales-history/{productId}      — recent sales
+//   GET /api/v2/sales-history/{productId}/full — historic sales archive
 
 import axios from "axios";
 import { logError } from "./Logger";
@@ -24,40 +33,62 @@ export const POKEMON_CATEGORY_ID = 3;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * GET with retry/backoff. Only logs to error_logs on FINAL failure — not on
+ * every transient retry — so the error_logs table stays signal-rich.
+ */
 export const tcgapisGet = async <T>(
   url: string,
   params?: Record<string, any>,
   retries = 3,
 ): Promise<T> => {
+  let lastErr: any = null;
   for (let i = 0; i < retries; i++) {
     try {
       const res = await tcgapisHttp.get<T>(url, { params });
       return res.data;
     } catch (err: any) {
-      await logError({
-        source: "tcgapis-get", // ← change per controller
-        message: err?.message ?? "Unknown error",
-        error: err,
-        userId: null,
-        requestPath: "",
-        requestMethod: "",
-        metadata: {},
-      });
+      lastErr = err;
       const status = err?.response?.status;
+
+      // Rate limited — wait and retry (don't count as a retry attempt burn)
       if (status === 429) {
-        await sleep(65000);
+        await sleep(30000);
         continue;
       }
+      // Plan/permission errors are not retryable — fail fast and loud
       if (status === 402 || status === 403) {
+        await logError({
+          source: "tcgapis-plan-restriction",
+          message: `Plan restriction on ${url}: ${err?.response?.data?.error ?? status}`,
+          error: err,
+          userId: null,
+          requestPath: url,
+          requestMethod: "GET",
+          metadata: { params: params ?? {} },
+        });
         throw new Error(
           `Plan restriction: ${err?.response?.data?.error ?? url}`,
         );
       }
-      if (i === retries - 1) throw err;
-      await sleep(2000 * (i + 1));
+      // Transient — backoff and retry
+      if (i < retries - 1) {
+        await sleep(2000 * (i + 1));
+        continue;
+      }
     }
   }
-  throw new Error(`Failed after ${retries} retries: ${url}`);
+  // Final failure — log once
+  await logError({
+    source: "tcgapis-get",
+    message: lastErr?.message ?? `Failed after ${retries} retries: ${url}`,
+    error: lastErr,
+    userId: null,
+    requestPath: url,
+    requestMethod: "GET",
+    metadata: { params: params ?? {} },
+  });
+  throw lastErr ?? new Error(`Failed after ${retries} retries: ${url}`);
 };
 
 export { sleep };
@@ -160,3 +191,87 @@ export const resolveVariant = (printing: string) =>
     color: "#6B7280",
     sortOrder: 99,
   };
+
+// ─── Condition name → internal code ───────────────────────────────────────────
+// TCGPlayer condition strings → your inventory.condition enum (NM/LP/MP/HP/DM)
+
+export const CONDITION_CODE: Record<string, string> = {
+  "Near Mint": "NM",
+  "Lightly Played": "LP",
+  "Moderately Played": "MP",
+  "Heavily Played": "HP",
+  Damaged: "DM",
+  // Foil-prefixed variants sometimes append condition; handle common forms
+  "Near Mint Foil": "NM",
+  "Lightly Played Foil": "LP",
+  "Moderately Played Foil": "MP",
+  "Heavily Played Foil": "HP",
+  "Damaged Foil": "DM",
+  // Sealed
+  Unopened: "SEALED",
+};
+
+export const normalizeCondition = (c?: string | null): string | null => {
+  if (!c) return null;
+  if (CONDITION_CODE[c]) return CONDITION_CODE[c];
+  // Best-effort: take the leading words before "Foil" and map
+  const base = c.replace(/\s*Foil$/i, "").trim();
+  if (CONDITION_CODE[base]) return CONDITION_CODE[base];
+  return c.toUpperCase().slice(0, 2);
+};
+
+// ─── SKU price response parsing (defensive) ───────────────────────────────────
+// The /skuprices/product/{productId} response shape per docs/marketing:
+//   { success, data: { productId, name, set, skus: [ { skuId, condition,
+//     printing, edition, language, prices: { lowPrice, midPrice, highPrice,
+//     marketPrice, directLowPrice } } ] } }
+// Some deployments return { success, data: [ ...skus ] } or { skus: [...] }.
+// This normalizer handles all of those.
+
+export interface NormalizedSku {
+  skuId: number;
+  condition: string | null;
+  printing: string | null;
+  edition: string | null;
+  language: string | null;
+  lowPrice: number | null;
+  midPrice: number | null;
+  highPrice: number | null;
+  marketPrice: number | null;
+  directLowPrice: number | null;
+}
+
+const num = (v: any): number | null =>
+  v == null || v === "" || Number.isNaN(Number(v)) ? null : Number(v);
+
+export const parseSkuPricesResponse = (raw: any): NormalizedSku[] => {
+  // Find the array of SKUs wherever it lives
+  const skus =
+    raw?.data?.skus ??
+    raw?.skus ??
+    (Array.isArray(raw?.data) ? raw.data : null) ??
+    (Array.isArray(raw) ? raw : null) ??
+    [];
+
+  return (skus as any[])
+    .map((s) => {
+      const prices = s?.prices ?? s ?? {};
+      const skuId = num(s?.skuId ?? s?.sku_id ?? s?.skuID);
+      if (skuId == null) return null;
+      return {
+        skuId,
+        condition: s?.condition ?? null,
+        printing: s?.printing ?? s?.variant ?? null,
+        edition: s?.edition ?? null,
+        language: s?.language ?? "English",
+        lowPrice: num(prices?.lowPrice ?? prices?.low_price ?? prices?.low),
+        midPrice: num(prices?.midPrice ?? prices?.mid_price ?? prices?.mid),
+        highPrice: num(prices?.highPrice ?? prices?.high_price ?? prices?.high),
+        marketPrice: num(
+          prices?.marketPrice ?? prices?.market_price ?? prices?.market,
+        ),
+        directLowPrice: num(prices?.directLowPrice ?? prices?.direct_low_price),
+      } as NormalizedSku;
+    })
+    .filter((x): x is NormalizedSku => x !== null);
+};

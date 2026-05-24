@@ -13,6 +13,12 @@ import {
   GradingCompany,
 } from "../repositories/inventory.repository";
 
+import {
+  fetchSkuPriceRows,
+  pickSkuPrice,
+  SkuPriceRow,
+} from "../repositories/skuPrice.repository";
+
 import { requireFeature } from "./plan.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,11 +47,18 @@ export interface InventorySummary {
 
 // ─── Price resolution ─────────────────────────────────────────────────────────
 
-// Determine the best market price for an inventory item
+// Determine the best market price for an inventory item.
+//
+// Resolution priority:
+//   1. manual_market_value override (set by user or grader return)
+//   2. sealed product → product_price_cache
+//   3. raw card → SKU price (condition + variant aware) → legacy market_prices fallback
+//   4. graded card → graded price by company+grade → raw fallback
 const resolveMarketValue = (
   item: InventoryRow,
   cardPrices: Map<string, Record<string, number>>,
   productPrices: Map<string, number>,
+  skuPrices: Map<string, SkuPriceRow[]>,
 ): MarketValue => {
   // Manual override — takes precedence over all API-sourced prices.
   // Set when (a) a graded card is returned from the grader and the user
@@ -68,11 +81,21 @@ const resolveMarketValue = (
     };
   }
 
-  // Raw card — use TCGPlayer market, fallback to CardMarket
+  // Raw card — SKU-aware (condition + variant), fallback to legacy market_prices
   if (item.item_type === "raw_card" && item.card_id) {
+    const skuRows = skuPrices.get(item.card_id);
+    const fromSku = pickSkuPrice(
+      skuRows,
+      item.variant_type ?? null,
+      item.condition ?? null,
+    );
+    if (fromSku.price != null) {
+      return { marketPrice: fromSku.price, source: fromSku.source };
+    }
+
+    // Fallback to legacy variant-level market_prices
     const prices = cardPrices.get(item.card_id);
     if (!prices) return { marketPrice: null, source: null };
-
     if (prices.raw_market)
       return { marketPrice: prices.raw_market, source: "tcgplayer" };
     if (prices.cm_market)
@@ -157,8 +180,12 @@ export const getInventory = async (
     ),
   ];
 
-  // Fetch all prices in two queries
-  const [cardPrices, productPrices] = await Promise.all([
+  // Fetch all prices in parallel:
+  //  - SKU prices (condition-aware, primary source for raw cards)
+  //  - legacy card prices (market_prices — graded + fallback)
+  //  - sealed product prices
+  const [skuPrices, cardPrices, productPrices] = await Promise.all([
+    fetchSkuPriceRows(cardIds),
     fetchCardPrices(cardIds),
     fetchProductPrices(productIds),
   ]);
@@ -171,7 +198,12 @@ export const getInventory = async (
   let sealedProducts = 0;
 
   const items: InventoryItemWithValue[] = rows.map((row) => {
-    const marketValue = resolveMarketValue(row, cardPrices, productPrices);
+    const marketValue = resolveMarketValue(
+      row,
+      cardPrices,
+      productPrices,
+      skuPrices,
+    );
 
     const gainLoss =
       marketValue.marketPrice !== null && row.purchase_price !== null
@@ -225,10 +257,6 @@ export const addInventoryItem = async (
     await requireFeature(userId, "inventory_tracking", role);
   }
 
-  // Validate required fields per type
-  if (input.itemType === "raw_card" && !input.cardId) {
-    throw { status: 400, message: "card_id is required for raw cards" };
-  }
   // Validate required fields per type
   if (input.itemType === "raw_card" && !input.cardId) {
     throw { status: 400, message: "card_id is required for raw cards" };

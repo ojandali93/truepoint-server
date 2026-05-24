@@ -17,6 +17,13 @@ import {
   refreshPricesForSet,
 } from "../services/tcgapisSync.service";
 import { logError } from "../lib/Logger";
+import { supabaseAdmin } from "../lib/supabase";
+import {
+  refreshAllSkuPrices,
+  refreshSkuPricesForSet,
+  syncAllSkus,
+  syncSkusForSet,
+} from "../services/tcgapisSkuSync.service";
 
 const router = Router();
 
@@ -244,6 +251,130 @@ router.post("/portfolio", requireSyncKey, async (_req, res) => {
       metadata: {},
     });
     res.status(500).json({ error: "Failed to start portfolio sync" });
+  }
+});
+
+// ADD THESE ROUTES to src/routes/sync.routes.ts
+// (paste inside the existing router, after the existing TCGAPIs routes,
+//  before `export default router;`)
+//
+// Also add this import at the top of the file:
+//
+//   import {
+//     syncAllSkus,
+//     syncSkusForSet,
+//     refreshAllSkuPrices,
+//     refreshSkuPricesForSet,
+//   } from "../services/tcgapisSkuSync.service";
+//   import { supabaseAdmin } from "../lib/supabase";
+
+// ─── TCGAPIs — SKU-level catalog + pricing ───────────────────────────────────
+
+// POST /sync/tcgapis/skus — refresh SKU prices for ALL sets (NIGHTLY CRON hot path)
+router.post("/tcgapis/skus", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "SKU price refresh started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await refreshAllSkuPrices();
+      console.log("[SKU-SYNC] refreshAllSkuPrices done:", r);
+    } catch (err: any) {
+      console.error("[SKU-SYNC] refreshAllSkuPrices failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/tcgapis/skus/full — full SKU catalog + price sync (run once / weekly)
+router.post("/tcgapis/skus/full", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Full SKU catalog + price sync started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await syncAllSkus();
+      console.log("[SKU-SYNC] syncAllSkus done:", r);
+    } catch (err: any) {
+      console.error("[SKU-SYNC] syncAllSkus failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/tcgapis/skus/set/:setId — SKU catalog + prices for one set (TEST THIS FIRST)
+router.post("/tcgapis/skus/set/:setId", requireSyncKey, async (req, res) => {
+  res.json({ message: `SKU sync started for set ${req.params.setId}` });
+  setImmediate(async () => {
+    try {
+      const r = await syncSkusForSet(req.params.setId);
+      console.log(`[SKU-SYNC] set ${req.params.setId} done:`, r);
+    } catch (err: any) {
+      console.error(`[SKU-SYNC] set ${req.params.setId} failed:`, err?.message);
+    }
+  });
+});
+
+// POST /sync/tcgapis/skus/prices/:setId — price-only refresh for one set
+router.post("/tcgapis/skus/prices/:setId", requireSyncKey, async (req, res) => {
+  res.json({ message: `SKU price refresh started for ${req.params.setId}` });
+  setImmediate(async () => {
+    try {
+      const r = await refreshSkuPricesForSet(req.params.setId);
+      console.log(`[SKU-SYNC] price refresh ${req.params.setId}:`, r);
+    } catch (err: any) {
+      console.error(
+        `[SKU-SYNC] price refresh ${req.params.setId} failed:`,
+        err?.message,
+      );
+    }
+  });
+});
+
+// GET /sync/tcgapis/health — observability for the nightly sync
+router.get("/tcgapis/health", requireSyncKey, async (_req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+
+    const [
+      { data: lastSkuSync },
+      { count: skusWithPrices },
+      { count: staleSkus },
+      { count: totalSkus },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("price_sync_log")
+        .select(
+          "sync_type, status, synced_items, failed_items, started_at, completed_at",
+        )
+        .in("sync_type", ["skus", "prices"])
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("sku_prices")
+        .select("id", { count: "exact", head: true })
+        .gt("expires_at", nowIso),
+      supabaseAdmin
+        .from("sku_prices")
+        .select("id", { count: "exact", head: true })
+        .lt("expires_at", nowIso),
+      supabaseAdmin
+        .from("card_skus")
+        .select("id", { count: "exact", head: true }),
+    ]);
+
+    res.json({
+      data: {
+        lastSync: lastSkuSync ?? null,
+        skusInCatalog: totalSkus ?? 0,
+        skusWithFreshPrices: skusWithPrices ?? 0,
+        skusWithStalePrices: staleSkus ?? 0,
+        checkedAt: nowIso,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
   }
 });
 
