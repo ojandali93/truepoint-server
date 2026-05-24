@@ -24,6 +24,15 @@ import {
   syncAllSkus,
   syncSkusForSet,
 } from "../services/tcgapisSkuSync.service";
+import {
+  fillAllMetadata,
+  fillMetadataForSet,
+} from "../services/pokemontcgFallback.service";
+import {
+  syncCardsForSet,
+  syncFullCatalog,
+  syncSets as syncTcgapisSets,
+} from "../services/catalogSync.service";
 
 const router = Router();
 
@@ -373,6 +382,73 @@ router.get("/tcgapis/health", requireSyncKey, async (_req, res) => {
         checkedAt: nowIso,
       },
     });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// POST /sync/catalog — full native catalog: sets + all cards from TCGAPIs
+router.post("/catalog", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "TCGAPIs-native catalog sync started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await syncFullCatalog();
+      console.log("[Catalog] syncFullCatalog done:", r);
+    } catch (err: any) {
+      console.error("[Catalog] syncFullCatalog failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/catalog/sets — just sets (fast)
+router.post("/catalog/sets", requireSyncKey, async (_req, res) => {
+  try {
+    const r = await syncTcgapisSets();
+    res.json({ data: r, message: `Synced ${r.synced} sets.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// POST /sync/catalog/set/:setId — one set's cards (TEST THIS FIRST)
+router.post("/catalog/set/:setId", requireSyncKey, async (req, res) => {
+  try {
+    const r = await syncCardsForSet(req.params.setId);
+    res.json({
+      data: r,
+      message: `Synced ${r.cards} cards for ${req.params.setId}`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ─── pokemontcg.io FALLBACK — fill HP/types/supertype gaps ───────────────────
+
+// POST /sync/metadata — fill game metadata from pokemontcg for ALL sets
+router.post("/metadata", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Metadata fallback fill started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await fillAllMetadata();
+      console.log("[PTCG-Fallback] fillAllMetadata done:", r);
+    } catch (err: any) {
+      console.error("[PTCG-Fallback] failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/metadata/:setId — fill metadata for one set
+router.post("/metadata/:setId", requireSyncKey, async (req, res) => {
+  try {
+    const r = await fillMetadataForSet(req.params.setId);
+    res.json({ data: r });
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
