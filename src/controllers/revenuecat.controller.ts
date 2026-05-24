@@ -11,6 +11,22 @@ export const handleRevenueCatWebhook = async (
 ): Promise<void> => {
   try {
     const authHeader = req.headers["authorization"] as string | undefined;
+
+    // ── TEMPORARY DIAGNOSTIC (remove after webhook auth confirmed) ──
+    // Logs lengths and short masked previews only — never the full secret.
+    const expectedDbg = process.env.REVENUECAT_WEBHOOK_AUTH;
+    const mask = (s?: string) =>
+      s ? `${s.slice(0, 6)}…${s.slice(-4)} (len=${s.length})` : "<<MISSING>>";
+    console.log("[rc-webhook][DBG] received auth:", mask(authHeader));
+    console.log("[rc-webhook][DBG] expected env :", mask(expectedDbg));
+    console.log(
+      "[rc-webhook][DBG] match:",
+      authHeader === expectedDbg,
+      "| env set:",
+      typeof expectedDbg === "string",
+    );
+    // ── END TEMPORARY DIAGNOSTIC ──
+
     if (!verifyRevenueCatAuth(authHeader)) {
       res.status(401).json({ error: "Unauthorized" });
       return;
