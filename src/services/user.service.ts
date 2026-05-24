@@ -68,8 +68,82 @@ export const updateProfile = async (
   }
 };
 
+// Replace the existing deleteAccount in src/services/user.service.ts with this.
+// Requires: import { supabaseAdmin } from "../lib/supabase";  (already imported there)
+//           import * as UserRepository from "../repositories/user.repository";
+
+// Buckets that store files under a top-level folder named after the user id.
+// NOTE: names are case/space-sensitive and must match exactly.
+const USER_STORAGE_BUCKETS = [
+  "Profile Pictures",
+  "Ai Grading Images",
+  "Centering Images",
+];
+
+/**
+ * Recursively delete every object under `${userId}/` in a bucket.
+ * Supabase Storage has no "delete folder" — you list paths then remove them.
+ */
+const deleteUserBucketFolder = async (
+  bucket: string,
+  userId: string,
+): Promise<void> => {
+  // List everything under the user's folder (one level; recurse if you nest deeper).
+  const { data: entries, error: listErr } = await supabaseAdmin.storage
+    .from(bucket)
+    .list(userId, { limit: 1000 });
+
+  if (listErr) {
+    console.error(
+      `[deleteAccount] list failed for ${bucket}/${userId}:`,
+      listErr,
+    );
+    return; // don't block account deletion on storage cleanup
+  }
+  if (!entries || entries.length === 0) return;
+
+  // Build full paths. (If you store nested subfolders, expand this to recurse.)
+  const paths = entries
+    .filter((e) => e.name) // skip the implicit folder placeholder
+    .map((e) => `${userId}/${e.name}`);
+
+  if (paths.length === 0) return;
+
+  const { error: rmErr } = await supabaseAdmin.storage
+    .from(bucket)
+    .remove(paths);
+  if (rmErr) {
+    console.error(
+      `[deleteAccount] remove failed for ${bucket}/${userId}:`,
+      rmErr,
+    );
+  }
+};
+
 export const deleteAccount = async (userId: string): Promise<void> => {
-  await UserRepository.deleteProfileById(userId);
+  // 1. Best-effort storage cleanup FIRST. DB cascades never touch Storage, so
+  //    the user's images must be removed explicitly. We do this before the auth
+  //    delete so failures are logged while we still have a valid reference; we
+  //    never let a storage hiccup block the actual account deletion.
+  for (const bucket of USER_STORAGE_BUCKETS) {
+    try {
+      await deleteUserBucketFolder(bucket, userId);
+    } catch (err) {
+      console.error(
+        `[deleteAccount] storage cleanup error for ${bucket}:`,
+        err,
+      );
+    }
+  }
+
+  // 2. Delete the auth user. With ON DELETE CASCADE now in place, this atomically
+  //    removes the profiles row and ALL user-data rows (collections, inventory,
+  //    subscriptions, ai_grading_reports, centering_reports, grading_submissions,
+  //    feedback, notification_settings, master_set_*, portfolio_snapshots,
+  //    user_devices) in a single transaction. Telemetry/audit rows
+  //    (activity_logs, error_logs, user_activity_logs) are retained with the
+  //    user pointer set to NULL.
+  await UserRepository.deleteProfileById(userId); // -> supabaseAdmin.auth.admin.deleteUser(userId)
 };
 
 // ─── Notification Settings ────────────────────────────────────────────────────
