@@ -65,6 +65,7 @@ app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 
+
 app.post("/debug/token", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.json({ error: "no token" });

@@ -33,6 +33,10 @@ import {
   syncFullCatalog,
   syncSets as syncTcgapisSets,
 } from "../services/catalogSync.service";
+import {
+  syncAllVariantPrices,
+  syncVariantPricesForSet,
+} from "../services/variantPriceSync.service";
 
 const router = Router();
 
@@ -452,6 +456,37 @@ router.post("/metadata/:setId", requireSyncKey, async (req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
+});
+
+router.post("/prices", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "NM variant price sync started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await syncAllVariantPrices();
+      console.log("[VariantPrice] syncAllVariantPrices done:", r);
+    } catch (err: any) {
+      console.error("[VariantPrice] failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/prices/set/:setId — one set (TEST THIS FIRST)
+router.post("/prices/set/:setId", requireSyncKey, async (req, res) => {
+  res.json({ message: `Variant price sync started for ${req.params.setId}` });
+  setImmediate(async () => {
+    try {
+      const r = await syncVariantPricesForSet(req.params.setId);
+      console.log(`[VariantPrice] set ${req.params.setId}:`, r);
+    } catch (err: any) {
+      console.error(
+        `[VariantPrice] set ${req.params.setId} failed:`,
+        err?.message,
+      );
+    }
+  });
 });
 
 export default router;
