@@ -37,8 +37,18 @@ app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use(morgan("combined"));
 
+// IMPORTANT: billingRoutes must be mounted BEFORE the bare-"/api/v1" routers
+// (planRoutes / authRoutes). Those routers apply authenticateUser as
+// router-level middleware (router.use), which Express runs for EVERY request
+// matching the "/api/v1" mount path — even one whose final handler lives in a
+// different router. If billing is mounted after them, the unauthenticated
+// RevenueCat webhook POST /api/v1/billing/revenuecat-webhook gets intercepted
+// and 401'd by the auth router before it ever reaches the billing router.
+// Mounting billing first ensures its own (correct) public-webhook ordering wins.
+app.use("/api/v1/billing", billingRoutes);
+
 app.use("/api/v1", planRoutes);
-app.use("/api/v1", authRoutes); // ← add this line
+app.use("/api/v1", authRoutes);
 
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/cards", cardRoutes);
@@ -54,16 +64,6 @@ app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
-app.use("/api/v1/billing", billingRoutes);
-
-app.use(
-  "/api/v1/billing/webhook",
-  express.raw({ type: "application/json" }),
-  (_req, _res, next) => {
-    next();
-  },
-);
-app.use("/api/v1/billing", billingRoutes);
 
 app.post("/debug/token", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
