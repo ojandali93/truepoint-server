@@ -377,7 +377,12 @@ export const getSetPrices = async (
     // Build price map: cardId → [{ variant, market, source }]
     const priceMap: Record<
       string,
-      { variant: string; market: number | null; source: string }[]
+      {
+        variant: string;
+        market: number | null;
+        low: number | null;
+        source: string;
+      }[]
     > = {};
 
     for (const row of allRows) {
@@ -385,6 +390,7 @@ export const getSetPrices = async (
       priceMap[row.card_id].push({
         variant: row.variant ?? "normal",
         market: row.market_price ?? null,
+        low: row.low_price ?? null,
         source: row.source,
       });
     }
