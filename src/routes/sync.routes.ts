@@ -475,21 +475,6 @@ router.get("/tcgapis/health", requireSyncKey, async (_req, res) => {
   }
 });
 
-router.post("/products/prices", requireSyncKey, async (_req, res) => {
-  res.json({
-    message: "Product price sync started in background.",
-    timestamp: new Date().toISOString(),
-  });
-  setImmediate(async () => {
-    try {
-      const r = await syncAllProductPrices();
-      console.log("[ProductPrice] syncAllProductPrices done:", r);
-    } catch (err: any) {
-      console.error("[ProductPrice] failed:", err?.message);
-    }
-  });
-});
-
 // POST /sync/products/prices/:setId — one set's products (TEST THIS FIRST)
 router.post("/products/prices/:setId", requireSyncKey, async (req, res) => {
   res.json({ message: `Product price sync started for ${req.params.setId}` });
@@ -502,6 +487,21 @@ router.post("/products/prices/:setId", requireSyncKey, async (req, res) => {
         `[ProductPrice] set ${req.params.setId} failed:`,
         err?.message,
       );
+    }
+  });
+});
+
+router.post("/products/prices", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Product price sync started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await syncAllProductPrices();
+      console.log("[ProductPrice] syncAllProductPrices done:", r);
+    } catch (err: any) {
+      console.error("[ProductPrice] failed:", err?.message);
     }
   });
 });
