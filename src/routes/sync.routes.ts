@@ -39,6 +39,7 @@ import {
 } from "../services/variantPriceSync.service";
 import { syncProductPricesForSet } from "../services/productPriceSync.service";
 import { syncAllProductPrices } from "../services/productPriceSync.service";
+import { backfillSetImages } from "../services/setImageBackfill.service";
 
 const router = Router();
 
@@ -502,6 +503,21 @@ router.post("/products/prices", requireSyncKey, async (_req, res) => {
       console.log("[ProductPrice] syncAllProductPrices done:", r);
     } catch (err: any) {
       console.error("[ProductPrice] failed:", err?.message);
+    }
+  });
+});
+
+router.post("/set-images", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Set image backfill started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await backfillSetImages();
+      console.log("[SetImages] backfill done:", r);
+    } catch (err: any) {
+      console.error("[SetImages] failed:", err?.message);
     }
   });
 });
