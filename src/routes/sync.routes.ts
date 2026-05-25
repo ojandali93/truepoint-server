@@ -37,6 +37,8 @@ import {
   syncAllVariantPrices,
   syncVariantPricesForSet,
 } from "../services/variantPriceSync.service";
+import { syncProductPricesForSet } from "../services/productPriceSync.service";
+import { syncAllProductPrices } from "../services/productPriceSync.service";
 
 const router = Router();
 
@@ -471,6 +473,37 @@ router.get("/tcgapis/health", requireSyncKey, async (_req, res) => {
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
+});
+
+router.post("/products/prices", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Product price sync started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await syncAllProductPrices();
+      console.log("[ProductPrice] syncAllProductPrices done:", r);
+    } catch (err: any) {
+      console.error("[ProductPrice] failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/products/prices/:setId — one set's products (TEST THIS FIRST)
+router.post("/products/prices/:setId", requireSyncKey, async (req, res) => {
+  res.json({ message: `Product price sync started for ${req.params.setId}` });
+  setImmediate(async () => {
+    try {
+      const r = await syncProductPricesForSet(req.params.setId);
+      console.log(`[ProductPrice] set ${req.params.setId}:`, r);
+    } catch (err: any) {
+      console.error(
+        `[ProductPrice] set ${req.params.setId} failed:`,
+        err?.message,
+      );
+    }
+  });
 });
 
 export default router;
