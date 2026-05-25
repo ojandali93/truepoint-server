@@ -58,13 +58,9 @@ const syncCardPrices = async (
     // Always record the variant exists (even if price is currently null) so the
     // UI variant selector is complete. Skip fully-empty TCGPlayer slots though —
     // e.g. "1st Edition Holofoil" on a modern card is always null and noise.
-    const hasAnyPrice =
-      p &&
-      (p.marketPrice != null ||
-        p.lowPrice != null ||
-        p.midPrice != null ||
-        p.highPrice != null);
-    if (!hasAnyPrice) continue;
+    const hasRealListing =
+      p && (p.lowPrice != null || p.midPrice != null || p.highPrice != null);
+    if (!hasRealListing) continue;
 
     variantRows.push({
       card_id: cardId,
