@@ -46,6 +46,36 @@ interface TCGCardsResponse {
   data: TCGCard[];
 }
 
+// ─── Sealed-product classification ────────────────────────────────────────────
+// TCGAPIs returns sealed products mixed into the cards endpoint, flagged by
+// rarity === 'sealed'. We route those to the `products` table and map each to
+// one of the products.product_type enum values by name.
+
+const isSealed = (c: TCGCard): boolean =>
+  (c.rarity ?? "").toLowerCase() === "sealed";
+
+// Maps a sealed product name to a products.product_type enum value.
+// Enum: booster_box | elite_trainer_box | bundle | tin | collection |
+//       blister | promo_pack | ultra_premium_collection | special_collection
+const PRODUCT_TYPE_RULES: Array<[RegExp, string]> = [
+  [/elite trainer box/i, "elite_trainer_box"],
+  [/booster box/i, "booster_box"],
+  [/ultra premium/i, "ultra_premium_collection"],
+  [/premium collection/i, "special_collection"],
+  [/build ?& ?battle|build and battle/i, "bundle"],
+  [/bundle/i, "bundle"],
+  [/blister/i, "blister"],
+  [/\btin\b/i, "tin"],
+  [/booster pack/i, "blister"], // single/loose packs — closest enum
+  [/promo/i, "promo_pack"],
+  [/collection/i, "collection"],
+];
+
+const inferProductType = (name: string): string => {
+  for (const [re, type] of PRODUCT_TYPE_RULES) if (re.test(name)) return type;
+  return "collection"; // safe default — always a valid enum value
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SETS — native (groupId = id)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -109,16 +139,16 @@ export const syncSets = async (): Promise<{ synced: number }> => {
 
 export const syncCardsForSet = async (
   setId: string,
-): Promise<{ cards: number }> => {
+): Promise<{ cards: number; products: number }> => {
   const { data: set } = await supabaseAdmin
     .from("sets")
     .select("id, tcgapis_group_id")
     .eq("id", setId)
     .single();
 
-  if (!set?.tcgapis_group_id) return { cards: 0 };
+  if (!set?.tcgapis_group_id) return { cards: 0, products: 0 };
 
-  const apiCards: TCGCard[] = [];
+  const apiItems: TCGCard[] = [];
   let offset = 0;
   while (true) {
     await sleep(150);
@@ -126,15 +156,21 @@ export const syncCardsForSet = async (
       `/api/v2/cards/${set.tcgapis_group_id}`,
       { limit: 100, offset },
     );
-    apiCards.push(...(data.data ?? []));
-    if (apiCards.length >= data.total || (data.data?.length ?? 0) < 100) break;
+    apiItems.push(...(data.data ?? []));
+    if (apiItems.length >= data.total || (data.data?.length ?? 0) < 100) break;
     offset += 100;
   }
 
-  if (!apiCards.length) return { cards: 0 };
+  if (!apiItems.length) return { cards: 0, products: 0 };
 
   const now = new Date().toISOString();
-  const rows = apiCards.map((c) => ({
+
+  // Split: sealed → products table, everything else → cards table
+  const sealedItems = apiItems.filter(isSealed);
+  const cardItems = apiItems.filter((c) => !isSealed(c));
+
+  // ── Cards ──
+  const cardRows = cardItems.map((c) => ({
     id: String(c.productId),
     name: c.name,
     number: c.number ?? "",
@@ -147,9 +183,9 @@ export const syncCardsForSet = async (
     synced_at: now,
   }));
 
-  let synced = 0;
-  for (let i = 0; i < rows.length; i += 100) {
-    const chunk = rows.slice(i, i + 100);
+  let cardsSynced = 0;
+  for (let i = 0; i < cardRows.length; i += 100) {
+    const chunk = cardRows.slice(i, i + 100);
     const { error } = await supabaseAdmin
       .from("cards")
       .upsert(chunk, { onConflict: "id" });
@@ -164,11 +200,42 @@ export const syncCardsForSet = async (
         metadata: { setId, chunkStart: i },
       });
     } else {
-      synced += chunk.length;
+      cardsSynced += chunk.length;
     }
   }
 
-  return { cards: synced };
+  // ── Products (sealed) ──
+  const productRows = sealedItems.map((c) => ({
+    id: String(c.productId),
+    name: c.name,
+    set_id: setId,
+    product_type: inferProductType(c.name),
+    image_url: c.image ?? null,
+    synced_at: now,
+  }));
+
+  let productsSynced = 0;
+  for (let i = 0; i < productRows.length; i += 100) {
+    const chunk = productRows.slice(i, i + 100);
+    const { error } = await supabaseAdmin
+      .from("products")
+      .upsert(chunk, { onConflict: "id" });
+    if (error) {
+      await logError({
+        source: "catalog-sync-products",
+        message: error.message,
+        error,
+        userId: null,
+        requestPath: "",
+        requestMethod: "",
+        metadata: { setId, chunkStart: i },
+      });
+    } else {
+      productsSynced += chunk.length;
+    }
+  }
+
+  return { cards: cardsSynced, products: productsSynced };
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -179,6 +246,7 @@ export const syncFullCatalog = async (): Promise<{
   sets: number;
   setsProcessed: number;
   cards: number;
+  products: number;
 }> => {
   const { data: logRow } = await supabaseAdmin
     .from("price_sync_log")
@@ -191,7 +259,7 @@ export const syncFullCatalog = async (): Promise<{
   const { synced: setsSynced } = await syncSets();
   await sleep(1000);
 
-  // 2. Cards per set
+  // 2. Cards + sealed products per set
   const { data: sets } = await supabaseAdmin
     .from("sets")
     .select("id")
@@ -200,11 +268,13 @@ export const syncFullCatalog = async (): Promise<{
 
   let setsProcessed = 0;
   let totalCards = 0;
+  let totalProducts = 0;
 
   for (const set of sets ?? []) {
     try {
       const r = await syncCardsForSet(set.id);
       totalCards += r.cards;
+      totalProducts += r.products;
       setsProcessed++;
       await sleep(300);
     } catch (err: any) {
@@ -232,5 +302,10 @@ export const syncFullCatalog = async (): Promise<{
       .eq("id", logId);
   }
 
-  return { sets: setsSynced, setsProcessed, cards: totalCards };
+  return {
+    sets: setsSynced,
+    setsProcessed,
+    cards: totalCards,
+    products: totalProducts,
+  };
 };

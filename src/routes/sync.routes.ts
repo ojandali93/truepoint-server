@@ -49,349 +49,11 @@ const requireSyncKey = (req: Request, res: Response, next: Function): void => {
   next();
 };
 
-// ─── pokemontcg.io — Sets + Cards metadata ────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// TCGAPIs-NATIVE CATALOG (PRIMARY) — sets + cards + sealed products
+// ════════════════════════════════════════════════════════════════════════════
 
-// POST /sync/sets — sync set list from pokemontcg.io
-router.post("/sets", requireSyncKey, async (_req, res) => {
-  try {
-    const result = await CardService.syncSets();
-    res.json({ data: result, message: `Synced ${result.synced} sets` });
-  } catch (err: any) {
-    await logError({
-      source: "sync-pokemon-sets", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/cards — full card backfill from pokemontcg.io (all sets, all cards)
-// Run this first after a fresh DB wipe to rebuild sets + cards tables
-router.post("/cards", requireSyncKey, async (_req, res) => {
-  try {
-    res.json({
-      message:
-        "Full card sync started in background. This takes 30-90 minutes. Watch server logs.",
-      timestamp: new Date().toISOString(),
-    });
-    setImmediate(async () => {
-      await backfillAllCards();
-    });
-  } catch (err: any) {
-    await logError({
-      source: "sync-pokemon-cards", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/cards/:setId — sync one set's cards from pokemontcg.io
-router.post("/cards/:setId", requireSyncKey, async (req, res) => {
-  try {
-    res.json({ message: `Card sync started for set ${req.params.setId}` });
-    setImmediate(async () => {
-      await syncSingleSet(req.params.setId);
-    });
-  } catch (err: any) {
-    await logError({
-      source: "get-sync-status", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// GET /sync/status — check sync status
-router.get("/status", requireSyncKey, async (_req, res) => {
-  try {
-    const status = await getSyncStatus();
-    res.json({ data: status });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// ─── TCGAPIs — Variants + Pricing ────────────────────────────────────────────
-
-// POST /sync/tcgapis/map-sets — link sets to TCGAPIs groupIds (run after /sync/cards)
-router.post("/tcgapis/map-sets", requireSyncKey, async (_req, res) => {
-  try {
-    const result = await syncSetGroupIds();
-    res.json({
-      data: result,
-      message: `Mapped ${result.mapped} sets. ${result.unmatched.length} unmatched.`,
-    });
-  } catch (err: any) {
-    await logError({
-      source: "sync-tcgapis-map-sets", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/tcgapis/all — full sync: variants + prices for all sets (weekly cron)
-router.post("/tcgapis/all", requireSyncKey, async (_req, res) => {
-  try {
-    res.json({
-      message: "Full TCGAPIs sync started in background.",
-      timestamp: new Date().toISOString(),
-    });
-    setImmediate(async () => {
-      await syncAllSets();
-    });
-  } catch (err: any) {
-    await logError({
-      source: "sync-tcgapis-all", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/tcgapis/set/:setId — sync one set variants + prices
-router.post("/tcgapis/set/:setId", requireSyncKey, async (req, res) => {
-  try {
-    res.json({ message: `TCGAPIs sync started for ${req.params.setId}` });
-    setImmediate(async () => {
-      await syncSetCards(req.params.setId);
-    });
-  } catch (err: any) {
-    await logError({
-      source: "sync-tcgapis-set", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/tcgapis/prices — daily price refresh for all sets (daily cron)
-router.post("/tcgapis/prices", requireSyncKey, async (_req, res) => {
-  try {
-    res.json({
-      message: "Daily price refresh started.",
-      timestamp: new Date().toISOString(),
-    });
-    setImmediate(async () => {
-      await refreshAllPrices();
-    });
-  } catch (err: any) {
-    await logError({
-      source: "sync-tcgapis-prices", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/tcgapis/prices/:setId — refresh prices for one set
-router.post("/tcgapis/prices/:setId", requireSyncKey, async (req, res) => {
-  try {
-    res.json({ message: `Price refresh started for ${req.params.setId}` });
-    setImmediate(async () => {
-      await refreshPricesForSet(req.params.setId);
-    });
-  } catch (err: any) {
-    await logError({
-      source: "sync-tcgapis-prices-set", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// ─── Portfolio snapshots ──────────────────────────────────────────────────────
-
-// POST /sync/portfolio — daily portfolio snapshot (daily cron)
-router.post("/portfolio", requireSyncKey, async (_req, res) => {
-  try {
-    res.json({
-      message: "Portfolio snapshot sync started",
-      timestamp: new Date().toISOString(),
-    });
-    syncAllPortfolios().catch((err: any) =>
-      console.error("[SyncRoute] Portfolio sync failed:", err?.message),
-    );
-  } catch {
-    await logError({
-      source: "sync-portfolio", // ← change per controller
-      message: "Failed to start portfolio sync",
-      error: null,
-      userId: null,
-      requestPath: "",
-      requestMethod: "",
-      metadata: {},
-    });
-    res.status(500).json({ error: "Failed to start portfolio sync" });
-  }
-});
-
-// ADD THESE ROUTES to src/routes/sync.routes.ts
-// (paste inside the existing router, after the existing TCGAPIs routes,
-//  before `export default router;`)
-//
-// Also add this import at the top of the file:
-//
-//   import {
-//     syncAllSkus,
-//     syncSkusForSet,
-//     refreshAllSkuPrices,
-//     refreshSkuPricesForSet,
-//   } from "../services/tcgapisSkuSync.service";
-//   import { supabaseAdmin } from "../lib/supabase";
-
-// ─── TCGAPIs — SKU-level catalog + pricing ───────────────────────────────────
-
-// POST /sync/tcgapis/skus — refresh SKU prices for ALL sets (NIGHTLY CRON hot path)
-router.post("/tcgapis/skus", requireSyncKey, async (_req, res) => {
-  res.json({
-    message: "SKU price refresh started in background.",
-    timestamp: new Date().toISOString(),
-  });
-  setImmediate(async () => {
-    try {
-      const r = await refreshAllSkuPrices();
-      console.log("[SKU-SYNC] refreshAllSkuPrices done:", r);
-    } catch (err: any) {
-      console.error("[SKU-SYNC] refreshAllSkuPrices failed:", err?.message);
-    }
-  });
-});
-
-// POST /sync/tcgapis/skus/full — full SKU catalog + price sync (run once / weekly)
-router.post("/tcgapis/skus/full", requireSyncKey, async (_req, res) => {
-  res.json({
-    message: "Full SKU catalog + price sync started in background.",
-    timestamp: new Date().toISOString(),
-  });
-  setImmediate(async () => {
-    try {
-      const r = await syncAllSkus();
-      console.log("[SKU-SYNC] syncAllSkus done:", r);
-    } catch (err: any) {
-      console.error("[SKU-SYNC] syncAllSkus failed:", err?.message);
-    }
-  });
-});
-
-// POST /sync/tcgapis/skus/set/:setId — SKU catalog + prices for one set (TEST THIS FIRST)
-router.post("/tcgapis/skus/set/:setId", requireSyncKey, async (req, res) => {
-  res.json({ message: `SKU sync started for set ${req.params.setId}` });
-  setImmediate(async () => {
-    try {
-      const r = await syncSkusForSet(req.params.setId);
-      console.log(`[SKU-SYNC] set ${req.params.setId} done:`, r);
-    } catch (err: any) {
-      console.error(`[SKU-SYNC] set ${req.params.setId} failed:`, err?.message);
-    }
-  });
-});
-
-// POST /sync/tcgapis/skus/prices/:setId — price-only refresh for one set
-router.post("/tcgapis/skus/prices/:setId", requireSyncKey, async (req, res) => {
-  res.json({ message: `SKU price refresh started for ${req.params.setId}` });
-  setImmediate(async () => {
-    try {
-      const r = await refreshSkuPricesForSet(req.params.setId);
-      console.log(`[SKU-SYNC] price refresh ${req.params.setId}:`, r);
-    } catch (err: any) {
-      console.error(
-        `[SKU-SYNC] price refresh ${req.params.setId} failed:`,
-        err?.message,
-      );
-    }
-  });
-});
-
-// GET /sync/tcgapis/health — observability for the nightly sync
-router.get("/tcgapis/health", requireSyncKey, async (_req, res) => {
-  try {
-    const nowIso = new Date().toISOString();
-
-    const [
-      { data: lastSkuSync },
-      { count: skusWithPrices },
-      { count: staleSkus },
-      { count: totalSkus },
-    ] = await Promise.all([
-      supabaseAdmin
-        .from("price_sync_log")
-        .select(
-          "sync_type, status, synced_items, failed_items, started_at, completed_at",
-        )
-        .in("sync_type", ["skus", "prices"])
-        .order("started_at", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      supabaseAdmin
-        .from("sku_prices")
-        .select("id", { count: "exact", head: true })
-        .gt("expires_at", nowIso),
-      supabaseAdmin
-        .from("sku_prices")
-        .select("id", { count: "exact", head: true })
-        .lt("expires_at", nowIso),
-      supabaseAdmin
-        .from("card_skus")
-        .select("id", { count: "exact", head: true }),
-    ]);
-
-    res.json({
-      data: {
-        lastSync: lastSkuSync ?? null,
-        skusInCatalog: totalSkus ?? 0,
-        skusWithFreshPrices: skusWithPrices ?? 0,
-        skusWithStalePrices: staleSkus ?? 0,
-        checkedAt: nowIso,
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
-// POST /sync/catalog — full native catalog: sets + all cards from TCGAPIs
+// POST /sync/catalog — full native catalog: sets + cards + sealed products
 router.post("/catalog", requireSyncKey, async (_req, res) => {
   res.json({
     message: "TCGAPIs-native catalog sync started in background.",
@@ -417,47 +79,24 @@ router.post("/catalog/sets", requireSyncKey, async (_req, res) => {
   }
 });
 
-// POST /sync/catalog/set/:setId — one set's cards (TEST THIS FIRST)
+// POST /sync/catalog/set/:setId — one set's cards + sealed products (TEST FIRST)
 router.post("/catalog/set/:setId", requireSyncKey, async (req, res) => {
   try {
     const r = await syncCardsForSet(req.params.setId);
     res.json({
       data: r,
-      message: `Synced ${r.cards} cards for ${req.params.setId}`,
+      message: `Synced ${r.cards} cards + ${r.products} products for ${req.params.setId}`,
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message });
   }
 });
 
-// ─── pokemontcg.io FALLBACK — fill HP/types/supertype gaps ───────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// TCGAPIs — NM-per-variant pricing (PRIMARY pricing path)
+// ════════════════════════════════════════════════════════════════════════════
 
-// POST /sync/metadata — fill game metadata from pokemontcg for ALL sets
-router.post("/metadata", requireSyncKey, async (_req, res) => {
-  res.json({
-    message: "Metadata fallback fill started in background.",
-    timestamp: new Date().toISOString(),
-  });
-  setImmediate(async () => {
-    try {
-      const r = await fillAllMetadata();
-      console.log("[PTCG-Fallback] fillAllMetadata done:", r);
-    } catch (err: any) {
-      console.error("[PTCG-Fallback] failed:", err?.message);
-    }
-  });
-});
-
-// POST /sync/metadata/:setId — fill metadata for one set
-router.post("/metadata/:setId", requireSyncKey, async (req, res) => {
-  try {
-    const r = await fillMetadataForSet(req.params.setId);
-    res.json({ data: r });
-  } catch (err: any) {
-    res.status(500).json({ error: err?.message });
-  }
-});
-
+// POST /sync/prices — NM market price per variant for ALL sets (nightly cron)
 router.post("/prices", requireSyncKey, async (_req, res) => {
   res.json({
     message: "NM variant price sync started in background.",
@@ -487,6 +126,351 @@ router.post("/prices/set/:setId", requireSyncKey, async (req, res) => {
       );
     }
   });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// pokemontcg.io FALLBACK — fill HP/types/supertype gaps (OPTIONAL)
+// ════════════════════════════════════════════════════════════════════════════
+
+// POST /sync/metadata — fill game metadata from pokemontcg for ALL sets
+router.post("/metadata", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Metadata fallback fill started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await fillAllMetadata();
+      console.log("[PTCG-Fallback] fillAllMetadata done:", r);
+    } catch (err: any) {
+      console.error("[PTCG-Fallback] failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/metadata/:setId — fill metadata for one set
+router.post("/metadata/:setId", requireSyncKey, async (req, res) => {
+  try {
+    const r = await fillMetadataForSet(req.params.setId);
+    res.json({ data: r });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// Portfolio snapshots
+// ════════════════════════════════════════════════════════════════════════════
+
+// POST /sync/portfolio — daily portfolio snapshot (daily cron)
+router.post("/portfolio", requireSyncKey, async (_req, res) => {
+  try {
+    res.json({
+      message: "Portfolio snapshot sync started",
+      timestamp: new Date().toISOString(),
+    });
+    syncAllPortfolios().catch((err: any) =>
+      console.error("[SyncRoute] Portfolio sync failed:", err?.message),
+    );
+  } catch {
+    await logError({
+      source: "sync-portfolio",
+      message: "Failed to start portfolio sync",
+      error: null,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: "Failed to start portfolio sync" });
+  }
+});
+
+// GET /sync/status — check sync status
+router.get("/status", requireSyncKey, async (_req, res) => {
+  try {
+    const status = await getSyncStatus();
+    res.json({ data: status });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SEALED PRODUCT PRICING (OPTIONAL) — prices for the products table
+// (uncomment + wire if/when you want booster box / ETB prices)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// import { syncAllProductsTcgapis, syncProductsForSet }
+//   from "../services/tcgapisProductSync.service";
+//
+// router.post("/products", requireSyncKey, async (_req, res) => { ... });
+// router.post("/products/:setId", requireSyncKey, async (req, res) => { ... });
+
+// ════════════════════════════════════════════════════════════════════════════
+// LEGACY / DEPRECATED — kept one release as a safety net. Do NOT use for the
+// TCGAPIs-native flow. Retire after you're confident in the native pipeline.
+// ════════════════════════════════════════════════════════════════════════════
+
+// (pokemontcg) POST /sync/sets
+router.post("/sets", requireSyncKey, async (_req, res) => {
+  try {
+    const result = await CardService.syncSets();
+    res.json({ data: result, message: `Synced ${result.synced} sets` });
+  } catch (err: any) {
+    await logError({
+      source: "sync-pokemon-sets",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (pokemontcg) POST /sync/cards
+router.post("/cards", requireSyncKey, async (_req, res) => {
+  try {
+    res.json({
+      message:
+        "Full card sync started in background. This takes 30-90 minutes. Watch server logs.",
+      timestamp: new Date().toISOString(),
+    });
+    setImmediate(async () => {
+      await backfillAllCards();
+    });
+  } catch (err: any) {
+    await logError({
+      source: "sync-pokemon-cards",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (pokemontcg) POST /sync/cards/:setId
+router.post("/cards/:setId", requireSyncKey, async (req, res) => {
+  try {
+    res.json({ message: `Card sync started for set ${req.params.setId}` });
+    setImmediate(async () => {
+      await syncSingleSet(req.params.setId);
+    });
+  } catch (err: any) {
+    await logError({
+      source: "get-sync-status",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (legacy tcgapis) POST /sync/tcgapis/map-sets
+router.post("/tcgapis/map-sets", requireSyncKey, async (_req, res) => {
+  try {
+    const result = await syncSetGroupIds();
+    res.json({
+      data: result,
+      message: `Mapped ${result.mapped} sets. ${result.unmatched.length} unmatched.`,
+    });
+  } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-map-sets",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (legacy tcgapis) POST /sync/tcgapis/all
+router.post("/tcgapis/all", requireSyncKey, async (_req, res) => {
+  try {
+    res.json({
+      message: "Full TCGAPIs sync started in background.",
+      timestamp: new Date().toISOString(),
+    });
+    setImmediate(async () => {
+      await syncAllSets();
+    });
+  } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-all",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (legacy tcgapis) POST /sync/tcgapis/set/:setId
+router.post("/tcgapis/set/:setId", requireSyncKey, async (req, res) => {
+  try {
+    res.json({ message: `TCGAPIs sync started for ${req.params.setId}` });
+    setImmediate(async () => {
+      await syncSetCards(req.params.setId);
+    });
+  } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-set",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (legacy tcgapis) POST /sync/tcgapis/prices
+router.post("/tcgapis/prices", requireSyncKey, async (_req, res) => {
+  try {
+    res.json({
+      message: "Daily price refresh started.",
+      timestamp: new Date().toISOString(),
+    });
+    setImmediate(async () => {
+      await refreshAllPrices();
+    });
+  } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-prices",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (legacy tcgapis) POST /sync/tcgapis/prices/:setId
+router.post("/tcgapis/prices/:setId", requireSyncKey, async (req, res) => {
+  try {
+    res.json({ message: `Price refresh started for ${req.params.setId}` });
+    setImmediate(async () => {
+      await refreshPricesForSet(req.params.setId);
+    });
+  } catch (err: any) {
+    await logError({
+      source: "sync-tcgapis-prices-set",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// (legacy SKU — unused unless you do condition pricing) keep imports satisfied
+router.post("/tcgapis/skus", requireSyncKey, async (_req, res) => {
+  res.json({ message: "SKU price refresh started in background." });
+  setImmediate(async () => {
+    try {
+      await refreshAllSkuPrices();
+    } catch (err: any) {
+      console.error("[SKU-SYNC] failed:", err?.message);
+    }
+  });
+});
+router.post("/tcgapis/skus/full", requireSyncKey, async (_req, res) => {
+  res.json({ message: "Full SKU sync started in background." });
+  setImmediate(async () => {
+    try {
+      await syncAllSkus();
+    } catch (err: any) {
+      console.error("[SKU-SYNC] failed:", err?.message);
+    }
+  });
+});
+router.post("/tcgapis/skus/set/:setId", requireSyncKey, async (req, res) => {
+  res.json({ message: `SKU sync started for set ${req.params.setId}` });
+  setImmediate(async () => {
+    try {
+      await syncSkusForSet(req.params.setId);
+    } catch (err: any) {
+      console.error(`[SKU-SYNC] ${req.params.setId} failed:`, err?.message);
+    }
+  });
+});
+router.post("/tcgapis/skus/prices/:setId", requireSyncKey, async (req, res) => {
+  res.json({ message: `SKU price refresh started for ${req.params.setId}` });
+  setImmediate(async () => {
+    try {
+      await refreshSkuPricesForSet(req.params.setId);
+    } catch (err: any) {
+      console.error(`[SKU-SYNC] ${req.params.setId} failed:`, err?.message);
+    }
+  });
+});
+
+// GET /sync/tcgapis/health — observability (last sync, fresh/stale counts)
+router.get("/tcgapis/health", requireSyncKey, async (_req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+    const [
+      { data: lastSync },
+      { count: freshPrices },
+      { count: stalePrices },
+      { count: totalCards },
+    ] = await Promise.all([
+      supabaseAdmin
+        .from("price_sync_log")
+        .select(
+          "sync_type, status, synced_items, failed_items, started_at, completed_at",
+        )
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabaseAdmin
+        .from("market_prices")
+        .select("id", { count: "exact", head: true })
+        .gt("expires_at", nowIso),
+      supabaseAdmin
+        .from("market_prices")
+        .select("id", { count: "exact", head: true })
+        .lt("expires_at", nowIso),
+      supabaseAdmin.from("cards").select("id", { count: "exact", head: true }),
+    ]);
+    res.json({
+      data: {
+        lastSync: lastSync ?? null,
+        totalCards: totalCards ?? 0,
+        pricesWithFresh: freshPrices ?? 0,
+        pricesStale: stalePrices ?? 0,
+        checkedAt: nowIso,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
 });
 
 export default router;
