@@ -3,6 +3,7 @@ import {
   upsertSnapshot,
   findAllUsersWithInventory,
 } from "../repositories/portfolio.repository";
+import { getCollections } from "./collection.service";
 import { getInventory } from "./inventory.service";
 import { requireFeature } from "./plan.service";
 
@@ -62,47 +63,70 @@ export interface TopPerformer {
 
 // ─── Snapshot creation ────────────────────────────────────────────────────────
 
+const writeSnapshot = async (
+  userId: string,
+  collectionId: string | null,
+): Promise<void> => {
+  const { items, summary } = await getInventory(userId, collectionId);
+
+  let rawCardValue = 0;
+  let gradedCardValue = 0;
+  let sealedProductValue = 0;
+  for (const item of items) {
+    const v = item.marketValue.marketPrice ?? 0;
+    if (item.item_type === "raw_card") rawCardValue += v;
+    else if (item.item_type === "graded_card") gradedCardValue += v;
+    else if (item.item_type === "sealed_product") sealedProductValue += v;
+  }
+
+  await upsertSnapshot({
+    userId,
+    collectionId, // null = aggregate (all collections), or a specific collection
+    snapshotDate: new Date().toISOString().split("T")[0],
+    totalValue: summary.totalMarketValue,
+    totalCostBasis: summary.totalCostBasis,
+    totalGainLoss: summary.totalGainLoss,
+    rawCardValue,
+    gradedCardValue,
+    sealedProductValue,
+    totalItems: summary.totalItems,
+    rawCards: summary.rawCards,
+    gradedCards: summary.gradedCards,
+    sealedProducts: summary.sealedProducts,
+  });
+};
+
 export const createSnapshotForUser = async (
   userId: string,
-  collectionId?: string | null,
-): Promise<void> => {
+): Promise<{ collections: number; aggregate: boolean }> => {
+  // 1) Aggregate snapshot — ALL collections combined (collection_id = NULL).
+  //    getInventory(userId, null) returns every item across all collections.
+  await writeSnapshot(userId, null);
+
+  // 2) One snapshot per collection.
+  let collectionCount = 0;
   try {
-    const { items, summary } = await getInventory(userId, collectionId);
-
-    // Calculate value per type
-    let rawCardValue = 0;
-    let gradedCardValue = 0;
-    let sealedProductValue = 0;
-
-    for (const item of items) {
-      const v = item.marketValue.marketPrice ?? 0;
-      if (item.item_type === "raw_card") rawCardValue += v;
-      else if (item.item_type === "graded_card") gradedCardValue += v;
-      else if (item.item_type === "sealed_product") sealedProductValue += v;
+    const collections = await getCollections(userId);
+    for (const c of collections) {
+      try {
+        await writeSnapshot(userId, c.id);
+        collectionCount++;
+      } catch (err: any) {
+        // One bad collection shouldn't kill the rest or the aggregate.
+        console.error(
+          `[Portfolio] Snapshot failed for user ${userId} collection ${c.id}:`,
+          err?.message,
+        );
+      }
     }
-
-    await upsertSnapshot({
-      userId,
-      collectionId: collectionId ?? null,
-      snapshotDate: new Date().toISOString().split("T")[0],
-      totalValue: summary.totalMarketValue,
-      totalCostBasis: summary.totalCostBasis,
-      totalGainLoss: summary.totalGainLoss,
-      rawCardValue,
-      gradedCardValue,
-      sealedProductValue,
-      totalItems: summary.totalItems,
-      rawCards: summary.rawCards,
-      gradedCards: summary.gradedCards,
-      sealedProducts: summary.sealedProducts,
-    });
   } catch (err: any) {
     console.error(
-      `[Portfolio] Snapshot failed for user ${userId}:`,
+      `[Portfolio] Could not list collections for user ${userId}:`,
       err?.message,
     );
-    throw err;
   }
+
+  return { collections: collectionCount, aggregate: true };
 };
 
 // ─── Full portfolio sync — called by cron ─────────────────────────────────────
