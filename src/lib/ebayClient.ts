@@ -39,7 +39,6 @@ export interface EbayListingSummary {
   condition: string | null;
   imageUrl: string | null;
   itemWebUrl: string | null; // "open on eBay" link
-  seller: string | null;
 }
 
 export interface EbayListingDetail extends EbayListingSummary {
@@ -95,7 +94,6 @@ const mapSummary = (it: any): EbayListingSummary => ({
   condition: it.condition ?? null,
   imageUrl: it.image?.imageUrl ?? it.thumbnailImages?.[0]?.imageUrl ?? null,
   itemWebUrl: it.itemWebUrl ?? null,
-  seller: it.seller?.username ?? null,
 });
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -104,26 +102,104 @@ const mapSummary = (it: any): EbayListingSummary => ({
  * Search active listings by keyword (e.g. "mega gengar ex 284").
  * Returns FIXED_PRICE + AUCTION by default. limit caps results (default 20).
  */
+// ─── Search filters ──────────────────────────────────────────────────────────
+// Extensible filter set. Add new filters here as the feature grows; the builder
+// below translates them into eBay Browse API `filter` / `sort` syntax.
+
+export interface SearchFilters {
+  // Listing format
+  buyItNow?: boolean; // FIXED_PRICE
+  auction?: boolean; // AUCTION
+  bestOffer?: boolean; // BEST_OFFER
+  // Price range (USD)
+  minPrice?: number;
+  maxPrice?: number;
+  // Condition: eBay condition IDs. Common for cards: 1000=New, 4000=VG,
+  // 3000=Used. (For TCG, "graded" is an ASPECT, handled separately below.)
+  conditionIds?: number[];
+  // Graded vs raw. eBay exposes this as a category ASPECT ("Grade"/"Graded"),
+  // NOT a top-level filter. true = only graded, false = only raw, undefined = both.
+  graded?: boolean;
+  // Sort order
+  sort?: "best" | "price_asc" | "price_desc" | "newest";
+}
+
+// Builds the comma-separated eBay `filter` string from our SearchFilters.
+const buildFilterString = (f: SearchFilters): string => {
+  const parts: string[] = [];
+
+  // buyingOptions — only add if the user picked a subset (else eBay default)
+  const opts: string[] = [];
+  if (f.buyItNow) opts.push("FIXED_PRICE");
+  if (f.auction) opts.push("AUCTION");
+  if (f.bestOffer) opts.push("BEST_OFFER");
+  if (opts.length) parts.push(`buyingOptions:{${opts.join("|")}}`);
+
+  // price range — eBay syntax price:[min..max], open-ended ok: [40..] or [..50]
+  if (f.minPrice != null || f.maxPrice != null) {
+    const lo = f.minPrice != null ? f.minPrice : "";
+    const hi = f.maxPrice != null ? f.maxPrice : "";
+    parts.push(`price:[${lo}..${hi}],priceCurrency:USD`);
+  }
+
+  // condition IDs
+  if (f.conditionIds && f.conditionIds.length) {
+    parts.push(`conditionIds:{${f.conditionIds.join("|")}}`);
+  }
+
+  return parts.join(",");
+};
+
+const sortParam = (s?: SearchFilters["sort"]): string | undefined => {
+  switch (s) {
+    case "price_asc":
+      return "price";
+    case "price_desc":
+      return "-price";
+    case "newest":
+      return "newlyListed";
+    case "best":
+    default:
+      return undefined; // eBay default = Best Match
+  }
+};
+
 export const searchListings = async (
   query: string,
   limit = 20,
+  filters: SearchFilters = {},
 ): Promise<EbayListingSummary[]> => {
   const token = await getAppToken();
 
-  // Optional filters via env so we can relax them in sandbox without a redeploy
-  // of code. In sandbox, the category filter (and sometimes buyingOptions)
-  // over-restricts an already-sparse dataset → zero results. Set
-  // EBAY_USE_CATEGORY=false to drop the Pokémon category filter while testing.
+  // Pokémon TCG category. Required twice when using aspect_filter (graded).
+  // EBAY_USE_CATEGORY=false drops it (only needed for sparse sandbox testing).
   const useCategory = process.env.EBAY_USE_CATEGORY !== "false";
+  const POKEMON_CATEGORY = "183454";
 
   const params: Record<string, string | number> = {
     q: query,
     limit,
   };
   if (useCategory) {
-    // Pokémon TCG category (Collectible Card Games). Helps relevance in
-    // PRODUCTION; tends to over-filter in SANDBOX.
-    params.category_ids = "183454";
+    params.category_ids = POKEMON_CATEGORY;
+  }
+
+  const filterStr = buildFilterString(filters);
+  if (filterStr) params.filter = filterStr;
+
+  const sort = sortParam(filters.sort);
+  if (sort) params.sort = sort;
+
+  // Graded vs raw is a category ASPECT, requires aspect_filter + category twice.
+  // eBay's TCG aspect for grading is "Grade" (graded cards have a value like
+  // "PSA 10"); raw cards typically lack the aspect. We approximate:
+  //   graded === true  → require a Grade aspect present (Professional Grader)
+  //   graded === false → exclude graded (handled client-side post-filter, since
+  //                       "absence of aspect" can't be expressed in aspect_filter)
+  // Only graded===true uses aspect_filter; graded===false is filtered after.
+  if (filters.graded === true && useCategory) {
+    // "Professional Grader" is the common TCG aspect name for graded cards.
+    params.aspect_filter = `categoryId:${POKEMON_CATEGORY},Professional Grader:{PSA|BGS|CGC|SGC|TAG}`;
   }
 
   const res = await axios.get(`${BROWSE_URL}/item_summary/search`, {
@@ -135,7 +211,15 @@ export const searchListings = async (
     timeout: 20000,
   });
 
-  const items = res.data?.itemSummaries ?? [];
+  let items: any[] = res.data?.itemSummaries ?? [];
+
+  // graded===false: exclude listings that look graded (title or condition hints).
+  // Cheap heuristic since "no grade aspect" isn't expressible server-side.
+  if (filters.graded === false) {
+    const gradedRe = /\b(psa|bgs|cgc|sgc|tag|graded|gem mt|gem mint)\b/i;
+    items = items.filter((it) => !gradedRe.test(it.title ?? ""));
+  }
+
   return items.map(mapSummary);
 };
 

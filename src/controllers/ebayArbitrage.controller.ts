@@ -21,6 +21,7 @@ import {
   getListing,
   searchListings,
   type EbayListingDetail,
+  type SearchFilters,
 } from "../lib/ebayClient";
 import { AuthenticatedRequest } from "../types/user.types";
 
@@ -92,19 +93,50 @@ const recommend = (a: any): { recommendation: string; reason: string } => {
 
 // ─── GET /ebay/search ─────────────────────────────────────────────────────────
 
-export const searchEbay = async (
-  req: AuthenticatedRequest,
-  res: Response,
-): Promise<void> => {
+export const searchEbay = async (req: AuthenticatedRequest, res: Response) => {
   if (!requireAdmin(req, res)) return;
   try {
     const q = String(req.query.q ?? "").trim();
-    if (!q) {
-      res.status(400).json({ error: "Missing search query" });
-      return;
-    }
+    if (!q) return res.status(400).json({ error: "Missing search query" });
     const limit = Math.min(Number(req.query.limit ?? 20) || 20, 50);
-    const listings = await searchListings(q, limit);
+
+    // Parse filters from query params (all optional)
+    const b = (v: unknown) => v === "true" || v === "1";
+    const num = (v: unknown) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const filters: SearchFilters = {
+      buyItNow:
+        req.query.buyItNow !== undefined ? b(req.query.buyItNow) : undefined,
+      auction:
+        req.query.auction !== undefined ? b(req.query.auction) : undefined,
+      bestOffer:
+        req.query.bestOffer !== undefined ? b(req.query.bestOffer) : undefined,
+      minPrice: num(req.query.minPrice),
+      maxPrice: num(req.query.maxPrice),
+      conditionIds: req.query.conditionIds
+        ? String(req.query.conditionIds)
+            .split(",")
+            .map((x) => Number(x))
+            .filter((n) => Number.isFinite(n))
+        : undefined,
+      graded:
+        req.query.graded === undefined
+          ? undefined
+          : req.query.graded === "true"
+            ? true
+            : req.query.graded === "false"
+              ? false
+              : undefined,
+      sort: ["best", "price_asc", "price_desc", "newest"].includes(
+        String(req.query.sort),
+      )
+        ? (String(req.query.sort) as SearchFilters["sort"])
+        : undefined,
+    };
+
+    const listings = await searchListings(q, limit, filters);
     res.json({ data: listings });
   } catch (err: any) {
     await logError({
@@ -127,22 +159,18 @@ export const searchEbay = async (
 export const analyzeEbayListing = async (
   req: AuthenticatedRequest,
   res: Response,
-): Promise<void> => {
+) => {
   if (!requireAdmin(req, res)) return;
   try {
     const { itemId, cardName, setName, notes } = req.body ?? {};
-    if (!itemId) {
-      res.status(400).json({ error: "Missing itemId" });
-      return;
-    }
+    if (!itemId) return res.status(400).json({ error: "Missing itemId" });
 
     // 1) Pull the full listing (all images)
     const listing: EbayListingDetail = await getListing(itemId);
     if (!listing.imageUrls.length) {
-      res
+      return res
         .status(422)
         .json({ error: "Listing has no usable images to analyze." });
-      return;
     }
 
     // 2) Pick front + back. eBay listings vary; use first image as front,
@@ -176,7 +204,6 @@ export const analyzeEbayListing = async (
         price_value: listing.price ? Number(listing.price.value) : null,
         price_currency: listing.price?.currency ?? null,
         condition: listing.condition,
-        seller: listing.seller,
         item_web_url: listing.itemWebUrl,
         primary_image: listing.imageUrl,
         image_urls: listing.imageUrls,
@@ -214,7 +241,7 @@ export const analyzeEbayListing = async (
 export const getEbayReports = async (
   req: AuthenticatedRequest,
   res: Response,
-): Promise<void> => {
+) => {
   if (!requireAdmin(req, res)) return;
   try {
     const { data, error } = await supabaseAdmin
@@ -236,7 +263,7 @@ export const getEbayReports = async (
 export const deleteEbayReport = async (
   req: AuthenticatedRequest,
   res: Response,
-): Promise<void> => {
+) => {
   if (!requireAdmin(req, res)) return;
   try {
     const { error } = await supabaseAdmin
