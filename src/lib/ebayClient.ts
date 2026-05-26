@@ -109,16 +109,25 @@ export const searchListings = async (
   limit = 20,
 ): Promise<EbayListingSummary[]> => {
   const token = await getAppToken();
+
+  // Optional filters via env so we can relax them in sandbox without a redeploy
+  // of code. In sandbox, the category filter (and sometimes buyingOptions)
+  // over-restricts an already-sparse dataset → zero results. Set
+  // EBAY_USE_CATEGORY=false to drop the Pokémon category filter while testing.
+  const useCategory = process.env.EBAY_USE_CATEGORY !== "false";
+
+  const params: Record<string, string | number> = {
+    q: query,
+    limit,
+  };
+  if (useCategory) {
+    // Pokémon TCG category (Collectible Card Games). Helps relevance in
+    // PRODUCTION; tends to over-filter in SANDBOX.
+    params.category_ids = "183454";
+  }
+
   const res = await axios.get(`${BROWSE_URL}/item_summary/search`, {
-    params: {
-      q: query,
-      limit,
-      // include auctions too (default would be FIXED_PRICE only)
-      filter: "buyingOptions:{FIXED_PRICE|AUCTION}",
-      // Pokémon TCG category (Collectible Card Games) — 183454.
-      // Helps relevance; safe to remove if it over-filters in sandbox.
-      category_ids: "183454",
-    },
+    params,
     headers: {
       Authorization: `Bearer ${token}`,
       "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
