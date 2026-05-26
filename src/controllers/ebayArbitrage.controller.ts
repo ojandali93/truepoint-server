@@ -160,6 +160,39 @@ export const searchEbay = async (
   }
 };
 
+// ─── GET /ebay/listing/:itemId ────────────────────────────────────────────────
+// Full listing detail (all images, description) for the detail screen — lets the
+// user review a listing before spending a Gemini call to analyze it.
+
+export const getEbayListingDetail = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const itemId = req.params.itemId;
+    if (!itemId) {
+      res.status(400).json({ error: "Missing itemId" });
+      return;
+    }
+    const listing = await getListing(itemId);
+    res.json({ data: listing });
+  } catch (err: any) {
+    await logError({
+      source: "ebay-listing-detail",
+      message: err?.message ?? "eBay listing fetch failed",
+      error: err,
+      userId: req.user?.id ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { itemId: req.params.itemId },
+    });
+    res
+      .status(err?.status ?? 502)
+      .json({ error: err?.message ?? "Couldn't load listing" });
+  }
+};
+
 // ─── POST /ebay/analyze ───────────────────────────────────────────────────────
 
 export const analyzeEbayListing = async (
