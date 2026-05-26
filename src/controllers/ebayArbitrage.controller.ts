@@ -93,11 +93,17 @@ const recommend = (a: any): { recommendation: string; reason: string } => {
 
 // ─── GET /ebay/search ─────────────────────────────────────────────────────────
 
-export const searchEbay = async (req: AuthenticatedRequest, res: Response) => {
+export const searchEbay = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
   if (!requireAdmin(req, res)) return;
   try {
     const q = String(req.query.q ?? "").trim();
-    if (!q) return res.status(400).json({ error: "Missing search query" });
+    if (!q) {
+      res.status(400).json({ error: "Missing search query" });
+      return;
+    }
     const limit = Math.min(Number(req.query.limit ?? 20) || 20, 50);
 
     // Parse filters from query params (all optional)
@@ -159,18 +165,22 @@ export const searchEbay = async (req: AuthenticatedRequest, res: Response) => {
 export const analyzeEbayListing = async (
   req: AuthenticatedRequest,
   res: Response,
-) => {
+): Promise<void> => {
   if (!requireAdmin(req, res)) return;
   try {
     const { itemId, cardName, setName, notes } = req.body ?? {};
-    if (!itemId) return res.status(400).json({ error: "Missing itemId" });
+    if (!itemId) {
+      res.status(400).json({ error: "Missing itemId" });
+      return;
+    }
 
     // 1) Pull the full listing (all images)
     const listing: EbayListingDetail = await getListing(itemId);
     if (!listing.imageUrls.length) {
-      return res
+      res
         .status(422)
         .json({ error: "Listing has no usable images to analyze." });
+      return;
     }
 
     // 2) Pick front + back. eBay listings vary; use first image as front,
@@ -241,7 +251,7 @@ export const analyzeEbayListing = async (
 export const getEbayReports = async (
   req: AuthenticatedRequest,
   res: Response,
-) => {
+): Promise<void> => {
   if (!requireAdmin(req, res)) return;
   try {
     const { data, error } = await supabaseAdmin
@@ -263,7 +273,7 @@ export const getEbayReports = async (
 export const deleteEbayReport = async (
   req: AuthenticatedRequest,
   res: Response,
-) => {
+): Promise<void> => {
   if (!requireAdmin(req, res)) return;
   try {
     const { error } = await supabaseAdmin
