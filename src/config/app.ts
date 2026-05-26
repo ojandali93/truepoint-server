@@ -25,6 +25,7 @@ import { errorLoggerMiddleware } from "../middleware/errorLogger.middleware";
 import planRoutes from "../routes/plan.routes";
 import authRoutes from "../routes/auth.routes";
 import feedbackRoutes from "../routes/feedback.routes";
+import ebayRoutes from "../routes/ebay.routes";
 
 dotenv.config();
 
@@ -46,6 +47,7 @@ app.use(morgan("combined"));
 // and 401'd by the auth router before it ever reaches the billing router.
 // Mounting billing first ensures its own (correct) public-webhook ordering wins.
 app.use("/api/v1/billing", billingRoutes);
+app.use("/api/v1/ebay", ebayRoutes);
 
 app.use("/api/v1", planRoutes);
 app.use("/api/v1", authRoutes);
@@ -64,7 +66,6 @@ app.use("/api/v1/grading", aiGradingRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
-
 
 app.post("/debug/token", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
