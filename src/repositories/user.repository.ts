@@ -218,3 +218,15 @@ export const adminCreateUser = async (
   if (error) throw error;
   return data.user;
 };
+
+export const deleteDeviceByToken = async (
+  deviceToken: string,
+  userId: string,
+): Promise<void> => {
+  const { error } = await supabaseAdmin
+    .from("user_devices")
+    .delete()
+    .eq("device_token", deviceToken)
+    .eq("user_id", userId);
+  if (error) throw error;
+};

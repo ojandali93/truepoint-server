@@ -50,14 +50,13 @@ const chunk = <T>(arr: T[], size: number): T[][] => {
 const getActiveTokensForUser = async (userId: string): Promise<string[]> => {
   const { data, error } = await supabaseAdmin
     .from("user_devices")
-    .select("push_token")
+    .select("device_token")
     .eq("user_id", userId)
-    .eq("is_active", true)
-    .not("push_token", "is", null);
+    .not("device_token", "is", null);
 
   if (error) throw error;
   const tokens = (data ?? [])
-    .map((r: any) => r.push_token as string | null)
+    .map((r: any) => r.device_token as string | null)
     .filter(isExpoToken);
   // De-dupe (same token could appear on multiple device rows)
   return Array.from(new Set(tokens));
@@ -66,10 +65,8 @@ const getActiveTokensForUser = async (userId: string): Promise<string[]> => {
 // ─── Prune a dead token (Expo says DeviceNotRegistered) ─────────────────────
 
 const pruneToken = async (token: string): Promise<void> => {
-  await supabaseAdmin
-    .from("user_devices")
-    .update({ push_token: null })
-    .eq("push_token", token);
+  // Expo says this token is dead — remove the row so we stop sending to it.
+  await supabaseAdmin.from("user_devices").delete().eq("device_token", token);
 };
 
 // ─── Low-level: send to a list of tokens ────────────────────────────────────

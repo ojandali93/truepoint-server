@@ -146,6 +146,13 @@ export const deleteAccount = async (userId: string): Promise<void> => {
   await UserRepository.deleteProfileById(userId); // -> supabaseAdmin.auth.admin.deleteUser(userId)
 };
 
+export const removeDeviceByToken = async (
+  deviceToken: string,
+  userId: string,
+): Promise<void> => {
+  await UserRepository.deleteDeviceByToken(deviceToken, userId);
+};
+
 // ─── Notification Settings ────────────────────────────────────────────────────
 
 export const getNotificationSettings = async (

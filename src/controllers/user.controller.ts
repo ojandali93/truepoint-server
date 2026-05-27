@@ -545,3 +545,23 @@ export const deactivateMyAccount = async (
       .json({ error: "Couldn't deactivate account. Please contact support." });
   }
 };
+
+export const removeMyDeviceByToken = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    await UserService.removeDeviceByToken(req.params.token, req.user.id);
+    res.json({ data: { removed: true } });
+  } catch (err: any) {
+    await logError({
+      source: "remove-device-by-token",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+    });
+    res.status(500).json({ error: err?.message });
+  }
+};
