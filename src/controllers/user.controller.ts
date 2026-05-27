@@ -2,8 +2,49 @@ import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as UserService from "../services/user.service";
 import { logError } from "../lib/Logger";
+import { sendPushToUser } from "../services/push.service";
 
 // ─── Profile ─────────────────────────────────────────────────────────────────
+
+export const sendTestPush = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const title =
+      typeof req.body?.title === "string" ? req.body.title : "TruePoint";
+    const body =
+      typeof req.body?.body === "string"
+        ? req.body.body
+        : "🎉 Push notifications are working!";
+
+    const result = await sendPushToUser(req.user.id, {
+      title,
+      body,
+      data: { type: "test" },
+    });
+
+    res.json({
+      data: {
+        ...result,
+        message:
+          result.sent === 0
+            ? "No active push tokens found for your account. Make sure you've granted notification permission on a device."
+            : `Sent to ${result.sent} device(s).`,
+      },
+    });
+  } catch (err: any) {
+    await logError({
+      source: "send-test-push",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+    });
+    res.status(500).json({ error: err?.message });
+  }
+};
 
 export const getMyProfile = async (
   req: AuthenticatedRequest,
