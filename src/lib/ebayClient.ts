@@ -260,4 +260,37 @@ export const getListing = async (
   };
 };
 
+// Look up a listing by its LEGACY item id (the numeric id in an ebay.com/itm/<id>
+// URL). Bridges the legacy id → full item detail + modern v1|... id. Lets the
+// user paste an eBay URL / item number to open a specific listing directly.
+export const getListingByLegacyId = async (
+  legacyItemId: string,
+): Promise<EbayListingDetail> => {
+  const token = await getAppToken();
+  const res = await axios.get(`${BROWSE_URL}/item/get_item_by_legacy_id`, {
+    params: { legacy_item_id: legacyItemId },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+    },
+    timeout: 20000,
+  });
+
+  const it = res.data ?? {};
+  const summary = mapSummary(it);
+
+  const urls = new Set<string>();
+  if (it.image?.imageUrl) urls.add(it.image.imageUrl);
+  for (const img of it.additionalImages ?? []) {
+    if (img?.imageUrl) urls.add(img.imageUrl);
+  }
+
+  return {
+    ...summary,
+    imageUrls: Array.from(urls).filter((u) => u.startsWith("https")),
+    description: it.shortDescription ?? null,
+    itemLocation: it.itemLocation?.country ?? null,
+  };
+};
+
 export const ebayEnv = () => ENV;

@@ -19,6 +19,7 @@ import { logError } from "../lib/Logger";
 import { supabaseAdmin } from "../lib/supabase";
 import {
   getListing,
+  getListingByLegacyId,
   searchListings,
   type EbayListingDetail,
   type SearchFilters,
@@ -157,6 +158,77 @@ export const searchEbay = async (
     res
       .status(err?.status ?? 502)
       .json({ error: err?.message ?? "eBay search failed" });
+  }
+};
+
+// ─── GET /ebay/resolve?ref=... ────────────────────────────────────────────────
+// Resolve a listing from a user-supplied reference: an eBay URL, a legacy numeric
+// item id, or a modern v1|... id. Returns the full listing (incl. the modern
+// itemId the rest of the app uses). Lets the user paste an ebay.com/itm/<id> URL
+// or an item number to jump straight to a listing without searching.
+
+export const resolveEbayListing = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const raw = String(req.query.ref ?? "").trim();
+    if (!raw) {
+      res.status(400).json({ error: "Missing reference (URL or item id)" });
+      return;
+    }
+
+    // Already a modern RESTful id? (v1|123|0)
+    if (raw.startsWith("v1|")) {
+      const listing = await getListing(raw);
+      res.json({ data: listing });
+      return;
+    }
+
+    // Extract a legacy numeric id from a URL or bare number.
+    //   https://www.ebay.com/itm/358518622341?...  → 358518622341
+    //   358518622341                                → 358518622341
+    let legacyId: string | null = null;
+    const urlMatch = raw.match(/\/itm\/(?:[^/]*\/)?(\d{6,})/); // /itm/<id> or /itm/<title>/<id>
+    if (urlMatch) {
+      legacyId = urlMatch[1];
+    } else {
+      // also handle ?item=<id> style query params
+      const qMatch = raw.match(
+        /[?&](?:item|itemid|_trkparms[^=]*itm%3D)(\d{6,})/i,
+      );
+      if (qMatch) legacyId = qMatch[1];
+      else if (/^\d{6,}$/.test(raw)) legacyId = raw; // bare numeric id
+    }
+
+    if (!legacyId) {
+      res.status(400).json({
+        error: "Couldn't find an eBay item id in that input.",
+      });
+      return;
+    }
+
+    const listing = await getListingByLegacyId(legacyId);
+    res.json({ data: listing });
+  } catch (err: any) {
+    await logError({
+      source: "ebay-resolve",
+      message: err?.message ?? "eBay resolve failed",
+      error: err,
+      userId: req.user?.id ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { ref: req.query.ref },
+    });
+    // 404 from eBay = no such listing
+    const status = err?.status === 404 ? 404 : (err?.status ?? 502);
+    res.status(status).json({
+      error:
+        status === 404
+          ? "No eBay listing found for that link or id."
+          : (err?.message ?? "Couldn't resolve listing"),
+    });
   }
 };
 

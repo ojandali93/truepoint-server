@@ -6,6 +6,7 @@ import {
   getEbayReports,
   deleteEbayReport,
   getEbayListingDetail,
+  resolveEbayListing,
 } from "../controllers/ebayArbitrage.controller";
 
 const router = Router();
@@ -15,4 +16,5 @@ router.post("/analyze", analyzeEbayListing as any);
 router.get("/reports", getEbayReports as any);
 router.delete("/reports/:id", deleteEbayReport as any);
 router.get("/listing/:itemId", getEbayListingDetail as any);
+router.get("/resolve", resolveEbayListing as any);
 export default router;
