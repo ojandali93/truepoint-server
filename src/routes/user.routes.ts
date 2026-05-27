@@ -146,4 +146,10 @@ router.get(
   UserController.adminGetUserActivity as any,
 );
 
+router.post(
+  "/me/devices/test-push",
+  standardLimiter,
+  UserController.sendTestPush as any,
+);
+
 export default router;
