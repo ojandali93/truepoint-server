@@ -40,6 +40,7 @@ import {
 import { syncProductPricesForSet } from "../services/productPriceSync.service";
 import { syncAllProductPrices } from "../services/productPriceSync.service";
 import { backfillSetImages } from "../services/setImageBackfill.service";
+import { sendDailySummaries } from "../services/portfolioSummary.service";
 
 const router = Router();
 
@@ -520,6 +521,18 @@ router.post("/set-images", requireSyncKey, async (_req, res) => {
       console.error("[SetImages] failed:", err?.message);
     }
   });
+});
+
+router.post("/daily-summary", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Daily summary send started",
+    timestamp: new Date().toISOString(),
+  });
+  // Fire-and-forget (like the other sync routes). Verify delivery via logs /
+  // the sent count in console, not the 200 response.
+  sendDailySummaries().catch((err: any) =>
+    console.error("[SyncRoute] Daily summary failed:", err?.message),
+  );
 });
 
 export default router;

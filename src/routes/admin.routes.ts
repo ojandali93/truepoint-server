@@ -33,6 +33,7 @@ import {
   updateCost,
   listAppSettings,
   updateSetting,
+  broadcastNotification,
 } from "../controllers/adminPlatform.controller";
 
 const router = Router();
@@ -77,5 +78,7 @@ router.patch("/settings/:key", updateSetting as any);
 // ─── Variants ─────────────────────────────────────────────────────────────────
 router.get("/variants", getSetRules as any);
 router.post("/variants", saveSetVariants as any);
+
+router.post("/broadcast", broadcastNotification as any);
 
 export default router;

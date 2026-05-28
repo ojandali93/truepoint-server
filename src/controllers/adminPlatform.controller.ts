@@ -20,6 +20,10 @@ import {
   updateAppSetting,
   getPlatformStats,
 } from "../services/adminPlatform.service";
+import { logError } from "../lib/Logger";
+import { supabaseAdmin } from "../lib/supabase";
+import { sendPushToUsers } from "../services/push.service";
+import { AuthenticatedRequest } from "../types/user.types";
 
 const handle = (res: Response, err: unknown) => {
   const msg = err instanceof Error ? err.message : "Admin operation failed";
@@ -295,5 +299,68 @@ export const updateSetting = async (
     res.json({ data: { updated: true, key: req.params.key } });
   } catch (err) {
     handle(res, err);
+  }
+};
+
+export const broadcastNotification = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const title =
+      typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
+
+    if (!title || !body) {
+      res.status(400).json({ error: "title and body are required" });
+      return;
+    }
+    if (title.length > 100 || body.length > 240) {
+      res.status(400).json({ error: "title ≤ 100 chars, body ≤ 240 chars" });
+      return;
+    }
+
+    // Every distinct user with a push token.
+    const { data, error } = await supabaseAdmin
+      .from("user_devices")
+      .select("user_id")
+      .not("device_token", "is", null);
+    if (error) throw error;
+
+    const userIds = Array.from(
+      new Set((data ?? []).map((r: any) => r.user_id as string)),
+    ).filter(Boolean);
+
+    if (userIds.length === 0) {
+      res.json({
+        data: { recipients: 0, sent: 0, message: "No devices to notify." },
+      });
+      return;
+    }
+
+    const result = await sendPushToUsers(userIds, {
+      title,
+      body,
+      data: { type: "broadcast" },
+    });
+
+    res.json({
+      data: {
+        recipients: userIds.length,
+        sent: result.sent,
+        failed: result.failed,
+        message: `Sent to ${result.sent} of ${userIds.length} users.`,
+      },
+    });
+  } catch (err: any) {
+    await logError({
+      source: "admin-broadcast",
+      message: err?.message ?? "Broadcast failed",
+      error: err,
+      userId: (req as any)?.user?.id ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
