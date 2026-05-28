@@ -396,11 +396,11 @@ export const runPoketraceDiagnostics = async (
   const steps: DiagnosticStep[] = [];
   const t0 = Date.now();
 
-  const tick = () => Date.now();
+  const tick = (_label?: string): number => Date.now();
 
   // ─── Step 1: env config ───────────────────────────────────────────────────
   {
-    const start = tick();
+    const start = tick("env");
     const hasKey = !!process.env.POKETRACE_RAPIDAPI_KEY;
     const host =
       process.env.POKETRACE_RAPIDAPI_HOST ?? "poketrace-api.p.rapidapi.com";
