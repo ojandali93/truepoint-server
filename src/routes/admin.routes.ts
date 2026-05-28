@@ -34,6 +34,7 @@ import {
   listAppSettings,
   updateSetting,
   broadcastNotification,
+  runPoketraceDiagnostics,
 } from "../controllers/adminPlatform.controller";
 
 const router = Router();
@@ -80,5 +81,6 @@ router.get("/variants", getSetRules as any);
 router.post("/variants", saveSetVariants as any);
 
 router.post("/broadcast", broadcastNotification as any);
+router.get("/diagnostics/poketrace", runPoketraceDiagnostics as any);
 
 export default router;
