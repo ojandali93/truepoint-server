@@ -7,6 +7,10 @@ import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
 import { refreshAllPrices } from "../services/tcgapisSync.service";
 import { logError } from "../lib/Logger";
+import {
+  fetchAndCacheGradedPrices,
+  getGradedPricesForCard,
+} from "../services/poketracePriceSync.service";
 
 // ─── Sets ─────────────────────────────────────────────────────────────────────
 
@@ -407,6 +411,33 @@ export const getSetPrices = async (
       metadata: { params: req.params, query: req.query },
     });
     return res.status(500).json({ error: err?.message });
+  }
+};
+
+export const getCardGradedPrices = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const cardId = req.params.cardId;
+    if (!cardId) {
+      res.status(400).json({ error: "cardId is required" });
+      return;
+    }
+    const fetchResult = await fetchAndCacheGradedPrices(cardId);
+    const prices = await getGradedPricesForCard(cardId);
+    res.json({
+      data: {
+        cardId,
+        cached: fetchResult.cached,
+        prices,
+      },
+    });
+  } catch (err: any) {
+    console.error("[CardController] getCardGradedPrices:", err?.message);
+    res
+      .status(500)
+      .json({ error: err?.message ?? "Failed to fetch graded prices" });
   }
 };
 

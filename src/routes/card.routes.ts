@@ -185,4 +185,10 @@ router.get("/search/global", standardLimiter, async (req, res) => {
   }
 });
 
+router.get(
+  "/:cardId/graded-prices",
+  standardLimiter,
+  CardController.getCardGradedPrices as any,
+);
+
 export default router;

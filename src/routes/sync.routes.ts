@@ -43,6 +43,7 @@ import { backfillSetImages } from "../services/setImageBackfill.service";
 import { sendDailySummaries } from "../services/portfolioSummary.service";
 import { snapshotCardPricesSafe } from "../services/cardPriceHistory.service";
 import { sendPriceMoversDigest } from "../services/priceMoversDigest.service";
+import { syncInventoryCardPricesSafe } from "../services/poketracePriceSync.service";
 
 const router = Router();
 
@@ -554,6 +555,16 @@ router.post("/price-movers", requireSyncKey, async (_req, res) => {
   });
   sendPriceMoversDigest().catch((err: any) =>
     console.error("[SyncRoute] Price movers digest failed:", err?.message),
+  );
+});
+
+router.post("/graded-prices", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "PokeTrace graded-price sync started",
+    timestamp: new Date().toISOString(),
+  });
+  syncInventoryCardPricesSafe().catch((err: any) =>
+    console.error("[SyncRoute] PokeTrace bulk sync failed:", err?.message),
   );
 });
 
