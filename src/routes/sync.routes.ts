@@ -41,6 +41,8 @@ import { syncProductPricesForSet } from "../services/productPriceSync.service";
 import { syncAllProductPrices } from "../services/productPriceSync.service";
 import { backfillSetImages } from "../services/setImageBackfill.service";
 import { sendDailySummaries } from "../services/portfolioSummary.service";
+import { snapshotCardPricesSafe } from "../services/cardPriceHistory.service";
+import { sendPriceMoversDigest } from "../services/priceMoversDigest.service";
 
 const router = Router();
 
@@ -532,6 +534,26 @@ router.post("/daily-summary", requireSyncKey, async (_req, res) => {
   // the sent count in console, not the 200 response.
   sendDailySummaries().catch((err: any) =>
     console.error("[SyncRoute] Daily summary failed:", err?.message),
+  );
+});
+
+router.post("/price-history", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Card price history snapshot started",
+    timestamp: new Date().toISOString(),
+  });
+  snapshotCardPricesSafe().catch((err: any) =>
+    console.error("[SyncRoute] Price history snapshot failed:", err?.message),
+  );
+});
+
+router.post("/price-movers", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Price movers digest started",
+    timestamp: new Date().toISOString(),
+  });
+  sendPriceMoversDigest().catch((err: any) =>
+    console.error("[SyncRoute] Price movers digest failed:", err?.message),
   );
 });
 
