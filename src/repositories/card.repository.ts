@@ -95,9 +95,10 @@ export const purgeExpiredPrices = async (): Promise<void> => {
 // ─── Sets ─────────────────────────────────────────────────────────────────────
 
 export const findAllSets = async () => {
-  const { data, error } = await supabaseAdmin // ← was supabase
+  const { data, error } = await supabaseAdmin
     .from("sets")
     .select("*")
+    .not("tcgapis_group_id", "is", null) // ← NEW: hide non-tcgapis sets
     .order("release_date", { ascending: false });
   if (error) throw error;
   return data ?? [];
