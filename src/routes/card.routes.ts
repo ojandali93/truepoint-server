@@ -197,4 +197,61 @@ router.get(
   CardController.getCardPriceHistory as any,
 );
 
+// ADD THIS BLOCK to src/routes/card.routes.ts immediately after the
+// existing `/sealed/:setCode` handler (around line 135).
+//
+// Required for: /products/[productId] page on the website.
+// Reads from products + product_price_cache exactly like the sealed list endpoint.
+
+router.get("/product/:productId", standardLimiter, async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    const { data: product, error } = await supabaseAdmin
+      .from("products")
+      .select(
+        `
+        *,
+        product_price_cache (
+          source, low_price, mid_price, high_price, market_price, fetched_at
+        )
+      `,
+      )
+      .eq("id", productId)
+      .maybeSingle();
+
+    if (error) {
+      await logError({
+        source: "get-product",
+        message: error.message,
+        error,
+        userId: null,
+        requestPath: req.path,
+        requestMethod: req.method,
+        metadata: { productId },
+      });
+      res.status(500).json({ error: "Failed to fetch product" });
+      return;
+    }
+
+    if (!product) {
+      res.status(404).json({ error: "Product not found" });
+      return;
+    }
+
+    res.json({ data: product });
+  } catch (err: any) {
+    await logError({
+      source: "get-product",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: {},
+    });
+    res.status(500).json({ error: "Failed to fetch product" });
+  }
+});
+
 export default router;
