@@ -191,4 +191,10 @@ router.get(
   CardController.getCardGradedPrices as any,
 );
 
+router.get(
+  "/:cardId/price-history",
+  standardLimiter,
+  CardController.getCardPriceHistory as any,
+);
+
 export default router;
