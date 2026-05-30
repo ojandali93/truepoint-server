@@ -329,3 +329,144 @@ export const syncInventoryCardPricesSafe = async (): Promise<void> => {
     });
   }
 };
+
+// ─── FULL CATALOG: sync every card in the cards table ───────────────────────
+//
+// This is the daily cron path. Iterates every card that belongs to a set with
+// `tcgapis_group_id IS NOT NULL` (the "valid catalog" filter the rest of the
+// app uses), fetches its graded prices from PokeTrace, and upserts them into
+// market_prices.
+//
+// Budget math (PokeTrace allows 100k req/day):
+//   Catalog cards: ~20-30k after filtering invalid sets
+//   Batch size:    20 per API call
+//   Requests:      ~1,000-1,500 per run (1-1.5% of daily budget)
+//   Duration:      ~10-25 minutes at the existing 300ms batch delay
+//
+// Designed to be safe to re-run mid-day: upserts (no duplicates), idempotent.
+// If interrupted, the next run just re-fetches everything.
+
+export const syncAllCatalogGradedPrices = async (): Promise<{
+  uniqueCards: number;
+  fetched: number;
+  gradedRows: number;
+  failed: number;
+  durationMs: number;
+}> => {
+  const startedAt = Date.now();
+
+  // Pull every card_id whose set is in the valid catalog. The join filter
+  // mirrors what card.repository.ts findAllSets() uses.
+  const { data: cardRows, error } = await supabaseAdmin
+    .from("cards")
+    .select("id, sets!inner(tcgapis_group_id)")
+    .not("sets.tcgapis_group_id", "is", null);
+
+  if (error) {
+    await logError({
+      source: "poketrace-catalog-sync",
+      message: error.message ?? "Failed to read catalog card list",
+      error,
+      userId: null,
+    });
+    return {
+      uniqueCards: 0,
+      fetched: 0,
+      gradedRows: 0,
+      failed: 0,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  const cardIds = Array.from(
+    new Set((cardRows ?? []).map((r: any) => r.id as string)),
+  ).filter(Boolean);
+
+  if (cardIds.length === 0) {
+    console.log("[PokeTrace] No catalog card_ids to sync.");
+    return {
+      uniqueCards: 0,
+      fetched: 0,
+      gradedRows: 0,
+      failed: 0,
+      durationMs: Date.now() - startedAt,
+    };
+  }
+
+  console.log(
+    `[PokeTrace] Catalog sync starting. ${cardIds.length} cards, ${Math.ceil(cardIds.length / BATCH_SIZE)} batches.`,
+  );
+
+  let fetched = 0;
+  let gradedRows = 0;
+  let failed = 0;
+
+  for (let i = 0; i < cardIds.length; i += BATCH_SIZE) {
+    const batch = cardIds.slice(i, i + BATCH_SIZE);
+    const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(cardIds.length / BATCH_SIZE);
+
+    try {
+      const cards = await fetchCardsByTcgplayerIds(batch);
+      fetched += cards.length;
+
+      for (const card of cards) {
+        try {
+          const summary = await upsertGradedPricesForCard(card);
+          gradedRows += summary.gradedRowsWritten;
+        } catch (err: any) {
+          failed++;
+          await logError({
+            source: "poketrace-catalog-upsert",
+            message: err?.message ?? "Failed to upsert card",
+            error: err,
+            userId: null,
+          });
+        }
+      }
+
+      // Progress log every 10 batches so cron-job.org execution logs are useful
+      if (batchNum % 10 === 0 || batchNum === totalBatches) {
+        console.log(
+          `[PokeTrace] Catalog sync progress: batch ${batchNum}/${totalBatches}, fetched=${fetched}, gradedRows=${gradedRows}, failed=${failed}`,
+        );
+      }
+    } catch (err: any) {
+      failed += batch.length;
+      await logError({
+        source: "poketrace-catalog-fetch",
+        message: err?.message ?? "Batch fetch failed",
+        error: err,
+        userId: null,
+      });
+    }
+    await sleep(BATCH_DELAY_MS);
+  }
+
+  const durationMs = Date.now() - startedAt;
+  console.log(
+    `[PokeTrace] Catalog sync complete. Cards: ${cardIds.length}, Fetched: ${fetched}, Graded rows: ${gradedRows}, Failed: ${failed}, Duration: ${Math.round(durationMs / 1000)}s`,
+  );
+
+  return {
+    uniqueCards: cardIds.length,
+    fetched,
+    gradedRows,
+    failed,
+    durationMs,
+  };
+};
+
+// Fire-and-forget wrapper for the cron path.
+export const syncAllCatalogGradedPricesSafe = async (): Promise<void> => {
+  try {
+    await syncAllCatalogGradedPrices();
+  } catch (err: any) {
+    await logError({
+      source: "poketrace-catalog-sync",
+      message: err?.message ?? "Catalog sync threw",
+      error: err,
+      userId: null,
+    });
+  }
+};

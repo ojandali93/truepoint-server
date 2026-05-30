@@ -44,6 +44,7 @@ import { sendDailySummaries } from "../services/portfolioSummary.service";
 import { snapshotCardPricesSafe } from "../services/cardPriceHistory.service";
 import { sendPriceMoversDigest } from "../services/priceMoversDigest.service";
 import { syncInventoryCardPricesSafe } from "../services/poketracePriceSync.service";
+import { syncAllCatalogGradedPricesSafe } from "../services/poketracePriceSync.service";
 
 const router = Router();
 
@@ -565,6 +566,24 @@ router.post("/graded-prices", requireSyncKey, async (_req, res) => {
   });
   syncInventoryCardPricesSafe().catch((err: any) =>
     console.error("[SyncRoute] PokeTrace bulk sync failed:", err?.message),
+  );
+});
+
+// POST /sync/graded-prices-all
+// Daily cron — refreshes graded prices for EVERY card in the catalog (not
+// just inventoried cards). Ensures any card a user might add already has a
+// fresh graded price. Fire-and-forget; responds immediately, runs in bg.
+router.post("/graded-prices-all", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "PokeTrace full-catalog graded-price sync started",
+    note: "Runs in background. Check Render logs for [PokeTrace] entries.",
+    timestamp: new Date().toISOString(),
+  });
+  syncAllCatalogGradedPricesSafe().catch((err: any) =>
+    console.error(
+      "[SyncRoute] PokeTrace full-catalog sync failed:",
+      err?.message,
+    ),
   );
 });
 

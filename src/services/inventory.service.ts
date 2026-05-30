@@ -53,7 +53,8 @@ export interface InventorySummary {
 //   1. manual_market_value override (set by user or grader return)
 //   2. sealed product → product_price_cache
 //   3. raw card → SKU price (condition + variant aware) → legacy market_prices fallback
-//   4. graded card → graded price by company+grade → raw fallback
+//   4. graded card → graded price by company+grade ONLY (no raw fallback —
+//      see comment in the graded-card branch below for the reasoning)
 const resolveMarketValue = (
   item: InventoryRow,
   cardPrices: Map<string, Record<string, number>>,
@@ -129,14 +130,15 @@ const resolveMarketValue = (
       return { marketPrice: prices[gradeKey], source: item.grading_company };
     }
 
-    // Fallback — use raw price if no graded price available
-    if (prices.raw_market) {
-      return {
-        marketPrice: prices.raw_market,
-        source: "tcgplayer (raw fallback)",
-      };
-    }
-
+    // No graded price available.
+    //
+    // IMPORTANT: do NOT fall back to raw price here. Showing the raw price
+    // for a graded card is a lie that compounds into wrong portfolio totals,
+    // wrong snapshot values, and wrong gain/loss math. If PokeTrace doesn't
+    // have a price for this (card, company, grade) combo, we return null and
+    // let the UI display "pending" / "—" instead. The full-catalog graded
+    // sync (POST /sync/graded-prices-all, run via daily cron) is responsible
+    // for keeping this cache populated.
     return { marketPrice: null, source: null };
   }
 
