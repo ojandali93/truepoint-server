@@ -357,30 +357,50 @@ export const syncAllCatalogGradedPrices = async (): Promise<{
 
   // Pull every card_id whose set is in the valid catalog. The join filter
   // mirrors what card.repository.ts findAllSets() uses.
-  const { data: cardRows, error } = await supabaseAdmin
-    .from("cards")
-    .select("id, sets!inner(tcgapis_group_id)")
-    .not("sets.tcgapis_group_id", "is", null);
+  //
+  // IMPORTANT: Supabase/PostgREST silently caps .select() at 1,000 rows by
+  // default. We MUST paginate via .range() or the sync only sees the first
+  // 1k cards. Page size of 1,000 is the max per request — beyond that the
+  // server-side cap still kicks in.
+  const PAGE_SIZE = 1000;
+  const allCardIds: string[] = [];
 
-  if (error) {
-    await logError({
-      source: "poketrace-catalog-sync",
-      message: error.message ?? "Failed to read catalog card list",
-      error,
-      userId: null,
-    });
-    return {
-      uniqueCards: 0,
-      fetched: 0,
-      gradedRows: 0,
-      failed: 0,
-      durationMs: Date.now() - startedAt,
-    };
+  for (let page = 0; ; page++) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const { data: pageRows, error: pageErr } = await supabaseAdmin
+      .from("cards")
+      .select("id, sets!inner(tcgapis_group_id)")
+      .not("sets.tcgapis_group_id", "is", null)
+      .range(from, to);
+
+    if (pageErr) {
+      await logError({
+        source: "poketrace-catalog-sync",
+        message: pageErr.message ?? "Failed to read catalog card list",
+        error: pageErr,
+        userId: null,
+      });
+      return {
+        uniqueCards: 0,
+        fetched: 0,
+        gradedRows: 0,
+        failed: 0,
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    const rows = pageRows ?? [];
+    for (const r of rows) {
+      if ((r as any).id) allCardIds.push((r as any).id as string);
+    }
+
+    // Last page reached when we get fewer rows than the page size
+    if (rows.length < PAGE_SIZE) break;
   }
 
-  const cardIds = Array.from(
-    new Set((cardRows ?? []).map((r: any) => r.id as string)),
-  ).filter(Boolean);
+  const cardIds = Array.from(new Set(allCardIds)).filter(Boolean);
 
   if (cardIds.length === 0) {
     console.log("[PokeTrace] No catalog card_ids to sync.");
