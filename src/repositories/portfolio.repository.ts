@@ -56,7 +56,18 @@ const rowToSnapshot = (row: any): PortfolioSnapshot => ({
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-// Get snapshots for a user within a date range
+// Get snapshots for a user within a date range.
+//
+// IMPORTANT: there is one aggregate row per day (collection_id IS NULL) and
+// optionally one per-collection row per collection. The aggregate row already
+// contains the sum across all collections.
+//
+//   - collectionId omitted / null  → return ONLY aggregate rows (1 row/day)
+//   - collectionId specified       → return rows for that specific collection
+//
+// Previously this returned every row when no collectionId was given, which
+// produced multiple points per day on the dashboard chart (one per collection
+// + the aggregate), causing dramatic spikes between $0 and the real value.
 export const findSnapshotsByUser = async (
   userId: string,
   days = 90,
@@ -74,6 +85,9 @@ export const findSnapshotsByUser = async (
 
   if (collectionId) {
     q = q.eq("collection_id", collectionId);
+  } else {
+    // Aggregate view — only the cron-produced sum rows, never per-collection rows
+    q = q.is("collection_id", null);
   }
 
   const { data, error } = await q;
@@ -85,14 +99,27 @@ export const findSnapshotsByUser = async (
   return (data ?? []).map(rowToSnapshot);
 };
 
-// Get the most recent snapshot for a user
+// Get the most recent snapshot for a user.
+//
+// Same aggregate-vs-per-collection distinction as findSnapshotsByUser. When
+// no collectionId is given, we return the latest AGGREGATE row, not the
+// latest per-collection row that happens to sort highest.
 export const findLatestSnapshot = async (
   userId: string,
+  collectionId?: string | null,
 ): Promise<PortfolioSnapshot | null> => {
-  const { data, error } = await supabaseAdmin
+  let q = supabaseAdmin
     .from("portfolio_snapshots")
     .select("*")
-    .eq("user_id", userId)
+    .eq("user_id", userId);
+
+  if (collectionId) {
+    q = q.eq("collection_id", collectionId);
+  } else {
+    q = q.is("collection_id", null);
+  }
+
+  const { data, error } = await q
     .order("snapshot_date", { ascending: false })
     .limit(1)
     .single();
