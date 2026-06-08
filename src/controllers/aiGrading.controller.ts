@@ -8,62 +8,67 @@ import { checkMonthlyLimit, requireFeature } from "../services/plan.service";
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
 
+const fmtG = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 const computeRecommendation = (
   analysis: GradingAnalysis,
 ): { recommendation: "grade" | "skip" | "borderline"; reason: string } => {
-  const { tpScore, tpDisplay, sub, predictions } = analysis;
+  const { tpScore, sub, predictions } = analysis;
   const minSub = Math.min(sub.centering, sub.corners, sub.edges, sub.surface);
+  const psa = predictions.psa.grade;
 
-  const psa = predictions.find((p) => p.company === "PSA");
-  const psaLikely = psa?.likely ?? "—";
+  const dims: [string, number][] = [
+    ["centering", sub.centering],
+    ["corners", sub.corners],
+    ["edges", sub.edges],
+    ["surface", sub.surface],
+  ];
+  const weakest = dims.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
 
-  const hasNote = (company: string) =>
-    predictions.find((p) => p.company === company)?.note != null;
+  const grades = `PSA ${psa} · BGS ${fmtG(predictions.bgs.grade)} · CGC ${fmtG(
+    predictions.cgc.grade,
+  )} · TAG ${fmtG(predictions.tag.grade)}`;
 
-  // All four subgrades essentially perfect → BGS Black Label territory.
-  if (minSub >= 99) {
+  if (predictions.bgs.isBlackLabel) {
     return {
       recommendation: "grade",
-      reason:
-        "All four subgrades scored gem (99+/100) — potential BGS Black Label. Submit immediately. Exceptionally rare.",
+      reason: `TP score ${tpScore}/100. All four subgrades are gem — BGS Black Label in play (${grades}). Exceptionally rare; submit.`,
     };
   }
-  // Elite designations flagged by the mapper.
-  if (hasNote("CGC") || hasNote("SGC")) {
+  if (predictions.cgc.isPristine || predictions.tag.isPristine) {
     return {
       recommendation: "grade",
-      reason: `TP score ${tpDisplay} — Pristine/Gold-Label designation in play. Strong grading candidate.`,
+      reason: `TP score ${tpScore}/100 — Pristine-tier candidate (${grades}). Strong grading play.`,
     };
   }
-  // PSA 10 in play with strong everything.
   if (tpScore >= 96 && minSub >= 95) {
     return {
       recommendation: "grade",
-      reason: `TP score ${tpDisplay} with strong subgrades — PSA 10 in play (likely PSA ${psaLikely}). Excellent candidate, high potential ROI.`,
+      reason: `TP score ${tpScore}/100 — ${grades}. PSA 10 in play with no weak spots. Excellent candidate, high potential ROI.`,
     };
   }
-  // Solid mint candidate.
   if (tpScore >= 90) {
     return {
       recommendation: "grade",
-      reason: `TP score ${tpDisplay} (likely PSA ${psaLikely}) with solid subgrades. Worth grading if the card has market value.`,
+      reason: `TP score ${tpScore}/100 — ${grades}. Solid all round; ${weakest} is the main limiter. Worth grading if the card has market value.`,
     };
   }
-  // Borderline — depends on card value vs grading cost.
   if (tpScore >= 80 && minSub >= 75) {
     return {
       recommendation: "borderline",
-      reason: `TP score ${tpDisplay} (likely PSA ${psaLikely}). Weigh the card's value against grading cost. Better photos may sharpen this estimate.`,
+      reason: `TP score ${tpScore}/100 — ${grades}. ${cap(weakest)} is holding it back. Weigh the card's value against grading cost; better photos may sharpen this.`,
     };
   }
   return {
     recommendation: "skip",
-    reason: `TP score ${tpDisplay} (likely PSA ${psaLikely}), weakest subgrade ${(
+    reason: `TP score ${tpScore}/100 — ${grades}. ${cap(weakest)} is the weakest area (${(
       minSub / 10
-    ).toFixed(1)}. Grading cost likely exceeds value added at this grade.`,
+    ).toFixed(
+      1,
+    )}/10). Grading cost likely exceeds the value added at this grade.`,
   };
 };
-
 // ─── POST /grading/ai-analyze ─────────────────────────────────────────────────
 // Responds IMMEDIATELY with a reportId, then processes in background.
 // Gemini can take 30-120 seconds — we never make the client wait.

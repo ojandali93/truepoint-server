@@ -90,14 +90,12 @@ export const identifyCardFromUrl = async (
 
 // ─── AI Grading ───────────────────────────────────────────────────────────────
 //
-// Two-stage design to fix grade clustering at 9:
+// Two-stage design:
 //   1. Gemini scores intrinsic quality 0–100 across four sub-dimensions (front
-//      + back). It is explicitly told NOT to output a company grade, and the
-//      0–100 scale (not 1–10) stops it anchoring to the modal real grade.
-//   2. We compute a single TP Score in code (weighted, dragged toward the
-//      weakest sub-dimension the way real grading is gated by the worst
-//      attribute), then map it to where each company would most likely land.
-// The mapping is deterministic and tunable in this file.
+//      + back). It is told NOT to output a company grade — the 0–100 scale
+//      stops it anchoring to the modal real grade (was clustering at 9).
+//   2. We compute one objective TP Score (0–100) in code, then round/adjust it
+//      to each company's mold: PSA -> nearest whole; BGS/CGC/TAG -> nearest 0.5.
 
 export interface SubScores {
   centering: number; // 0–100
@@ -106,18 +104,16 @@ export interface SubScores {
   surface: number; // 0–100
 }
 
-export interface CompanyPrediction {
-  company: "PSA" | "BGS" | "CGC" | "SGC" | "TAG";
-  likely: string; // e.g. "9.5" or "10"
-  range: string; // e.g. "9 – 9.5"
-  note?: string; // e.g. "Black Label 10 possible"
-}
-
 export interface GradingAnalysis {
-  tpScore: number; // 0–100 (store as int)
+  tpScore: number; // 0–100 objective score (this is the canonical TP score)
   tpDisplay: number; // tpScore / 10, one decimal (e.g. 9.6) — convenience for UI
   sub: SubScores; // 0–100 each
-  predictions: CompanyPrediction[];
+  predictions: {
+    psa: { grade: number; label: string };
+    bgs: { grade: number; label: string; isBlackLabel: boolean };
+    cgc: { grade: number; label: string; isPristine: boolean };
+    tag: { grade: number; label: string; isPristine: boolean };
+  };
   centeringRatio: { front: string; back: string | null };
   issues: string[];
   strengths: string[];
@@ -146,71 +142,82 @@ export function computeTpScore(s: SubScores): number {
 
 // ─── TP Score → company predictions ───────────────────────────────────────────
 
+const clamp10 = (x: number) => Math.max(1, Math.min(10, x));
+const toHalf = (x: number) => clamp10(Math.round(x * 2) / 2); // nearest 0.5
+const toWhole = (x: number) => clamp10(Math.round(x)); // nearest integer
 const fmtGrade = (n: number) =>
   Number.isInteger(n) ? String(n) : n.toFixed(1);
-const toHalf = (x: number) => Math.round(x * 2) / 2;
-const floorHalf = (x: number) => Math.floor(x * 2) / 2;
-const ceilHalf = (x: number) => Math.ceil(x * 2) / 2;
-const clamp10 = (x: number) => Math.max(1, Math.min(10, x));
 
-export function mapTpScore(
-  tpScore: number,
-  sub: SubScores,
-): CompanyPrediction[] {
-  const g = tpScore / 10; // decimal grade-equivalent, e.g. 93 -> 9.3
+const PSA_NAMES: Record<number, string> = {
+  10: "Gem Mint",
+  9: "Mint",
+  8: "Near Mint-Mint",
+  7: "Near Mint",
+  6: "Excellent-Mint",
+  5: "Excellent",
+  4: "Very Good-Excellent",
+  3: "Very Good",
+  2: "Good",
+  1: "Poor",
+};
+
+const tierName = (grade: number): string => {
+  if (grade >= 10) return "Pristine";
+  if (grade >= 9.5) return "Gem Mint";
+  if (grade >= 9) return "Mint";
+  if (grade >= 8.5) return "Near Mint-Mint+";
+  if (grade >= 8) return "Near Mint-Mint";
+  if (grade >= 7) return "Near Mint";
+  return "";
+};
+
+export function mapTpScore(tpScore: number, sub: SubScores) {
+  const g = tpScore / 10; // grade-equivalent, e.g. 93 -> 9.3
   const allGem =
     Math.min(sub.centering, sub.corners, sub.edges, sub.surface) >= 99;
   const nearPerfect = tpScore >= 99;
 
-  // PSA — whole grades only, grades conservatively (rounds down).
-  const psaBase = clamp10(Math.floor(g));
-  const psaLikely = g >= 9.8 ? 10 : psaBase;
-  const psaRange =
-    g >= 9.8
-      ? "9 – 10"
-      : g - psaBase >= 0.5
-        ? `${psaBase} – ${clamp10(psaBase + 1)}`
-        : `${psaBase}`;
-
-  // Half-grade companies (BGS, CGC, SGC): round to nearest 0.5, show bracket.
-  const half = (
-    company: CompanyPrediction["company"],
-    note?: string,
-  ): CompanyPrediction => {
-    const lo = clamp10(floorHalf(g));
-    const hi = clamp10(ceilHalf(g));
-    return {
-      company,
-      likely: fmtGrade(clamp10(toHalf(g))),
-      range: lo === hi ? fmtGrade(lo) : `${fmtGrade(lo)} – ${fmtGrade(hi)}`,
-      note,
-    };
+  // PSA — nearest whole number.
+  const psaGrade = toWhole(g);
+  const psa = {
+    grade: psaGrade,
+    label: `PSA ${psaGrade} ${PSA_NAMES[psaGrade] ?? ""}`.trim(),
   };
 
-  // TAG — reports to the tenth, so map almost directly.
-  const tagLikely = clamp10(Number(g.toFixed(1)));
-  const tagLo = clamp10(Number((g - 0.2).toFixed(1)));
-  const tagHi = clamp10(Number((g + 0.2).toFixed(1)));
+  // BGS — nearest half.
+  const bgsGrade = toHalf(g);
+  const bgsBlack = allGem && bgsGrade >= 10;
+  const bgs = {
+    grade: bgsGrade,
+    label: bgsBlack
+      ? "BGS 10 Black Label"
+      : `BGS ${fmtGrade(bgsGrade)} ${tierName(bgsGrade)}`.trim(),
+    isBlackLabel: bgsBlack,
+  };
 
-  return [
-    {
-      company: "PSA",
-      likely: fmtGrade(psaLikely),
-      range: psaRange,
-      note: g >= 9.8 ? "Gem Mint 10 in play" : undefined,
-    },
-    half("BGS", allGem ? "Black Label 10 possible (all subs gem)" : undefined),
-    half("CGC", nearPerfect ? "Pristine 10 possible" : undefined),
-    half("SGC", nearPerfect ? "Gold Label 10 possible" : undefined),
-    {
-      company: "TAG",
-      likely: fmtGrade(tagLikely),
-      range:
-        tagLo === tagHi
-          ? fmtGrade(tagLo)
-          : `${fmtGrade(tagLo)} – ${fmtGrade(tagHi)}`,
-    },
-  ];
+  // CGC — nearest half.
+  const cgcGrade = toHalf(g);
+  const cgcPristine = nearPerfect && cgcGrade >= 10;
+  const cgc = {
+    grade: cgcGrade,
+    label: cgcPristine
+      ? "CGC Pristine 10"
+      : `CGC ${fmtGrade(cgcGrade)} ${tierName(cgcGrade)}`.trim(),
+    isPristine: cgcPristine,
+  };
+
+  // TAG — nearest half.
+  const tagGrade = toHalf(g);
+  const tagPristine = nearPerfect && tagGrade >= 10;
+  const tag = {
+    grade: tagGrade,
+    label: tagPristine
+      ? "TAG Pristine 10"
+      : `TAG ${fmtGrade(tagGrade)} ${tierName(tagGrade)}`.trim(),
+    isPristine: tagPristine,
+  };
+
+  return { psa, bgs, cgc, tag };
 }
 
 // ─── Prompt ────────────────────────────────────────────────────────────────────
@@ -300,9 +307,7 @@ export const analyzeCardForGrading = async (
     generationConfig: {
       temperature: 0.1,
       maxOutputTokens: 1024,
-      // Force clean JSON so we don't fight markdown fences.
       responseMimeType: "application/json",
-      // Disable thinking — not needed for grading, just adds latency/noise.
       // @ts-ignore — thinkingConfig is valid for gemini-2.5-flash
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -312,7 +317,6 @@ export const analyzeCardForGrading = async (
 
   let parsed: any;
   try {
-    // responseMimeType should give clean JSON; this strip is a defensive net.
     const stripped = raw.replace(/```json\n?|```\n?/g, "").trim();
     const start = stripped.indexOf("{");
     const end = stripped.lastIndexOf("}");
@@ -324,7 +328,7 @@ export const analyzeCardForGrading = async (
     parsed = JSON.parse(stripped.substring(start, end + 1));
   } catch (err: any) {
     await logError({
-      source: "inventory", // ← change per controller
+      source: "inventory",
       message: err?.message ?? "Unknown error",
       error: err,
       userId: null,
