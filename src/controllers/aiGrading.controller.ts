@@ -11,44 +11,56 @@ import { checkMonthlyLimit, requireFeature } from "../services/plan.service";
 const computeRecommendation = (
   analysis: GradingAnalysis,
 ): { recommendation: "grade" | "skip" | "borderline"; reason: string } => {
-  const { centering, corners, edges, surface, predictions } = analysis;
-  const avg = (centering + corners + edges + surface) / 4;
-  const psaGrade = predictions.psa.grade;
+  const { tpScore, tpDisplay, sub, predictions } = analysis;
+  const minSub = Math.min(sub.centering, sub.corners, sub.edges, sub.surface);
 
-  if (predictions.bgs.isBlackLabel) {
+  const psa = predictions.find((p) => p.company === "PSA");
+  const psaLikely = psa?.likely ?? "—";
+
+  const hasNote = (company: string) =>
+    predictions.find((p) => p.company === company)?.note != null;
+
+  // All four subgrades essentially perfect → BGS Black Label territory.
+  if (minSub >= 99) {
     return {
       recommendation: "grade",
       reason:
-        "All four subgrades scored 10 — potential BGS Black Label. Submit immediately. Exceptionally rare.",
+        "All four subgrades scored gem (99+/100) — potential BGS Black Label. Submit immediately. Exceptionally rare.",
     };
   }
-  if (predictions.cgc.isPristine || predictions.tag.isPristine) {
+  // Elite designations flagged by the mapper.
+  if (hasNote("CGC") || hasNote("SGC")) {
     return {
       recommendation: "grade",
-      reason: `Predicted ${predictions.cgc.isPristine ? "CGC Pristine 10" : "TAG Pristine"} — an elite designation. Strong grading candidate.`,
+      reason: `TP score ${tpDisplay} — Pristine/Gold-Label designation in play. Strong grading candidate.`,
     };
   }
-  if (psaGrade === 10 && avg >= 9.5) {
+  // PSA 10 in play with strong everything.
+  if (tpScore >= 96 && minSub >= 95) {
     return {
       recommendation: "grade",
-      reason: `Predicted PSA 10 with strong subgrades (avg ${avg.toFixed(2)}). Excellent candidate — high potential ROI.`,
+      reason: `TP score ${tpDisplay} with strong subgrades — PSA 10 in play (likely PSA ${psaLikely}). Excellent candidate, high potential ROI.`,
     };
   }
-  if (psaGrade >= 9 && avg >= 9.0) {
+  // Solid mint candidate.
+  if (tpScore >= 90) {
     return {
       recommendation: "grade",
-      reason: `Predicted PSA ${psaGrade} with solid subgrades (avg ${avg.toFixed(2)}). Worth grading if the card has market value.`,
+      reason: `TP score ${tpDisplay} (likely PSA ${psaLikely}) with solid subgrades. Worth grading if the card has market value.`,
     };
   }
-  if (psaGrade >= 8 && Math.min(centering, corners, edges, surface) >= 7.5) {
+  // Borderline — depends on card value vs grading cost.
+  if (tpScore >= 80 && minSub >= 75) {
     return {
       recommendation: "borderline",
-      reason: `Predicted PSA ${psaGrade}. Consider the card's value vs grading cost. Improving image quality may refine this estimate.`,
+      reason: `TP score ${tpDisplay} (likely PSA ${psaLikely}). Weigh the card's value against grading cost. Better photos may sharpen this estimate.`,
     };
   }
   return {
     recommendation: "skip",
-    reason: `Predicted PSA ${psaGrade} with average subgrades of ${avg.toFixed(2)}. Grading cost likely exceeds value added at this grade.`,
+    reason: `TP score ${tpDisplay} (likely PSA ${psaLikely}), weakest subgrade ${(
+      minSub / 10
+    ).toFixed(1)}. Grading cost likely exceeds value added at this grade.`,
   };
 };
 
