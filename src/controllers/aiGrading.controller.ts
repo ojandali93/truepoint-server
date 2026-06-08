@@ -230,14 +230,14 @@ export const analyzeCard = async (
           .from("ai_grading_reports")
           .update({
             status: "completed",
-            overall_score: analysis.overallScore,
-            centering: analysis.centering,
-            corners: analysis.corners,
-            edges: analysis.edges,
-            surface: analysis.surface,
+            overall_score: analysis.tpDisplay, // TP score, 1–10 scale (e.g. 9.6)
+            centering: analysis.sub.centering / 10, // back to 1–10 for the existing column
+            corners: analysis.sub.corners / 10,
+            edges: analysis.sub.edges / 10,
+            surface: analysis.sub.surface / 10,
             centering_ratio_front: analysis.centeringRatio.front,
             centering_ratio_back: analysis.centeringRatio.back,
-            predictions: analysis.predictions,
+            predictions: analysis.predictions, // now an array: { company, likely, range, note }
             issues: analysis.issues,
             strengths: analysis.strengths,
             confidence: analysis.confidence,

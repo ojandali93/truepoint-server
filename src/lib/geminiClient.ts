@@ -89,191 +89,168 @@ export const identifyCardFromUrl = async (
 };
 
 // ─── AI Grading ───────────────────────────────────────────────────────────────
+//
+// Two-stage design to fix grade clustering at 9:
+//   1. Gemini scores intrinsic quality 0–100 across four sub-dimensions (front
+//      + back). It is explicitly told NOT to output a company grade, and the
+//      0–100 scale (not 1–10) stops it anchoring to the modal real grade.
+//   2. We compute a single TP Score in code (weighted, dragged toward the
+//      weakest sub-dimension the way real grading is gated by the worst
+//      attribute), then map it to where each company would most likely land.
+// The mapping is deterministic and tunable in this file.
+
+export interface SubScores {
+  centering: number; // 0–100
+  corners: number; // 0–100
+  edges: number; // 0–100
+  surface: number; // 0–100
+}
+
+export interface CompanyPrediction {
+  company: "PSA" | "BGS" | "CGC" | "SGC" | "TAG";
+  likely: string; // e.g. "9.5" or "10"
+  range: string; // e.g. "9 – 9.5"
+  note?: string; // e.g. "Black Label 10 possible"
+}
 
 export interface GradingAnalysis {
-  // Gemini's own overall score (1.0-10.0 to one decimal)
-  overallScore: number;
-
-  // Sub-grades (1-10 in 0.5 increments)
-  centering: number;
-  corners: number;
-  edges: number;
-  surface: number;
-
-  // Predicted grades per company
-  predictions: {
-    psa: { grade: number; label: string };
-    bgs: { grade: number; label: string; isBlackLabel: boolean };
-    cgc: { grade: number; label: string; isPristine: boolean };
-    tag: { grade: number; label: string; isPristine: boolean };
-  };
-
+  tpScore: number; // 0–100 (store as int)
+  tpDisplay: number; // tpScore / 10, one decimal (e.g. 9.6) — convenience for UI
+  sub: SubScores; // 0–100 each
+  predictions: CompanyPrediction[];
   centeringRatio: { front: string; back: string | null };
   issues: string[];
   strengths: string[];
-  confidence: number; // 0-100
+  confidence: number; // 0–100
   notes: string;
 }
 
-// ─── Grade calculation (based on official published standards) ────────────────
+// ─── TP Score computation ─────────────────────────────────────────────────────
+// Weighted average blended toward the WEAKEST sub-dimension. Tune freely.
 
-const clamp = (v: number) => Math.max(1, Math.min(10, Math.round(v * 2) / 2));
+const WEIGHTS = { centering: 0.3, surface: 0.28, corners: 0.22, edges: 0.2 };
+const MIN_WEIGHT = 0.25; // how hard the weakest sub-dimension drags the score down
 
-const calcPSA = (c: number, co: number, e: number, s: number) => {
-  const avg = (c + co + e + s) / 4;
-  if (avg >= 9.8 && c >= 9.5 && co >= 9.5 && e >= 9.5 && s >= 9.5)
-    return { grade: 10, label: "PSA 10 Gem Mint" };
-  if (avg >= 9.0) return { grade: 9, label: "PSA 9 Mint" };
-  if (avg >= 8.5) return { grade: 8, label: "PSA 8 Near Mint-Mint" };
-  if (avg >= 7.5) return { grade: 7, label: "PSA 7 Near Mint" };
-  if (avg >= 6.5) return { grade: 6, label: "PSA 6 Excellent-Mint" };
-  if (avg >= 5.5) return { grade: 5, label: "PSA 5 Excellent" };
-  if (avg >= 4.5) return { grade: 4, label: "PSA 4 Very Good-Excellent" };
-  if (avg >= 3.5) return { grade: 3, label: "PSA 3 Very Good" };
-  if (avg >= 2.5) return { grade: 2, label: "PSA 2 Good" };
-  return { grade: 1, label: "PSA 1 Poor" };
-};
+const clamp100 = (v: number) => Math.max(1, Math.min(100, Math.round(v)));
 
-const calcBGS = (c: number, co: number, e: number, s: number) => {
-  const subs = [c, co, e, s];
-  const lowest = Math.min(...subs);
-  const avg = subs.reduce((a, b) => a + b, 0) / 4;
-  const count10 = subs.filter((v) => v === 10).length;
-  const countAbove95 = subs.filter((v) => v >= 9.5).length;
+export function computeTpScore(s: SubScores): number {
+  const weighted =
+    s.centering * WEIGHTS.centering +
+    s.surface * WEIGHTS.surface +
+    s.corners * WEIGHTS.corners +
+    s.edges * WEIGHTS.edges;
+  const min = Math.min(s.centering, s.corners, s.edges, s.surface);
+  const tp = weighted * (1 - MIN_WEIGHT) + min * MIN_WEIGHT;
+  return clamp100(tp);
+}
 
-  // BGS Black Label: ALL four must be 10, centering exactly 50/50
-  if (subs.every((v) => v === 10)) {
-    return { grade: 10, label: "BGS 10 Black Label", isBlackLabel: true };
-  }
-  // BGS 10 Pristine (Gold Label): all ≥9.5, three must be 10
-  if (subs.every((v) => v >= 9.5) && count10 >= 3) {
+// ─── TP Score → company predictions ───────────────────────────────────────────
+
+const fmtGrade = (n: number) =>
+  Number.isInteger(n) ? String(n) : n.toFixed(1);
+const toHalf = (x: number) => Math.round(x * 2) / 2;
+const floorHalf = (x: number) => Math.floor(x * 2) / 2;
+const ceilHalf = (x: number) => Math.ceil(x * 2) / 2;
+const clamp10 = (x: number) => Math.max(1, Math.min(10, x));
+
+export function mapTpScore(
+  tpScore: number,
+  sub: SubScores,
+): CompanyPrediction[] {
+  const g = tpScore / 10; // decimal grade-equivalent, e.g. 93 -> 9.3
+  const allGem =
+    Math.min(sub.centering, sub.corners, sub.edges, sub.surface) >= 99;
+  const nearPerfect = tpScore >= 99;
+
+  // PSA — whole grades only, grades conservatively (rounds down).
+  const psaBase = clamp10(Math.floor(g));
+  const psaLikely = g >= 9.8 ? 10 : psaBase;
+  const psaRange =
+    g >= 9.8
+      ? "9 – 10"
+      : g - psaBase >= 0.5
+        ? `${psaBase} – ${clamp10(psaBase + 1)}`
+        : `${psaBase}`;
+
+  // Half-grade companies (BGS, CGC, SGC): round to nearest 0.5, show bracket.
+  const half = (
+    company: CompanyPrediction["company"],
+    note?: string,
+  ): CompanyPrediction => {
+    const lo = clamp10(floorHalf(g));
+    const hi = clamp10(ceilHalf(g));
     return {
-      grade: 10,
-      label: "BGS 10 Pristine (Gold Label)",
-      isBlackLabel: false,
+      company,
+      likely: fmtGrade(clamp10(toHalf(g))),
+      range: lo === hi ? fmtGrade(lo) : `${fmtGrade(lo)} – ${fmtGrade(hi)}`,
+      note,
     };
-  }
-  // BGS 9.5 Gem Mint: all ≥9, three must be 9.5+
-  if (subs.every((v) => v >= 9) && countAbove95 >= 3) {
-    return { grade: 9.5, label: "BGS 9.5 Gem Mint", isBlackLabel: false };
-  }
-  if (lowest >= 9)
-    return { grade: 9, label: "BGS 9 Mint", isBlackLabel: false };
-  if (lowest >= 8.5)
-    return { grade: 8.5, label: "BGS 8.5", isBlackLabel: false };
-  if (lowest >= 8)
-    return { grade: 8, label: "BGS 8 Near Mint-Mint", isBlackLabel: false };
-  if (lowest >= 7.5)
-    return { grade: 7.5, label: "BGS 7.5", isBlackLabel: false };
-  if (lowest >= 7)
-    return { grade: 7, label: "BGS 7 Near Mint", isBlackLabel: false };
-  if (avg >= 6)
-    return { grade: 6, label: "BGS 6 Excellent-Mint", isBlackLabel: false };
-  if (avg >= 5)
-    return { grade: 5, label: "BGS 5 Excellent", isBlackLabel: false };
-  return {
-    grade: Math.max(1, Math.round(avg)),
-    label: `BGS ${Math.max(1, Math.round(avg))}`,
-    isBlackLabel: false,
   };
-};
 
-const calcCGC = (c: number, co: number, e: number, s: number) => {
-  const avg = (c + co + e + s) / 4;
-  // CGC Pristine 10: 50/50 centering (c=10), virtually flawless everything
-  if (c >= 9.8 && co >= 9.5 && e >= 9.5 && s >= 9.5 && avg >= 9.7) {
-    return { grade: 10, label: "CGC Pristine 10", isPristine: true };
-  }
-  // CGC Gem Mint 10: centering up to 55/45 (c≥9), perfect corners/edges/surface
-  if (avg >= 9.4 && co >= 9 && e >= 9 && s >= 9) {
-    return { grade: 10, label: "CGC Gem Mint 10", isPristine: false };
-  }
-  if (avg >= 9.2)
-    return { grade: 9.5, label: "CGC Mint+ 9.5", isPristine: false };
-  if (avg >= 8.7) return { grade: 9, label: "CGC Mint 9", isPristine: false };
-  if (avg >= 8.2)
-    return { grade: 8.5, label: "CGC Near Mint+ 8.5", isPristine: false };
-  if (avg >= 7.7)
-    return { grade: 8, label: "CGC Near Mint-Mint 8", isPristine: false };
-  if (avg >= 7.2)
-    return { grade: 7.5, label: "CGC Near Mint+ 7.5", isPristine: false };
-  if (avg >= 6.7)
-    return { grade: 7, label: "CGC Near Mint 7", isPristine: false };
-  if (avg >= 6)
-    return { grade: 6, label: "CGC Excellent+ 6", isPristine: false };
-  return {
-    grade: Math.max(1, Math.floor(avg)),
-    label: `CGC ${Math.max(1, Math.floor(avg))}`,
-    isPristine: false,
-  };
-};
+  // TAG — reports to the tenth, so map almost directly.
+  const tagLikely = clamp10(Number(g.toFixed(1)));
+  const tagLo = clamp10(Number((g - 0.2).toFixed(1)));
+  const tagHi = clamp10(Number((g + 0.2).toFixed(1)));
 
-const calcTAG = (c: number, co: number, e: number, s: number) => {
-  const avg = (c + co + e + s) / 4;
-  // TAG Pristine: ~51/49 TCG centering (c≈10), only NHODs allowed
-  if (c >= 9.9 && co >= 9.5 && e >= 9.5 && s >= 9.5) {
-    return { grade: 10, label: "TAG Pristine 10", isPristine: true };
-  }
-  if (avg >= 9.3 && Math.min(c, co, e, s) >= 9) {
-    return { grade: 10, label: "TAG 10", isPristine: false };
-  }
-  if (avg >= 9.0) return { grade: 9.5, label: "TAG 9.5", isPristine: false };
-  if (avg >= 8.5) return { grade: 9, label: "TAG 9", isPristine: false };
-  if (avg >= 8.0) return { grade: 8.5, label: "TAG 8.5", isPristine: false };
-  if (avg >= 7.5) return { grade: 8, label: "TAG 8", isPristine: false };
-  if (avg >= 7.0) return { grade: 7, label: "TAG 7", isPristine: false };
-  return {
-    grade: Math.max(1, Math.round(avg)),
-    label: `TAG ${Math.max(1, Math.round(avg))}`,
-    isPristine: false,
-  };
-};
+  return [
+    {
+      company: "PSA",
+      likely: fmtGrade(psaLikely),
+      range: psaRange,
+      note: g >= 9.8 ? "Gem Mint 10 in play" : undefined,
+    },
+    half("BGS", allGem ? "Black Label 10 possible (all subs gem)" : undefined),
+    half("CGC", nearPerfect ? "Pristine 10 possible" : undefined),
+    half("SGC", nearPerfect ? "Gold Label 10 possible" : undefined),
+    {
+      company: "TAG",
+      likely: fmtGrade(tagLikely),
+      range:
+        tagLo === tagHi
+          ? fmtGrade(tagLo)
+          : `${fmtGrade(tagLo)} – ${fmtGrade(tagHi)}`,
+    },
+  ];
+}
+
+// ─── Prompt ────────────────────────────────────────────────────────────────────
 
 const GRADING_PROMPT = (
   cardContext: string,
-) => `You are an expert Pokémon TCG card grading specialist with 20+ years of experience grading for PSA, BGS, CGC, and TAG. ${cardContext}
+) => `You are a trading-card condition analyst. You are given the FRONT image and the BACK image of a single Pokémon TCG card.${cardContext ? " " + cardContext : ""}
 
-Analyze this card image with the precision of a professional grader. Examine all four criteria:
+Score the card's intrinsic physical quality on a 0–100 scale. This is NOT a PSA/BGS/CGC/TAG grade — DO NOT output any company grade. Score raw quality so it can be mapped to grades afterward.
 
-OVERALL SCORE — your holistic 1.0-10.0 assessment (to one decimal):
-10.0 = perfect in every way | 9.5+ = exceptional, minor flaws only under magnification
-9.0 = excellent, sharp and clean | 8.5 = very good, minor issues | 8.0 = good with visible but minor flaws
-7.0-7.9 = noticeable issues | 6.0-6.9 = significant wear | below 6 = heavy wear
+Evaluate FOUR sub-dimensions, each 0–100, looking at BOTH front and back:
+- centering: how centered the artwork is within the borders (front weighted most). 50/50 ≈ 100; 55/45 ≈ 90; 60/40 ≈ 80; 65/35 ≈ 70; 70/30+ is poor.
+- corners: sharpness/wear of all four corners on both sides.
+- edges: cleanliness/whitening/nicks along all edges, both sides.
+- surface: scratches, print lines, dimples, scuffs, holo scratches, gloss, both sides.
 
-CENTERING — measure border ratios left/right and top/bottom:
-10 = exactly 50/50 | 9.5 = 52/48 | 9 = 55/45 | 8.5 = 58/42 | 8 = 60/40 | 7.5 = 62/38 | 7 = 65/35
+Use the FULL range. Anchor to this rubric:
+- 97–100: flawless under magnification; gem-mint candidate. Rare.
+- 90–96: excellent; only trivial flaws, sharp to the naked eye.
+- 80–89: strong but visible minor wear (slight edge whitening, light surface, centering ~60/40).
+- 70–79: light-to-moderate wear clearly visible.
+- 55–69: moderate handling wear.
+- 30–54: heavy wear.
+- 1–29: poor/damaged.
 
-CORNERS — inspect all four for sharpness, fraying, rounding, whitening, dings:
-10 = perfectly sharp, flawless under magnification | 9.5 = sharp, very minor imperfection under magnification only
-9 = sharp to naked eye, slight under magnification | 8.5 = very minor corner touch under close inspection
-8 = minor wear under close inspection | 7.5 = light fraying visible | 7 = noticeable wear or fraying
-
-EDGES — all four edges for chipping, whitening, roughness, nicks:
-10 = perfectly smooth, no flaws under magnification | 9.5 = virtually flawless, minor artifacts under magnification
-9 = virtually mint, a speck of wear allowed | 8.5 = minor edge wear under close inspection
-8 = slight chipping or roughness | 7.5 = some chipping | 7 = noticeable roughness or multiple chips
-
-SURFACE — front and back for scratches, print lines, holo scratches, dents, fingerprints, gloss issues:
-10 = flawless, perfect gloss | 9.5 = near flawless, barely visible minor print spot under magnification
-9 = very minor print spots under scrutiny only | 8.5 = a few very minor print spots or one tiny scratch
-8 = minor scratches or print spots under close inspection | 7.5 = light scratches or multiple print spots | 7 = visible scratches
+Most pack-pulled raw cards land 80–95. Reserve 96+ for genuinely flawless. DO NOT default to round numbers like 90 or 95 — use precise values (e.g. 87, 93, 96). Examine each sub-dimension before settling on a number, and be conservative if image quality is poor (lower your confidence).
 
 Return ONLY valid JSON — no markdown, no code blocks:
 {
-  "overall_score": <1.0-10.0 to one decimal place — your holistic assessment of this card's condition>,
-  "centering": <1-10 in 0.5 increments>,
-  "corners": <1-10 in 0.5 increments>,
-  "edges": <1-10 in 0.5 increments>,
-  "surface": <1-10 in 0.5 increments>,
-  "centering_ratio_front": "<e.g. '52/48'>",
+  "centering": <0-100>,
+  "corners": <0-100>,
+  "edges": <0-100>,
+  "surface": <0-100>,
+  "centering_ratio_front": "<e.g. '55/45'>",
   "centering_ratio_back": "<e.g. '60/40' or null>",
   "issues": ["<specific defect>"],
   "strengths": ["<what looks great>"],
   "confidence": <0-100>,
   "notes": "<2-3 sentence overall assessment>"
-}
-
-Be precise and conservative — like a real grader. If image quality is poor, lower your confidence score.`;
+}`;
 
 export const analyzeCardForGrading = async (
   frontBase64: string,
@@ -323,7 +300,9 @@ export const analyzeCardForGrading = async (
     generationConfig: {
       temperature: 0.1,
       maxOutputTokens: 1024,
-      // Disable thinking mode — not needed for grading, just adds noise before JSON
+      // Force clean JSON so we don't fight markdown fences.
+      responseMimeType: "application/json",
+      // Disable thinking — not needed for grading, just adds latency/noise.
       // @ts-ignore — thinkingConfig is valid for gemini-2.5-flash
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -333,9 +312,8 @@ export const analyzeCardForGrading = async (
 
   let parsed: any;
   try {
-    // Gemini 2.5 Flash includes thinking tokens — strip everything before the first {
+    // responseMimeType should give clean JSON; this strip is a defensive net.
     const stripped = raw.replace(/```json\n?|```\n?/g, "").trim();
-    // Find the first { and last } to extract just the JSON object
     const start = stripped.indexOf("{");
     const end = stripped.lastIndexOf("}");
     if (start === -1 || end === -1) {
@@ -343,8 +321,7 @@ export const analyzeCardForGrading = async (
         `No JSON object found in response. Raw: ${raw.substring(0, 200)}`,
       );
     }
-    const jsonStr = stripped.substring(start, end + 1);
-    parsed = JSON.parse(jsonStr);
+    parsed = JSON.parse(stripped.substring(start, end + 1));
   } catch (err: any) {
     await logError({
       source: "inventory", // ← change per controller
@@ -358,28 +335,20 @@ export const analyzeCardForGrading = async (
     throw new Error(`Failed to parse Gemini grading response: ${err?.message}`);
   }
 
-  const c = clamp(parsed.centering ?? 7);
-  const co = clamp(parsed.corners ?? 7);
-  const e = clamp(parsed.edges ?? 7);
-  const s = clamp(parsed.surface ?? 7);
+  const sub: SubScores = {
+    centering: clamp100(parsed.centering ?? 70),
+    corners: clamp100(parsed.corners ?? 70),
+    edges: clamp100(parsed.edges ?? 70),
+    surface: clamp100(parsed.surface ?? 70),
+  };
 
-  const avg = (c + co + e + s) / 4;
-  const overallScore =
-    Math.round(Math.max(1, Math.min(10, parsed.overall_score ?? avg)) * 10) /
-    10;
+  const tpScore = computeTpScore(sub);
 
   return {
-    overallScore,
-    centering: c,
-    corners: co,
-    edges: e,
-    surface: s,
-    predictions: {
-      psa: calcPSA(c, co, e, s),
-      bgs: calcBGS(c, co, e, s),
-      cgc: calcCGC(c, co, e, s),
-      tag: calcTAG(c, co, e, s),
-    },
+    tpScore,
+    tpDisplay: Math.round((tpScore / 10) * 10) / 10,
+    sub,
+    predictions: mapTpScore(tpScore, sub),
     centeringRatio: {
       front: parsed.centering_ratio_front ?? "Unknown",
       back: parsed.centering_ratio_back ?? null,
