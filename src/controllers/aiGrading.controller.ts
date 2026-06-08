@@ -247,6 +247,7 @@ export const analyzeCard = async (
             corners: analysis.sub.corners / 10,
             edges: analysis.sub.edges / 10,
             surface: analysis.sub.surface / 10,
+            tp_score: analysis.tpScore,
             centering_ratio_front: analysis.centeringRatio.front,
             centering_ratio_back: analysis.centeringRatio.back,
             predictions: analysis.predictions, // now an array: { company, likely, range, note }
