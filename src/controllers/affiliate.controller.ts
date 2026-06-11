@@ -1,13 +1,20 @@
 // affiliate.controller.ts
 import type { Request, Response } from "express";
-import affiliateService from "../services/affiliate.service";
+import {
+  create,
+  listActive,
+  listAllWithCounts,
+  remove,
+  setUserAffiliation,
+  update,
+} from "../services/affiliate.service";
 
 // ── Public ───────────────────────────────────────────────────────────────────
 
 // GET /affiliates  — active affiliates for the signup dropdown (no auth).
 export async function listActiveAffiliates(_req: Request, res: Response) {
   try {
-    const data = await affiliateService.listActive();
+    const data = await listActive();
     res.json({ data });
   } catch (err) {
     res
@@ -19,21 +26,28 @@ export async function listActiveAffiliates(_req: Request, res: Response) {
 // ── Authenticated user ───────────────────────────────────────────────────────
 
 // PATCH /me/affiliation  — attach the chosen affiliate to the signed-in user.
-export async function setMyAffiliation(req: Request, res: Response) {
+export async function setMyAffiliation(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     // TODO: match how YOUR authenticateUser middleware exposes the user id.
     // Common shapes: req.user.id  |  req.userId  |  res.locals.user.id
     const userId =
       (req as unknown as { user?: { id?: string }; userId?: string }).user
         ?.id ?? (req as unknown as { userId?: string }).userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    if (!userId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
 
     const affiliateId = (req.body ?? {}).affiliate_id;
     if (!affiliateId || typeof affiliateId !== "string") {
-      return res.status(400).json({ error: "affiliate_id is required" });
+      res.status(400).json({ error: "affiliate_id is required" });
+      return;
     }
 
-    const data = await affiliateService.setUserAffiliation(userId, affiliateId);
+    const data = await setUserAffiliation(userId, affiliateId);
     res.json({ data });
   } catch (err) {
     res
@@ -45,9 +59,12 @@ export async function setMyAffiliation(req: Request, res: Response) {
 // ── Admin ────────────────────────────────────────────────────────────────────
 
 // GET /admin/affiliates  — all affiliates + signup_count.
-export async function adminListAffiliates(_req: Request, res: Response) {
+export async function adminListAffiliates(
+  _req: Request,
+  res: Response,
+): Promise<void> {
   try {
-    const data = await affiliateService.listAllWithCounts();
+    const data = await listAllWithCounts();
     res.json({ data });
   } catch (err) {
     res
@@ -57,7 +74,10 @@ export async function adminListAffiliates(_req: Request, res: Response) {
 }
 
 // POST /admin/affiliates
-export async function adminCreateAffiliate(req: Request, res: Response) {
+export async function adminCreateAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const body = req.body ?? {};
     if (
@@ -65,11 +85,10 @@ export async function adminCreateAffiliate(req: Request, res: Response) {
       typeof body.name !== "string" ||
       body.name.trim().length < 2
     ) {
-      return res
-        .status(400)
-        .json({ error: "name is required (min 2 characters)" });
+      res.status(400).json({ error: "name is required (min 2 characters)" });
+      return;
     }
-    const data = await affiliateService.create(body);
+    const data = await create(body);
     res.status(201).json({ data });
   } catch (err) {
     // e.g. duplicate slug → surface a clean message
@@ -80,11 +99,17 @@ export async function adminCreateAffiliate(req: Request, res: Response) {
 }
 
 // PATCH /admin/affiliates/:id
-export async function adminUpdateAffiliate(req: Request, res: Response) {
+export async function adminUpdateAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const { id } = req.params;
-    if (!id) return res.status(400).json({ error: "id is required" });
-    const data = await affiliateService.update(id, req.body ?? {});
+    if (!id) {
+      res.status(400).json({ error: "id is required" });
+      return;
+    }
+    const data = await update(id, req.body ?? {});
     res.json({ data });
   } catch (err) {
     res
@@ -94,11 +119,17 @@ export async function adminUpdateAffiliate(req: Request, res: Response) {
 }
 
 // DELETE /admin/affiliates/:id
-export async function adminDeleteAffiliate(req: Request, res: Response) {
+export async function adminDeleteAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
   try {
     const { id } = req.params;
-    if (!id) return res.status(400).json({ error: "id is required" });
-    await affiliateService.remove(id);
+    if (!id) {
+      res.status(400).json({ error: "id is required" });
+      return;
+    }
+    await remove(id);
     res.json({ data: { id, deleted: true } });
   } catch (err) {
     res
