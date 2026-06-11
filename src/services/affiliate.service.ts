@@ -6,7 +6,7 @@
 // Your backend already has one (it powers admin reads/writes that bypass RLS).
 // Common locations: "../config/supabase", "../lib/supabaseAdmin", "../db/supabase".
 
-import { supabase } from "../lib";
+import { supabase, supabaseAdmin } from "../lib";
 
 const TABLE = "affiliates";
 
@@ -98,7 +98,7 @@ export async function create(input: AffiliateInput) {
     notes: input.notes ?? null,
     active: input.active ?? true,
   };
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from(TABLE)
     .insert(row)
     .select()
@@ -112,7 +112,7 @@ export async function update(id: string, input: AffiliateInput) {
   for (const f of WRITABLE_FIELDS) {
     if (input[f] !== undefined) patch[f] = input[f];
   }
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from(TABLE)
     .update(patch)
     .eq("id", id)
@@ -126,7 +126,7 @@ export async function remove(id: string) {
   // Hard delete. profiles.affiliation_id is ON DELETE SET NULL, and the
   // denormalized profiles.affiliation (name) is preserved, so historical
   // attribution survives the delete.
-  const { error } = await supabase.from(TABLE).delete().eq("id", id);
+  const { error } = await supabaseAdmin.from(TABLE).delete().eq("id", id);
   if (error) throw error;
 }
 
