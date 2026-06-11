@@ -26,6 +26,8 @@ import planRoutes from "../routes/plan.routes";
 import authRoutes from "../routes/auth.routes";
 import feedbackRoutes from "../routes/feedback.routes";
 import ebayRoutes from "../routes/ebay.routes";
+import affiliateRoutes from "../routes/affiliate.routes";
+import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
 
 dotenv.config();
 
@@ -48,6 +50,7 @@ app.use(morgan("combined"));
 // Mounting billing first ensures its own (correct) public-webhook ordering wins.
 app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/ebay", ebayRoutes);
+app.use("/api/v1", affiliateRoutes);
 
 app.use("/api/v1", planRoutes);
 app.use("/api/v1", authRoutes);
@@ -60,6 +63,8 @@ app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/portfolio", portfolioRoutes);
 app.use("/api/v1/variants", variantRoutes);
 app.use("/api/v1/admin", adminRoutes);
+app.use("/api/v1/admin", affiliateAdminRoutes);
+
 app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
 app.use("/api/v1/grading", aiGradingRoutes);
