@@ -1,0 +1,29 @@
+// affiliate.routes.ts
+//
+// PUBLIC + authenticated-user routes.
+//
+// IMPORTANT — mount order: GET /affiliates must stay PUBLIC (the user isn't
+// signed in yet on the signup screen). If your app applies a blanket
+// `router.use(authenticateUser)` on the API prefix, this router must be mounted
+// ABOVE those protected routers — exactly like your billing webhook fix in app.ts.
+//
+// PATCH /me/affiliation declares its own authenticateUser, so it stays protected
+// regardless of mount order.
+
+import { Router } from "express";
+// TODO: adjust import path/name to your auth middleware.
+import {
+  listActiveAffiliates,
+  setMyAffiliation,
+} from "../controllers/affiliate.controller";
+import { authenticateUser } from "../middleware/auth.middleware";
+
+const router = Router();
+
+// Public — signup dropdown.
+router.get("/affiliates", listActiveAffiliates);
+
+// Authenticated — attach chosen affiliate to the signed-in user's profile.
+router.patch("/me/affiliation", authenticateUser, setMyAffiliation);
+
+export default router;
