@@ -11,6 +11,7 @@ import {
 } from "../services/affiliate.service";
 import {
   claimUrl,
+  getAffiliateForClaim,
   issueClaimToken,
   sendAffiliateInvite,
 } from "../services/affiliateClaim.service";
@@ -26,6 +27,23 @@ export async function listActiveAffiliates(_req: Request, res: Response) {
     res
       .status(500)
       .json({ error: errMessage(err, "Failed to load affiliates") });
+  }
+}
+
+// GET /affiliates/claim/:token  — validate a claim code (no auth) and return
+// the affiliate fields used to prefill the registration screen. Read-only:
+// does NOT consume the token.
+export async function getAffiliateClaim(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const { token } = req.params;
+    const data = await getAffiliateForClaim(token);
+    res.json({ data });
+  } catch (err) {
+    const status = errStatus(err, 400);
+    res.status(status).json({ error: errMessage(err, "Invalid claim code") });
   }
 }
 
@@ -229,6 +247,14 @@ function errMessage(err: unknown, fallback: string): string {
   if (typeof err === "object" && err && "message" in err) {
     const m = (err as { message?: unknown }).message;
     if (typeof m === "string") return m;
+  }
+  return fallback;
+}
+
+function errStatus(err: unknown, fallback: number): number {
+  if (typeof err === "object" && err && "status" in err) {
+    const s = (err as { status?: unknown }).status;
+    if (typeof s === "number") return s;
   }
   return fallback;
 }

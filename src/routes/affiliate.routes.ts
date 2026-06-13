@@ -13,6 +13,7 @@
 import { Router } from "express";
 // TODO: adjust import path/name to your auth middleware.
 import {
+  getAffiliateClaim,
   listActiveAffiliates,
   setMyAffiliation,
 } from "../controllers/affiliate.controller";
@@ -22,6 +23,9 @@ const router = Router();
 
 // Public — signup dropdown.
 router.get("/affiliates", listActiveAffiliates);
+
+// Public — validate an affiliate claim code and return prefill data.
+router.get("/affiliates/claim/:token", getAffiliateClaim);
 
 // Authenticated — attach chosen affiliate to the signed-in user's profile.
 router.patch("/me/affiliation", authenticateUser, setMyAffiliation);
