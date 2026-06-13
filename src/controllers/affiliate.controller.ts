@@ -2,12 +2,18 @@
 import type { Request, Response } from "express";
 import {
   create,
+  getById,
   listActive,
   listAllWithCounts,
   remove,
   setUserAffiliation,
   update,
 } from "../services/affiliate.service";
+import {
+  claimUrl,
+  issueClaimToken,
+  sendAffiliateInvite,
+} from "../services/affiliateClaim.service";
 
 // ── Public ───────────────────────────────────────────────────────────────────
 
@@ -89,12 +95,91 @@ export async function adminCreateAffiliate(
       return;
     }
     const data = await create(body);
-    res.status(201).json({ data });
+
+    // Issue a single-use claim token so this affiliate can register their own
+    // account, and email it to their contact address if we have one. Email is
+    // best-effort: a send failure must not fail affiliate creation (the admin
+    // can resend, and the token is returned below for manual delivery).
+    const invite: {
+      emailed: boolean;
+      email_error?: string;
+      claim_url: string;
+      token: string;
+      expires_at: string;
+    } = {
+      emailed: false,
+      claim_url: "",
+      token: "",
+      expires_at: "",
+    };
+    try {
+      const issued = await issueClaimToken(data.id);
+      invite.token = issued.token;
+      invite.expires_at = issued.expires_at;
+      invite.claim_url = claimUrl(issued.token);
+      if (data.contact_email) {
+        try {
+          await sendAffiliateInvite(data, issued.token);
+          invite.emailed = true;
+        } catch (mailErr) {
+          invite.email_error = errMessage(
+            mailErr,
+            "Failed to send invite email",
+          );
+        }
+      }
+    } catch (tokenErr) {
+      invite.email_error = errMessage(tokenErr, "Failed to issue claim token");
+    }
+
+    res.status(201).json({ data, invite });
   } catch (err) {
     // e.g. duplicate slug → surface a clean message
     res
       .status(400)
       .json({ error: errMessage(err, "Failed to create affiliate") });
+  }
+}
+
+// POST /admin/affiliates/:id/invite — (re)issue + (re)send the claim invite.
+export async function adminResendAffiliateInvite(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ error: "id is required" });
+      return;
+    }
+    const affiliate = await getById(id);
+    const issued = await issueClaimToken(id);
+
+    let emailed = false;
+    let email_error: string | undefined;
+    if (affiliate.contact_email) {
+      try {
+        await sendAffiliateInvite(affiliate, issued.token);
+        emailed = true;
+      } catch (mailErr) {
+        email_error = errMessage(mailErr, "Failed to send invite email");
+      }
+    } else {
+      email_error = "Affiliate has no contact email";
+    }
+
+    res.json({
+      data: {
+        id,
+        emailed,
+        email_error,
+        claim_url: claimUrl(issued.token),
+        token: issued.token,
+        expires_at: issued.expires_at,
+      },
+    });
+  } catch (err) {
+    res.status(400).json({ error: errMessage(err, "Failed to resend invite") });
   }
 }
 

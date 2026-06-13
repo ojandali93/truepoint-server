@@ -21,6 +21,8 @@ export interface AffiliateInput {
   website?: string | null;
   notes?: string | null;
   active?: boolean;
+  collector_rate?: number | null;
+  pro_rate?: number | null;
 }
 
 const WRITABLE_FIELDS: (keyof AffiliateInput)[] = [
@@ -34,6 +36,8 @@ const WRITABLE_FIELDS: (keyof AffiliateInput)[] = [
   "website",
   "notes",
   "active",
+  "collector_rate",
+  "pro_rate",
 ];
 
 // Public — the trimmed list for the signup dropdown (active only).
@@ -98,6 +102,13 @@ export async function create(input: AffiliateInput) {
     notes: input.notes ?? null,
     active: input.active ?? true,
   };
+  // Only set rates when explicitly provided, so the column defaults
+  // (0.0500 / 0.0700) apply otherwise. Setting null would override the default.
+  if (input.collector_rate !== undefined && input.collector_rate !== null)
+    row.collector_rate = input.collector_rate;
+  if (input.pro_rate !== undefined && input.pro_rate !== null)
+    row.pro_rate = input.pro_rate;
+
   const { data, error } = await supabaseAdmin
     .from(TABLE)
     .insert(row)
