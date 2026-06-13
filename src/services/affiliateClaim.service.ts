@@ -226,3 +226,105 @@ export async function sendAffiliateInvite(
   const { subject, html, text } = buildInviteEmail(affiliate, token);
   await sendEmail({ to, subject, html, text });
 }
+
+// ── Consume (claim) ─────────────────────────────────────────────────────────
+
+export interface ClaimResult {
+  affiliate_id: string;
+  name: string;
+  slug: string | null;
+  plan: "pro";
+}
+
+/**
+ * Grant the partner comp Pro benefit by inserting a subscriptions row that
+ * resolvePlan() will pick up (it reads the highest active plan from the
+ * subscriptions table — no RevenueCat call needed). Idempotent: skips if an
+ * active comp Pro row already exists for the user.
+ */
+async function grantCompPro(userId: string): Promise<void> {
+  const { data: existing, error: selErr } = await supabaseAdmin
+    .from("subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("platform", "comp")
+    .eq("plan", "pro")
+    .in("status", ["active", "trialing"])
+    .limit(1);
+  if (selErr) throw selErr;
+  if (existing && existing.length > 0) return;
+
+  const { error: insErr } = await supabaseAdmin.from("subscriptions").insert({
+    user_id: userId,
+    plan: "pro",
+    status: "active",
+    platform: "comp",
+  });
+  if (insErr) throw insErr;
+}
+
+/**
+ * Atomically claim an affiliate record for a (just-registered, authenticated)
+ * user: burn the single-use token, link affiliates.user_id, flip status to
+ * 'active', and grant the comp Pro benefit.
+ *
+ * Single-use is enforced by the conditional burn: the UPDATE only matches rows
+ * where claimed_at IS NULL, so two concurrent claims race at the row level and
+ * exactly one wins; the loser gets a 409.
+ */
+export async function consumeClaimToken(
+  userId: string,
+  token: string,
+): Promise<ClaimResult> {
+  // Precise validation first (404 invalid / 409 used / 410 expired).
+  const prefill = await getAffiliateForClaim(token);
+  const affiliateId = prefill.affiliate_id;
+
+  // Atomic single-use burn.
+  const nowIso = new Date().toISOString();
+  const { data: burned, error: burnErr } = await supabaseAdmin
+    .from(CLAIM_TABLE)
+    .update({ claimed_at: nowIso, claimed_by_user_id: userId })
+    .eq("token", token)
+    .is("claimed_at", null)
+    .select("id, affiliate_id")
+    .maybeSingle();
+  if (burnErr) throw burnErr;
+  if (!burned) {
+    throw Object.assign(new Error("This claim code has already been used"), {
+      status: 409,
+    });
+  }
+
+  // Link the affiliate to this user (only if not already linked).
+  const { data: aff, error: linkErr } = await supabaseAdmin
+    .from(AFFILIATE_TABLE)
+    .update({ user_id: userId, status: "active" })
+    .eq("id", affiliateId)
+    .is("user_id", null)
+    .select("id, name, slug")
+    .maybeSingle();
+  if (linkErr) throw linkErr;
+  if (!aff) {
+    // Affiliate was already linked to someone else — undo the burn so this
+    // token isn't wasted, then surface a conflict.
+    await supabaseAdmin
+      .from(CLAIM_TABLE)
+      .update({ claimed_at: null, claimed_by_user_id: null })
+      .eq("id", burned.id);
+    throw Object.assign(
+      new Error("This affiliate is already linked to an account"),
+      { status: 409 },
+    );
+  }
+
+  // Grant the comp Pro benefit (idempotent).
+  await grantCompPro(userId);
+
+  return {
+    affiliate_id: aff.id,
+    name: aff.name,
+    slug: aff.slug ?? null,
+    plan: "pro",
+  };
+}

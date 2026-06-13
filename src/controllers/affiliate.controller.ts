@@ -11,6 +11,7 @@ import {
 } from "../services/affiliate.service";
 import {
   claimUrl,
+  consumeClaimToken,
   getAffiliateForClaim,
   issueClaimToken,
   sendAffiliateInvite,
@@ -77,6 +78,37 @@ export async function setMyAffiliation(
     res
       .status(400)
       .json({ error: errMessage(err, "Failed to set affiliation") });
+  }
+}
+
+// POST /affiliates/claim/consume — the signed-in (just-registered) user claims
+// their affiliate record: burns the single-use token, links the affiliate to
+// this account, activates it, and grants the comp Pro benefit.
+export async function claimAffiliateAccount(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const userId =
+      (req as unknown as { user?: { id?: string }; userId?: string }).user
+        ?.id ?? (req as unknown as { userId?: string }).userId;
+    if (!userId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+
+    const token = (req.body ?? {}).token;
+    if (!token || typeof token !== "string") {
+      res.status(400).json({ error: "token is required" });
+      return;
+    }
+
+    const data = await consumeClaimToken(userId, token);
+    res.json({ data });
+  } catch (err) {
+    res
+      .status(errStatus(err, 400))
+      .json({ error: errMessage(err, "Failed to claim affiliate account") });
   }
 }
 

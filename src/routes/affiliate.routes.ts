@@ -13,6 +13,7 @@
 import { Router } from "express";
 // TODO: adjust import path/name to your auth middleware.
 import {
+  claimAffiliateAccount,
   getAffiliateClaim,
   listActiveAffiliates,
   setMyAffiliation,
@@ -26,6 +27,14 @@ router.get("/affiliates", listActiveAffiliates);
 
 // Public — validate an affiliate claim code and return prefill data.
 router.get("/affiliates/claim/:token", getAffiliateClaim);
+
+// Authenticated — the just-registered user consumes their claim token:
+// links the affiliate record to this account + grants the comp Pro benefit.
+router.post(
+  "/affiliates/claim/consume",
+  authenticateUser,
+  claimAffiliateAccount,
+);
 
 // Authenticated — attach chosen affiliate to the signed-in user's profile.
 router.patch("/me/affiliation", authenticateUser, setMyAffiliation);
