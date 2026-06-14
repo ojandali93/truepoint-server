@@ -15,15 +15,25 @@ import { Router } from "express";
 import {
   claimAffiliateAccount,
   getAffiliateClaim,
+  getMyAffiliate,
   listActiveAffiliates,
   setMyAffiliation,
+  submitAffiliateApplication,
 } from "../controllers/affiliate.controller";
 import { authenticateUser } from "../middleware/auth.middleware";
+import { optionalAuth } from "../middleware/optionalAuth";
 
 const router = Router();
 
 // Public — signup dropdown.
 router.get("/affiliates", listActiveAffiliates);
+
+// Public/member — submit a self-service affiliate application. optionalAuth:
+// a valid session links the application to that account (member branch).
+router.post("/affiliates/apply", optionalAuth, submitAffiliateApplication);
+
+// Authenticated — the caller's affiliate status (gates the in-app entry).
+router.get("/affiliates/me", authenticateUser, getMyAffiliate);
 
 // Public — validate an affiliate claim code and return prefill data.
 router.get("/affiliates/claim/:token", getAffiliateClaim);

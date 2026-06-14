@@ -1,11 +1,17 @@
 // affiliate.controller.ts
 import type { Request, Response } from "express";
+import { supabaseAdmin } from "../lib";
 import {
+  applyAffiliate,
+  approveAffiliate,
   create,
+  getAffiliateByUserId,
   getById,
   listActive,
   listAllWithCounts,
+  rejectAffiliate,
   remove,
+  setAffiliateActive,
   setUserAffiliation,
   update,
 } from "../services/affiliate.service";
@@ -13,8 +19,10 @@ import {
   claimUrl,
   consumeClaimToken,
   getAffiliateForClaim,
+  grantCompPro,
   issueClaimToken,
   sendAffiliateInvite,
+  sendApprovedEmail,
 } from "../services/affiliateClaim.service";
 
 // ── Public ───────────────────────────────────────────────────────────────────
@@ -270,6 +278,270 @@ export async function adminDeleteAffiliate(
     res
       .status(400)
       .json({ error: errMessage(err, "Failed to delete affiliate") });
+  }
+}
+
+// ── Self-service applications (Phase 1) ──────────────────────────────────────
+
+const SOCIAL_KEYS = [
+  "instagram",
+  "tiktok",
+  "youtube",
+  "twitter",
+  "facebook",
+  "twitch",
+  "website",
+] as const;
+
+// Keep only known platforms with non-empty string handles; cap length. Prevents
+// arbitrary/huge jsonb payloads from the public endpoint.
+function cleanSocials(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const k of SOCIAL_KEYS) {
+      const v = (raw as Record<string, unknown>)[k];
+      if (typeof v === "string" && v.trim()) out[k] = v.trim().slice(0, 200);
+    }
+  }
+  return out;
+}
+
+function isEmail(s: unknown): s is string {
+  return typeof s === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
+// POST /affiliates/apply — create a pending application. optionalAuth: a valid
+// session means the member branch (account linked, email trusted from session).
+export async function submitAffiliateApplication(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const u = (req as unknown as { user?: { id?: string; email?: string } })
+      .user;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    // Honeypot — bots fill hidden fields; humans leave them empty. Pretend success.
+    if (typeof body.hp_field === "string" && body.hp_field.trim()) {
+      res.status(201).json({ data: { status: "pending" } });
+      return;
+    }
+
+    const personName = typeof body.name === "string" ? body.name.trim() : "";
+    const businessName =
+      typeof body.business_name === "string" ? body.business_name.trim() : "";
+    if (!personName && !businessName) {
+      res.status(400).json({ error: "Your name is required" });
+      return;
+    }
+
+    const phone =
+      typeof body.phone === "string" ? body.phone.trim() || null : null;
+    const requested_slug =
+      typeof body.requested_slug === "string" ? body.requested_slug : null;
+    const socials = cleanSocials(body.socials);
+
+    let userId: string | null = null;
+    let contactEmail: string | null = null;
+
+    if (u?.id) {
+      // Member branch: trust the session for identity. Ignore any form email.
+      userId = u.id;
+      contactEmail = u.email ?? null;
+      // Block a second affiliate for the same account (also DB-guarded).
+      const existing = await getAffiliateByUserId(userId);
+      if (existing) {
+        res.status(409).json({
+          error:
+            existing.status === "pending"
+              ? "You already have an affiliate application pending."
+              : "You're already part of the affiliate program.",
+        });
+        return;
+      }
+    } else {
+      // Guest branch: require a valid email, and block emails that already
+      // have an account (those users must apply from inside the app).
+      if (!isEmail(body.email)) {
+        res.status(400).json({ error: "A valid email is required" });
+        return;
+      }
+      contactEmail = (body.email as string).trim();
+      const { data: exists, error: rpcErr } = await supabaseAdmin.rpc(
+        "email_has_account",
+        { p_email: contactEmail },
+      );
+      if (rpcErr) throw rpcErr;
+      if (exists === true) {
+        res.status(409).json({
+          error:
+            "An account already exists for this email. Please log in and apply from the app.",
+        });
+        return;
+      }
+    }
+
+    const data = await applyAffiliate(
+      {
+        name: businessName || null,
+        contact_name: personName || null,
+        contact_email: contactEmail,
+        contact_phone: phone,
+        requested_slug,
+        socials,
+      },
+      userId,
+    );
+
+    res.status(201).json({ data: { status: "pending", id: data.id } });
+  } catch (err) {
+    // Map the DB prevention guards to friendly messages.
+    const code = (err as { code?: string }).code;
+    const msg = errMessage(err, "");
+    if (code === "23505") {
+      if (msg.includes("one_open_application")) {
+        res.status(409).json({
+          error: "You already have an affiliate application pending.",
+        });
+        return;
+      }
+      if (msg.includes("one_per_user")) {
+        res
+          .status(409)
+          .json({ error: "You're already part of the affiliate program." });
+        return;
+      }
+    }
+    res
+      .status(errStatus(err, 400))
+      .json({ error: errMessage(err, "Failed to submit application") });
+  }
+}
+
+// GET /affiliates/me — the caller's affiliate status (or null). Gates the
+// in-app "Become an affiliate" entry.
+export async function getMyAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const userId = (req as unknown as { user?: { id?: string } }).user?.id;
+    if (!userId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    const aff = await getAffiliateByUserId(userId);
+    res.json({
+      data: aff
+        ? {
+            id: aff.id,
+            status: aff.status,
+            slug: aff.slug ?? null,
+            approved_at: aff.approved_at ?? null,
+          }
+        : null,
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: errMessage(err, "Failed to load affiliate status") });
+  }
+}
+
+// POST /admin/affiliates/:id/approve — confirm/override slug, then branch:
+// member (has account) → activate + grant comp Pro + approved email;
+// guest (no account) → issue claim token + invite email.
+export async function adminApproveAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ error: "id is required" });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const slug = typeof body.slug === "string" ? body.slug : "";
+    const collector_rate =
+      typeof body.collector_rate === "number" ? body.collector_rate : undefined;
+    const pro_rate =
+      typeof body.pro_rate === "number" ? body.pro_rate : undefined;
+
+    const affiliate = await approveAffiliate(id, {
+      slug,
+      collector_rate,
+      pro_rate,
+    });
+
+    if (affiliate.user_id) {
+      // Member branch — upgrade their existing account.
+      const linked = await setAffiliateActive(id);
+      await grantCompPro(affiliate.user_id);
+      let emailed = false;
+      let email_error: string | undefined;
+      try {
+        await sendApprovedEmail(linked);
+        emailed = true;
+      } catch (mailErr) {
+        email_error = errMessage(mailErr, "Failed to send approved email");
+      }
+      res.json({ data: linked, granted: true, emailed, email_error });
+      return;
+    }
+
+    // Guest branch — issue a claim token + invite email.
+    const issued = await issueClaimToken(id);
+    let emailed = false;
+    let email_error: string | undefined;
+    if (affiliate.contact_email) {
+      try {
+        await sendAffiliateInvite(affiliate, issued.token);
+        emailed = true;
+      } catch (mailErr) {
+        email_error = errMessage(mailErr, "Failed to send invite email");
+      }
+    } else {
+      email_error = "Affiliate has no contact email";
+    }
+    res.json({
+      data: affiliate,
+      invite: {
+        emailed,
+        email_error,
+        claim_url: claimUrl(issued.token),
+        token: issued.token,
+        expires_at: issued.expires_at,
+      },
+    });
+  } catch (err) {
+    res
+      .status(errStatus(err, 400))
+      .json({ error: errMessage(err, "Failed to approve affiliate") });
+  }
+}
+
+// POST /admin/affiliates/:id/reject
+export async function adminRejectAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      res.status(400).json({ error: "id is required" });
+      return;
+    }
+    const reason =
+      typeof (req.body ?? {}).reason === "string"
+        ? (req.body as { reason: string }).reason
+        : undefined;
+    const data = await rejectAffiliate(id, reason);
+    res.json({ data });
+  } catch (err) {
+    res
+      .status(errStatus(err, 400))
+      .json({ error: errMessage(err, "Failed to reject affiliate") });
   }
 }
 

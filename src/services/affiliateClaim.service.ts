@@ -227,6 +227,78 @@ export async function sendAffiliateInvite(
   await sendEmail({ to, subject, html, text });
 }
 
+// ── Approved email (existing-account applicants) ─────────────────────────────
+
+function buildApprovedEmail(affiliate: AffiliateLike) {
+  const referral = affiliate.slug
+    ? affiliate.slug
+    : "(shown in your affiliate dashboard)";
+  const subject = "You're approved — TruePoint TCG Affiliate Program";
+
+  const html = `
+  <div style="background:#0D0E11;padding:32px 0;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+    <div style="max-width:520px;margin:0 auto;background:#16171B;border:1px solid #2A2C31;border-radius:14px;overflow:hidden;">
+      <div style="padding:28px 32px;border-bottom:1px solid #2A2C31;">
+        <div style="color:#C9A961;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;">TruePoint TCG</div>
+        <div style="color:#F4F4F5;font-size:20px;font-weight:600;margin-top:6px;">You're approved 🎉</div>
+      </div>
+      <div style="padding:28px 32px;color:#C7C9CE;font-size:15px;line-height:1.6;">
+        <p style="margin:0 0 16px;">Hi ${affiliate.name},</p>
+        <p style="margin:0 0 16px;">
+          Your affiliate application has been approved. Your TruePoint account
+          has been upgraded to <strong style="color:#F4F4F5;">Pro, free</strong>
+          as a partner — no action needed; it's already active next time you open
+          the app.
+        </p>
+
+        <div style="background:#0F1013;border:1px solid #2A2C31;border-radius:10px;padding:16px 18px;margin:0 0 20px;">
+          <div style="color:#8A8D94;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px;">Your referral code (give this to customers)</div>
+          <div style="color:#C9A961;font-size:18px;font-weight:600;font-family:'DM Mono',ui-monospace,monospace;">${referral}</div>
+        </div>
+
+        <p style="margin:0 0 4px;color:#8A8D94;font-size:13px;">
+          Anyone who signs up with your code is attributed to you. Payout setup
+          opens around July 1, 2026 in your affiliate dashboard.
+        </p>
+      </div>
+      <div style="padding:18px 32px;border-top:1px solid #2A2C31;color:#6B6E76;font-size:12px;">
+        TruePoint TCG
+      </div>
+    </div>
+  </div>`;
+
+  const text = [
+    `Hi ${affiliate.name},`,
+    ``,
+    `Your affiliate application has been approved. Your TruePoint account is now Pro, free, as a partner — already active next time you open the app.`,
+    ``,
+    `Your referral code (give this to customers): ${referral}`,
+    ``,
+    `Anyone who signs up with your code is attributed to you. Payout setup opens around July 1, 2026 in your affiliate dashboard.`,
+    ``,
+    `TruePoint TCG`,
+  ].join("\n");
+
+  return { subject, html, text };
+}
+
+/**
+ * Email an approved applicant who ALREADY has an account (member branch).
+ * No claim link — their account is upgraded directly. Throws if no email.
+ */
+export async function sendApprovedEmail(
+  affiliate: AffiliateLike,
+): Promise<void> {
+  const to = affiliate.contact_email?.trim();
+  if (!to) {
+    throw Object.assign(new Error("Affiliate has no contact email"), {
+      status: 400,
+    });
+  }
+  const { subject, html, text } = buildApprovedEmail(affiliate);
+  await sendEmail({ to, subject, html, text });
+}
+
 // ── Consume (claim) ─────────────────────────────────────────────────────────
 
 export interface ClaimResult {
@@ -242,7 +314,7 @@ export interface ClaimResult {
  * subscriptions table — no RevenueCat call needed). Idempotent: skips if an
  * active comp Pro row already exists for the user.
  */
-async function grantCompPro(userId: string): Promise<void> {
+export async function grantCompPro(userId: string): Promise<void> {
   const { data: existing, error: selErr } = await supabaseAdmin
     .from("subscriptions")
     .select("id")

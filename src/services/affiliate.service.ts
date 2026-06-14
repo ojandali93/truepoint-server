@@ -171,3 +171,186 @@ export async function setUserAffiliation(userId: string, affiliateId: string) {
   if (error) throw error;
   return data;
 }
+
+// ── Self-service applications (Phase 1) ──────────────────────────────────────
+
+export interface ApplicationInput {
+  name?: string | null; // business name (display); falls back to person name
+  contact_name?: string | null; // person's name
+  contact_email?: string | null;
+  contact_phone?: string | null;
+  requested_slug?: string | null;
+  socials?: Record<string, string> | null;
+}
+
+/** Lowercase, hyphenate, strip to [a-z0-9-]. Returns null if empty. */
+export function normalizeSlug(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return s.length ? s : null;
+}
+
+/** The affiliate record (if any) linked to a user account. */
+export async function getAffiliateByUserId(userId: string) {
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+}
+
+/**
+ * Create a pending application. `userId` set → member branch (source 'app',
+ * account linked, NOT active until approved). The DB guards
+ * (one-open-application-per-email, one-affiliate-per-user) enforce uniqueness;
+ * the controller maps their unique-violation errors to friendly messages.
+ */
+export async function applyAffiliate(
+  input: ApplicationInput,
+  userId?: string | null,
+) {
+  const personName = (input.contact_name ?? "").trim();
+  const businessName = (input.name ?? "").trim();
+  const displayName = businessName || personName;
+  if (displayName.length < 2) {
+    throw Object.assign(new Error("Name is required"), { status: 400 });
+  }
+
+  const row: Record<string, unknown> = {
+    name: displayName,
+    type: "creator",
+    contact_name: personName || null,
+    contact_email: input.contact_email ?? null,
+    contact_phone: input.contact_phone ?? null,
+    requested_slug: normalizeSlug(input.requested_slug),
+    socials: input.socials ?? {},
+    status: "pending",
+    active: false, // not live until approved
+    source: userId ? "app" : "web",
+    user_id: userId ?? null,
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .insert(row)
+    .select("id, status")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Approve a pending application: confirm/override the live slug, stamp
+ * approved_at, optionally set rates, and flip the affiliate live (active=true).
+ * Idempotency + collision guards throw status-tagged errors. Does NOT issue the
+ * token / grant comp / send email — the controller orchestrates that based on
+ * whether the applicant already has an account (user_id).
+ */
+export async function approveAffiliate(
+  id: string,
+  opts: { slug: string; collector_rate?: number; pro_rate?: number },
+) {
+  const current = await getById(id);
+  if (!current) {
+    throw Object.assign(new Error("Affiliate not found"), { status: 404 });
+  }
+  if (current.status !== "pending" || current.approved_at) {
+    throw Object.assign(
+      new Error("This application has already been processed"),
+      { status: 409 },
+    );
+  }
+
+  const slug = normalizeSlug(opts.slug);
+  if (!slug) {
+    throw Object.assign(new Error("A referral code (slug) is required"), {
+      status: 400,
+    });
+  }
+
+  // Collision guard: no other affiliate may hold this slug (case-insensitive).
+  const { data: clash, error: clashErr } = await supabaseAdmin
+    .from(TABLE)
+    .select("id")
+    .ilike("slug", slug)
+    .neq("id", id)
+    .limit(1);
+  if (clashErr) throw clashErr;
+  if (clash && clash.length > 0) {
+    throw Object.assign(
+      new Error(`The code "${slug}" is already in use — choose another`),
+      { status: 409 },
+    );
+  }
+
+  const patch: Record<string, unknown> = {
+    slug,
+    approved_at: new Date().toISOString(),
+    active: true,
+  };
+  if (opts.collector_rate !== undefined && opts.collector_rate !== null)
+    patch.collector_rate = opts.collector_rate;
+  if (opts.pro_rate !== undefined && opts.pro_rate !== null)
+    patch.pro_rate = opts.pro_rate;
+
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** Mark an affiliate active (member-approval branch, after linking exists). */
+export async function setAffiliateActive(id: string) {
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .update({ status: "active" })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+/** Reject a pending application. */
+export async function rejectAffiliate(id: string, reason?: string) {
+  const current = await getById(id);
+  if (!current) {
+    throw Object.assign(new Error("Affiliate not found"), { status: 404 });
+  }
+  if (current.status !== "pending" || current.approved_at) {
+    throw Object.assign(
+      new Error("This application has already been processed"),
+      { status: 409 },
+    );
+  }
+  const patch: Record<string, unknown> = {
+    status: "rejected",
+    rejected_at: new Date().toISOString(),
+    active: false,
+  };
+  if (reason && reason.trim()) {
+    patch.notes = current.notes
+      ? `${current.notes}\n[Rejected] ${reason.trim()}`
+      : `[Rejected] ${reason.trim()}`;
+  }
+  const { data, error } = await supabaseAdmin
+    .from(TABLE)
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
