@@ -23,6 +23,13 @@ export interface AffiliateInput {
   active?: boolean;
   collector_rate?: number | null;
   pro_rate?: number | null;
+  // ── Self-service application fields (Phase 0) ──
+  // Multiple socials, e.g. { instagram, tiktok, youtube, twitter, facebook }.
+  socials?: Record<string, string> | null;
+  // The code the applicant *proposes*; the live unique `slug` is set on approval.
+  requested_slug?: string | null;
+  // Where the application came from: 'web' (public form) or 'app' (logged-in).
+  source?: "web" | "app" | null;
 }
 
 const WRITABLE_FIELDS: (keyof AffiliateInput)[] = [
@@ -38,6 +45,9 @@ const WRITABLE_FIELDS: (keyof AffiliateInput)[] = [
   "active",
   "collector_rate",
   "pro_rate",
+  "socials",
+  "requested_slug",
+  "source",
 ];
 
 // Public — the trimmed list for the signup dropdown (active only).
