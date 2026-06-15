@@ -4,6 +4,7 @@ import { supabaseAdmin } from "../lib";
 import {
   applyAffiliate,
   approveAffiliate,
+  countSignupsForAffiliate,
   create,
   getAffiliateByUserId,
   getById,
@@ -418,36 +419,6 @@ export async function submitAffiliateApplication(
   }
 }
 
-// GET /affiliates/me — the caller's affiliate status (or null). Gates the
-// in-app "Become an affiliate" entry.
-export async function getMyAffiliate(
-  req: Request,
-  res: Response,
-): Promise<void> {
-  try {
-    const userId = (req as unknown as { user?: { id?: string } }).user?.id;
-    if (!userId) {
-      res.status(401).json({ error: "Not authenticated" });
-      return;
-    }
-    const aff = await getAffiliateByUserId(userId);
-    res.json({
-      data: aff
-        ? {
-            id: aff.id,
-            status: aff.status,
-            slug: aff.slug ?? null,
-            approved_at: aff.approved_at ?? null,
-          }
-        : null,
-    });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ error: errMessage(err, "Failed to load affiliate status") });
-  }
-}
-
 // POST /admin/affiliates/:id/approve — confirm/override slug, then branch:
 // member (has account) → activate + grant comp Pro + approved email;
 // guest (no account) → issue claim token + invite email.
@@ -561,4 +532,51 @@ function errStatus(err: unknown, fallback: number): number {
     if (typeof s === "number") return s;
   }
   return fallback;
+}
+
+export async function getMyAffiliate(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  try {
+    const userId = (req as unknown as { user?: { id?: string } }).user?.id;
+    if (!userId) {
+      res.status(401).json({ error: "Not authenticated" });
+      return;
+    }
+    const aff = await getAffiliateByUserId(userId);
+    if (!aff) {
+      res.json({ data: null });
+      return;
+    }
+
+    // Only meaningful once they're a live affiliate, but cheap to always compute.
+    let signup_count = 0;
+    try {
+      signup_count = await countSignupsForAffiliate(aff.id);
+    } catch {
+      // Non-fatal: a count failure shouldn't blank out the whole dashboard.
+      signup_count = 0;
+    }
+
+    res.json({
+      data: {
+        id: aff.id,
+        name: aff.name ?? null,
+        type: aff.type ?? null,
+        status: aff.status ?? null,
+        active: aff.active ?? false,
+        slug: aff.slug ?? null,
+        requested_slug: aff.requested_slug ?? null,
+        approved_at: aff.approved_at ?? null,
+        collector_rate: aff.collector_rate ?? null,
+        pro_rate: aff.pro_rate ?? null,
+        signup_count,
+      },
+    });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ error: errMessage(err, "Failed to load affiliate status") });
+  }
 }

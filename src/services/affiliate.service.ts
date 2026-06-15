@@ -207,6 +207,17 @@ export async function getAffiliateByUserId(userId: string) {
   return data ?? null;
 }
 
+export async function countSignupsForAffiliate(
+  affiliateId: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("affiliation_id", affiliateId);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 /**
  * Create a pending application. `userId` set → member branch (source 'app',
  * account linked, NOT active until approved). The DB guards
