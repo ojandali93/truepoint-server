@@ -28,6 +28,7 @@ import feedbackRoutes from "../routes/feedback.routes";
 import ebayRoutes from "../routes/ebay.routes";
 import affiliateRoutes from "../routes/affiliate.routes";
 import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
+import scanRoutes from "../routes/scan.routes";
 
 dotenv.config();
 
@@ -48,6 +49,8 @@ app.use(morgan("combined"));
 // RevenueCat webhook POST /api/v1/billing/revenuecat-webhook gets intercepted
 // and 401'd by the auth router before it ever reaches the billing router.
 // Mounting billing first ensures its own (correct) public-webhook ordering wins.
+app.use("/api/v1/scan", scanRoutes);
+
 app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/ebay", ebayRoutes);
 app.use("/api/v1", affiliateRoutes);
