@@ -10,12 +10,26 @@
 // tcgapisProductSync) works unchanged because it reads tcgapis_product_id,
 // which now equals the id.
 //
+// LANGUAGE: we ingest two TCGPlayer categories — English Pokémon (3) and
+// Pokemon Japan (85). groupId/productId are globally unique across categories,
+// so EN and JP never collide. Each set/card/product is stamped with `language`
+// ("English" | "Japanese") so the app can filter/badge. Requires columns:
+//   sets.language text not null default 'English'
+//   cards.language text
+//   products.language text
+//
 // pokemontcg.io is the FALLBACK only for game metadata TCGAPIs doesn't return
-// (supertype, subtypes, hp, types) — see pokemontcgFallback.service.ts.
+// (supertype, subtypes, hp, types) — see pokemontcgFallback.service.ts. Note it
+// is English-only, so Japanese cards won't get those fields backfilled.
 
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
-import { tcgapisGet, POKEMON_CATEGORY_ID, sleep } from "../lib/tcgapisClient";
+import {
+  tcgapisGet,
+  POKEMON_CATEGORY_ID,
+  POKEMON_JP_CATEGORY_ID,
+  sleep,
+} from "../lib/tcgapisClient";
 
 // ─── TCGAPIs response types ───────────────────────────────────────────────────
 
@@ -77,22 +91,33 @@ const inferProductType = (name: string): string => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SETS — native (groupId = id)
+// SETS — native (groupId = id), across English + Japanese categories
 // ═══════════════════════════════════════════════════════════════════════════
 
+const POKEMON_CATEGORIES: { categoryId: number; language: string }[] = [
+  { categoryId: POKEMON_CATEGORY_ID, language: "English" }, // 3
+  { categoryId: POKEMON_JP_CATEGORY_ID, language: "Japanese" }, // 85
+];
+
 export const syncSets = async (): Promise<{ synced: number }> => {
-  const expansions: TCGExpansion[] = [];
-  let offset = 0;
-  while (true) {
-    await sleep(200);
-    const data = await tcgapisGet<TCGExpansionsResponse>(
-      `/api/v2/expansions/${POKEMON_CATEGORY_ID}`,
-      { limit: 100, offset },
-    );
-    expansions.push(...(data.data ?? []));
-    if (expansions.length >= data.total || (data.data?.length ?? 0) < 100)
-      break;
-    offset += 100;
+  // Pull expansions for each category, tagging every one with its language.
+  const expansions: Array<TCGExpansion & { language: string }> = [];
+
+  for (const cat of POKEMON_CATEGORIES) {
+    let offset = 0;
+    let pulled = 0; // per-category counter (total is per-category)
+    while (true) {
+      await sleep(200);
+      const data = await tcgapisGet<TCGExpansionsResponse>(
+        `/api/v2/expansions/${cat.categoryId}`,
+        { limit: 100, offset },
+      );
+      const batch = data.data ?? [];
+      expansions.push(...batch.map((e) => ({ ...e, language: cat.language })));
+      pulled += batch.length;
+      if (pulled >= data.total || batch.length < 100) break;
+      offset += 100;
+    }
   }
 
   if (!expansions.length) {
@@ -105,6 +130,7 @@ export const syncSets = async (): Promise<{ synced: number }> => {
     series: null as string | null, // TCGAPIs doesn't provide series; pokemontcg fallback can fill
     release_date: exp.publishedOn ? exp.publishedOn.slice(0, 10) : null,
     tcgapis_group_id: exp.groupId,
+    language: exp.language,
     synced_at: new Date().toISOString(),
   }));
 
@@ -142,11 +168,15 @@ export const syncCardsForSet = async (
 ): Promise<{ cards: number; products: number }> => {
   const { data: set } = await supabaseAdmin
     .from("sets")
-    .select("id, tcgapis_group_id")
+    .select("id, tcgapis_group_id, language")
     .eq("id", setId)
     .single();
 
   if (!set?.tcgapis_group_id) return { cards: 0, products: 0 };
+
+  // Inherit the set's language so cards/products carry it too (default English
+  // for any legacy set row that predates the language column).
+  const language = (set.language as string | null) ?? "English";
 
   const apiItems: TCGCard[] = [];
   let offset = 0;
@@ -180,6 +210,7 @@ export const syncCardsForSet = async (
     image_large: c.image ?? null,
     tcgapis_product_id: c.productId,
     catalog_source: "tcgapis",
+    language,
     synced_at: now,
   }));
 
@@ -211,6 +242,7 @@ export const syncCardsForSet = async (
     set_id: setId,
     product_type: inferProductType(c.name),
     image_url: c.image ?? null,
+    language,
     synced_at: now,
   }));
 
@@ -255,11 +287,12 @@ export const syncFullCatalog = async (): Promise<{
     .single();
   const logId = logRow?.id;
 
-  // 1. Sets
+  // 1. Sets (English + Japanese)
   const { synced: setsSynced } = await syncSets();
   await sleep(1000);
 
-  // 2. Cards + sealed products per set
+  // 2. Cards + sealed products per set (every set with a tcgapis_group_id,
+  //    which now includes Japanese sets automatically).
   const { data: sets } = await supabaseAdmin
     .from("sets")
     .select("id")
