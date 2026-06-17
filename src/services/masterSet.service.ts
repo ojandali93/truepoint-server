@@ -25,7 +25,8 @@ export const canTrackMoreSets = async (
   const { plan } = await resolvePlan(userId, role);
 
   return {
-    canTrack,
+    allowed: canTrack, // the frontend reads `allowed`
+    canTrack, // kept for internal callers (addTracking destructures this)
     current,
     limit,
     plan,

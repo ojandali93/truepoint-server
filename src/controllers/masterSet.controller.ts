@@ -18,7 +18,7 @@ export const getTracked = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const [sets, limit] = await Promise.all([
       getTrackedSets(req.user.id),
-      canTrackMoreSets(req.user.id),
+      canTrackMoreSets(req.user.id, req.user.role ?? null),
     ]);
     res.json({ data: { sets, limit } });
   } catch (e: any) {
@@ -38,7 +38,7 @@ export const getTracked = async (req: AuthenticatedRequest, res: Response) => {
 // GET /master-sets/limit — plan limit info
 export const getLimit = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const limit = await canTrackMoreSets(req.user.id);
+    const limit = await canTrackMoreSets(req.user.id, req.user.role ?? null);
     res.json({ data: limit });
   } catch (e: any) {
     await logError({
