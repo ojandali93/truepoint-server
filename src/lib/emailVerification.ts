@@ -48,7 +48,12 @@ function parseSignedPayload(token: string): Record<string, unknown> | null {
     .digest("hex");
   if (sig.length !== expectedSig.length) return null;
   try {
-    if (!crypto.timingSafeEqual(Buffer.from(sig, "hex"), Buffer.from(expectedSig, "hex")))
+    if (
+      !crypto.timingSafeEqual(
+        Buffer.from(sig, "hex"),
+        Buffer.from(expectedSig, "hex"),
+      )
+    )
       return null;
   } catch {
     return null;
@@ -61,6 +66,7 @@ function parseSignedPayload(token: string): Record<string, unknown> | null {
 }
 
 export async function getVerificationStatus(userId: string): Promise<{
+  emailVerified: any;
   verified: boolean;
   canResend: boolean;
 }> {
@@ -80,7 +86,11 @@ export async function getVerificationStatus(userId: string): Promise<{
 export async function sendVerificationEmail(
   userId: string,
   email: string,
-): Promise<{ ok: true; sentAt: string }> {
+): Promise<{
+  sent: any;
+  ok: true;
+  sentAt: string;
+}> {
   const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (error || !data?.user) {
     throw Object.assign(new Error("User not found"), { status: 404 });
@@ -95,15 +105,16 @@ export async function sendVerificationEmail(
 
   const appUrl = process.env.APP_URL?.replace(/\/$/, "") ?? "";
   if (!appUrl) {
-    throw Object.assign(new Error("APP_URL is not configured"), { status: 503 });
+    throw Object.assign(new Error("APP_URL is not configured"), {
+      status: 503,
+    });
   }
 
   const resendKey = process.env.RESEND_API_KEY;
   if (!resendKey?.trim()) {
-    throw Object.assign(
-      new Error("RESEND_API_KEY is not configured"),
-      { status: 503 },
-    );
+    throw Object.assign(new Error("RESEND_API_KEY is not configured"), {
+      status: 503,
+    });
   }
 
   verificationSecret();
@@ -130,12 +141,15 @@ export async function sendVerificationEmail(
     },
   );
 
-  const { error: upErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-    user_metadata: {
-      ...user.user_metadata,
-      tp_email_ver_sent_at: Date.now(),
+  const { error: upErr } = await supabaseAdmin.auth.admin.updateUserById(
+    userId,
+    {
+      user_metadata: {
+        ...user.user_metadata,
+        tp_email_ver_sent_at: Date.now(),
+      },
     },
-  });
+  );
   if (upErr) throw upErr;
 
   return { ok: true, sentAt: new Date().toISOString() };
@@ -176,9 +190,12 @@ export async function verifyEmailToken(token: string): Promise<{
     return { verified: true, userId };
   }
 
-  const { error: upErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-    email_confirm: true,
-  });
+  const { error: upErr } = await supabaseAdmin.auth.admin.updateUserById(
+    userId,
+    {
+      email_confirm: true,
+    },
+  );
   if (upErr) {
     return { verified: false, reason: upErr.message };
   }

@@ -33,6 +33,10 @@ import {
   fetchAndCacheGradedPrices,
   getGradedPricesForCard,
 } from "../services/poketracePriceSync.service";
+import {
+  getVerificationStatus,
+  sendVerificationEmail,
+} from "../lib/emailVerification";
 
 const handle = (res: Response, err: unknown) => {
   const msg = err instanceof Error ? err.message : "Admin operation failed";
@@ -660,4 +664,42 @@ export const runPoketraceDiagnostics = async (
 
   const overall = steps.every((s) => s.status === "ok") ? "ok" : "fail";
   res.json({ data: { steps, overall, elapsedMs: Date.now() - t0 } });
+};
+
+// POST /admin/users/:userId/resend-verification
+// Admin-triggered resend of the verification email to a specific user.
+// Skips already-verified users; bypasses the 60s user-facing cooldown.
+export const resendUserVerification = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+
+    // Already verified → nothing to send.
+    const status = await getVerificationStatus(userId);
+    if (status.emailVerified) {
+      res.json({ data: { sent: false, alreadyVerified: true } });
+      return;
+    }
+
+    // Resolve the user's email from Supabase auth.
+    const { data: authData, error } =
+      await supabaseAdmin.auth.admin.getUserById(userId);
+    if (error || !authData?.user?.email) {
+      res.status(404).json({ error: "User email not found" });
+      return;
+    }
+
+    const result = await sendVerificationEmail(userId, authData.user.email);
+    res.json({
+      data: {
+        sent: result.sent,
+        alreadyVerified: false,
+        email: authData.user.email,
+      },
+    });
+  } catch (err) {
+    handle(res, err);
+  }
 };

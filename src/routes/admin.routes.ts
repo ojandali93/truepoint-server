@@ -35,6 +35,7 @@ import {
   updateSetting,
   broadcastNotification,
   runPoketraceDiagnostics,
+  resendUserVerification,
 } from "../controllers/adminPlatform.controller";
 
 const router = Router();
@@ -82,5 +83,10 @@ router.post("/variants", saveSetVariants as any);
 
 router.post("/broadcast", broadcastNotification as any);
 router.get("/diagnostics/poketrace", runPoketraceDiagnostics as any);
+
+router.post(
+  "/users/:userId/resend-verification",
+  resendUserVerification as any,
+);
 
 export default router;
