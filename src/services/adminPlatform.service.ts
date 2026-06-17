@@ -135,10 +135,12 @@ export interface UserListFilters {
 
 export const getUsers = async (filters: UserListFilters = {}) => {
   // subscriptions FK points to auth.users not profiles, so we can't auto-join.
-  // Query profiles and subscriptions separately, merge by user_id in JS.
+  // Query profiles + subscriptions + devices separately, merge by user_id in JS.
   let q = supabaseAdmin
     .from("profiles")
-    .select("id, username, full_name, created_at", { count: "exact" })
+    .select("id, username, full_name, created_at, email_verified", {
+      count: "exact",
+    })
     .order("created_at", { ascending: false });
 
   if (filters.search) {
@@ -156,17 +158,35 @@ export const getUsers = async (filters: UserListFilters = {}) => {
   if (error) throw error;
   if (!profiles?.length) return { users: [], total: count ?? 0 };
 
-  // Fetch subscriptions for the returned profiles
   const ids = profiles.map((p) => p.id);
+
+  // Subscriptions
   const { data: subs } = await supabaseAdmin
     .from("subscriptions")
     .select("user_id, plan, status, current_period_end")
     .in("user_id", ids);
-
   const subMap = new Map((subs ?? []).map((s) => [s.user_id, s]));
+
+  // Last login = most recent last_login_at across the user's devices.
+  // (login/page.tsx + mobile both register a device on login.)
+  const { data: devices } = await supabaseAdmin
+    .from("user_devices")
+    .select("user_id, last_login_at")
+    .in("user_id", ids);
+  const lastLoginMap = new Map<string, string>();
+  for (const d of devices ?? []) {
+    if (!d.last_login_at) continue;
+    const prev = lastLoginMap.get(d.user_id);
+    // ISO timestamps compare correctly as strings
+    if (!prev || d.last_login_at > prev) {
+      lastLoginMap.set(d.user_id, d.last_login_at);
+    }
+  }
 
   const users = profiles.map((p) => ({
     ...p,
+    email_verified: p.email_verified ?? false,
+    last_login_at: lastLoginMap.get(p.id) ?? null,
     subscription: subMap.has(p.id) ? [subMap.get(p.id)] : [],
   }));
 
