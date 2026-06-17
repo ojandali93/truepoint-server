@@ -11,6 +11,7 @@ import {
   fetchAndCacheGradedPrices,
   getGradedPricesForCard,
 } from "../services/poketracePriceSync.service";
+import { resolveCardVariants } from "../services/variant.service";
 
 // ─── Sets ─────────────────────────────────────────────────────────────────────
 
@@ -126,26 +127,59 @@ export const getCardPrices = async (
 ) => {
   try {
     const { cardId } = req.params;
-    // Use CardService — not a local function
     const card = await CardService.getCardById(cardId);
     const prices = await PricingService.getAllPricesForCard(cardId);
+
+    // ── Align raw tcgplayer prices to the AUTHORITATIVE card_variants list ──
+    // The card detail must show the same variants as the set browser. We drive
+    // the list from card_variants (resolveCardVariants) and attach each
+    // variant's price from market_prices (casing/separator-tolerant). Rows for
+    // variants the card doesn't actually have (e.g. a stale reverse_holofoil)
+    // are dropped; real variants with no price row still appear.
+    const setId =
+      (card as any).set?.id ?? (card as any).setId ?? (card as any).set_id;
+    const authoritative = await resolveCardVariants(
+      card.id,
+      (card as any).rarity ?? "",
+      setId,
+    );
+
+    const norm = (v: string | null | undefined) =>
+      (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    const rawTcg = prices.tcgplayer.filter((p) => !p.grade);
+    const gradedTcg = prices.tcgplayer.filter((p) => p.grade); // keep graded rows
+
+    const alignedTcg = authoritative.map((vd) => {
+      const match = rawTcg.find((p) => norm(p.variant) === norm(vd.type));
+      return {
+        cardId: card.id,
+        source: "tcgplayer",
+        variant: vd.type,
+        variantLabel: vd.label,
+        variantColor: vd.color,
+        grade: null,
+        lowPrice: match?.lowPrice ?? null,
+        midPrice: match?.midPrice ?? null,
+        highPrice: match?.highPrice ?? null,
+        marketPrice: match?.marketPrice ?? null,
+        fetchedAt: match?.fetchedAt ?? null,
+      };
+    });
+
     res.json({
       data: {
         card: { id: card.id, name: card.name, set: card.set.name },
-        prices,
+        prices: {
+          ...prices,
+          tcgplayer: [...alignedTcg, ...gradedTcg],
+        },
       },
     });
   } catch (err: any) {
-    await logError({
-      source: "get-card-prices", // ← change per controller
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message });
+    res
+      .status(err?.statusCode ?? 500)
+      .json({ error: err?.message ?? "Failed to load prices" });
   }
 };
 
