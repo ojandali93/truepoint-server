@@ -1,26 +1,19 @@
 // src/services/catalogSync.service.ts
 // TCGAPIs-NATIVE catalog sync.
 //
-// Since the catalog was purged, TCGAPIs is now the native keyspace:
 //   sets.id  = String(groupId)      sets.tcgapis_group_id   = groupId
 //   cards.id = String(productId)    cards.tcgapis_product_id = productId
 //
-// No name/number matching needed — every set/card is inserted with its real
-// TCGAPIs ID. The entire pricing pipeline (tcgapisSync variants, tcgapisSkuSync,
-// tcgapisProductSync) works unchanged because it reads tcgapis_product_id,
-// which now equals the id.
+// LANGUAGE: ingests English Pokémon (category 3) + Pokemon Japan (category 85).
+// Each set/card/product is stamped with `language`.
 //
-// LANGUAGE: we ingest two TCGPlayer categories — English Pokémon (3) and
-// Pokemon Japan (85). groupId/productId are globally unique across categories,
-// so EN and JP never collide. Each set/card/product is stamped with `language`
-// ("English" | "Japanese") so the app can filter/badge. Requires columns:
-//   sets.language text not null default 'English'
-//   cards.language text
-//   products.language text
-//
-// pokemontcg.io is the FALLBACK only for game metadata TCGAPIs doesn't return
-// (supertype, subtypes, hp, types) — see pokemontcgFallback.service.ts. Note it
-// is English-only, so Japanese cards won't get those fields backfilled.
+// ROBUST UPSERT: rows are upserted in batches, but a Postgres array upsert is a
+// SINGLE statement — one bad row fails the WHOLE batch. Previously a failed
+// batch was logged-and-skipped, silently losing up to 100 cards (which shows up
+// as scattered missing collector numbers, since cards arrive in productId order,
+// not number order). Now a failed batch is retried row-by-row so only the
+// offending row is skipped — and that row is logged with its id/name/number/
+// rarity, making the real constraint violation obvious in Error Logs.
 
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
@@ -61,16 +54,10 @@ interface TCGCardsResponse {
 }
 
 // ─── Sealed-product classification ────────────────────────────────────────────
-// TCGAPIs returns sealed products mixed into the cards endpoint, flagged by
-// rarity === 'sealed'. We route those to the `products` table and map each to
-// one of the products.product_type enum values by name.
 
 const isSealed = (c: TCGCard): boolean =>
   (c.rarity ?? "").toLowerCase() === "sealed";
 
-// Maps a sealed product name to a products.product_type enum value.
-// Enum: booster_box | elite_trainer_box | bundle | tin | collection |
-//       blister | promo_pack | ultra_premium_collection | special_collection
 const PRODUCT_TYPE_RULES: Array<[RegExp, string]> = [
   [/elite trainer box/i, "elite_trainer_box"],
   [/booster box/i, "booster_box"],
@@ -80,14 +67,76 @@ const PRODUCT_TYPE_RULES: Array<[RegExp, string]> = [
   [/bundle/i, "bundle"],
   [/blister/i, "blister"],
   [/\btin\b/i, "tin"],
-  [/booster pack/i, "blister"], // single/loose packs — closest enum
+  [/booster pack/i, "blister"],
   [/promo/i, "promo_pack"],
   [/collection/i, "collection"],
 ];
 
 const inferProductType = (name: string): string => {
   for (const [re, type] of PRODUCT_TYPE_RULES) if (re.test(name)) return type;
-  return "collection"; // safe default — always a valid enum value
+  return "collection";
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROBUST UPSERT — batch first, then row-by-row on failure
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface UpsertRow {
+  id: string;
+  name?: string;
+  number?: string;
+  rarity?: string | null;
+  [k: string]: unknown;
+}
+
+const upsertRows = async (
+  table: "sets" | "cards" | "products",
+  rows: UpsertRow[],
+  source: string,
+  setId: string | null,
+): Promise<number> => {
+  let synced = 0;
+
+  for (let i = 0; i < rows.length; i += 100) {
+    const chunk = rows.slice(i, i + 100);
+
+    const { error } = await supabaseAdmin
+      .from(table)
+      .upsert(chunk, { onConflict: "id" });
+
+    if (!error) {
+      synced += chunk.length;
+      continue;
+    }
+
+    // Batch failed — almost always one bad row. Retry individually so the rest
+    // of the batch still lands, and log the exact offender(s).
+    for (const row of chunk) {
+      const { error: rowErr } = await supabaseAdmin
+        .from(table)
+        .upsert(row, { onConflict: "id" });
+
+      if (rowErr) {
+        await logError({
+          source,
+          message: `Row upsert failed: ${rowErr.message}`,
+          error: rowErr,
+          userId: null,
+          metadata: {
+            setId,
+            id: row.id,
+            name: row.name ?? null,
+            number: row.number ?? null,
+            rarity: row.rarity ?? null,
+          },
+        });
+      } else {
+        synced += 1;
+      }
+    }
+  }
+
+  return synced;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -100,12 +149,11 @@ const POKEMON_CATEGORIES: { categoryId: number; language: string }[] = [
 ];
 
 export const syncSets = async (): Promise<{ synced: number }> => {
-  // Pull expansions for each category, tagging every one with its language.
   const expansions: Array<TCGExpansion & { language: string }> = [];
 
   for (const cat of POKEMON_CATEGORIES) {
     let offset = 0;
-    let pulled = 0; // per-category counter (total is per-category)
+    let pulled = 0;
     while (true) {
       await sleep(200);
       const data = await tcgapisGet<TCGExpansionsResponse>(
@@ -124,38 +172,17 @@ export const syncSets = async (): Promise<{ synced: number }> => {
     throw new Error("No expansions returned from TCGAPIs");
   }
 
-  const rows = expansions.map((exp) => ({
+  const rows: UpsertRow[] = expansions.map((exp) => ({
     id: String(exp.groupId),
     name: exp.name,
-    series: null as string | null, // TCGAPIs doesn't provide series; pokemontcg fallback can fill
+    series: null as string | null,
     release_date: exp.publishedOn ? exp.publishedOn.slice(0, 10) : null,
     tcgapis_group_id: exp.groupId,
     language: exp.language,
     synced_at: new Date().toISOString(),
   }));
 
-  // Upsert in chunks (PostgREST limits payload size)
-  let synced = 0;
-  for (let i = 0; i < rows.length; i += 100) {
-    const chunk = rows.slice(i, i + 100);
-    const { error } = await supabaseAdmin
-      .from("sets")
-      .upsert(chunk, { onConflict: "id" });
-    if (error) {
-      await logError({
-        source: "catalog-sync-sets",
-        message: error.message,
-        error,
-        userId: null,
-        requestPath: "",
-        requestMethod: "",
-        metadata: { chunkStart: i },
-      });
-    } else {
-      synced += chunk.length;
-    }
-  }
-
+  const synced = await upsertRows("sets", rows, "catalog-sync-sets", null);
   return { synced };
 };
 
@@ -174,8 +201,6 @@ export const syncCardsForSet = async (
 
   if (!set?.tcgapis_group_id) return { cards: 0, products: 0 };
 
-  // Inherit the set's language so cards/products carry it too (default English
-  // for any legacy set row that predates the language column).
   const language = (set.language as string | null) ?? "English";
 
   const apiItems: TCGCard[] = [];
@@ -195,12 +220,11 @@ export const syncCardsForSet = async (
 
   const now = new Date().toISOString();
 
-  // Split: sealed → products table, everything else → cards table
   const sealedItems = apiItems.filter(isSealed);
   const cardItems = apiItems.filter((c) => !isSealed(c));
 
   // ── Cards ──
-  const cardRows = cardItems.map((c) => ({
+  const cardRows: UpsertRow[] = cardItems.map((c) => ({
     id: String(c.productId),
     name: c.name,
     number: c.number ?? "",
@@ -214,29 +238,15 @@ export const syncCardsForSet = async (
     synced_at: now,
   }));
 
-  let cardsSynced = 0;
-  for (let i = 0; i < cardRows.length; i += 100) {
-    const chunk = cardRows.slice(i, i + 100);
-    const { error } = await supabaseAdmin
-      .from("cards")
-      .upsert(chunk, { onConflict: "id" });
-    if (error) {
-      await logError({
-        source: "catalog-sync-cards",
-        message: error.message,
-        error,
-        userId: null,
-        requestPath: "",
-        requestMethod: "",
-        metadata: { setId, chunkStart: i },
-      });
-    } else {
-      cardsSynced += chunk.length;
-    }
-  }
+  const cardsSynced = await upsertRows(
+    "cards",
+    cardRows,
+    "catalog-sync-cards",
+    setId,
+  );
 
   // ── Products (sealed) ──
-  const productRows = sealedItems.map((c) => ({
+  const productRows: UpsertRow[] = sealedItems.map((c) => ({
     id: String(c.productId),
     name: c.name,
     set_id: setId,
@@ -246,26 +256,12 @@ export const syncCardsForSet = async (
     synced_at: now,
   }));
 
-  let productsSynced = 0;
-  for (let i = 0; i < productRows.length; i += 100) {
-    const chunk = productRows.slice(i, i + 100);
-    const { error } = await supabaseAdmin
-      .from("products")
-      .upsert(chunk, { onConflict: "id" });
-    if (error) {
-      await logError({
-        source: "catalog-sync-products",
-        message: error.message,
-        error,
-        userId: null,
-        requestPath: "",
-        requestMethod: "",
-        metadata: { setId, chunkStart: i },
-      });
-    } else {
-      productsSynced += chunk.length;
-    }
-  }
+  const productsSynced = await upsertRows(
+    "products",
+    productRows,
+    "catalog-sync-products",
+    setId,
+  );
 
   return { cards: cardsSynced, products: productsSynced };
 };
@@ -287,12 +283,9 @@ export const syncFullCatalog = async (): Promise<{
     .single();
   const logId = logRow?.id;
 
-  // 1. Sets (English + Japanese)
   const { synced: setsSynced } = await syncSets();
   await sleep(1000);
 
-  // 2. Cards + sealed products per set (every set with a tcgapis_group_id,
-  //    which now includes Japanese sets automatically).
   const { data: sets } = await supabaseAdmin
     .from("sets")
     .select("id")
@@ -316,8 +309,6 @@ export const syncFullCatalog = async (): Promise<{
         message: err?.message ?? "set card sync failed",
         error: err,
         userId: null,
-        requestPath: "",
-        requestMethod: "",
         metadata: { setId: set.id },
       });
     }
