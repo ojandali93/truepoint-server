@@ -1,15 +1,17 @@
 // src/services/scan.service.ts
-// Turns a CardSight identification into one of OUR cards.
+// Turns a Ximilar identification into one of OUR cards.
 //
-// CardSight gives name + releaseName (set) + number but no TCGPlayer id, so we
-// match against the cards table (joined to sets) by scoring name + number + set
-// overlap. The best candidate is returned in the same shape getCardById uses, so
-// the mobile add-to-inventory flow can consume it directly. If nothing matches
-// confidently we still return what CardSight read, with card=null, and the app
-// routes the user to manual search.
+// Ximilar's tcg_id returns the best-matching card with a direct TCGPlayer
+// product link (best_match.links["tcgplayer.com"] = .../product/<id>). Because
+// our cards.id IS String(tcgplayerProductId), we match EXACTLY off that id — no
+// fuzzy scoring needed. Only if the link is missing or the id isn't in our
+// catalog do we fall back to the old name + number + set scoring. The result is
+// returned in the same shape getCardById uses so the mobile add-to-inventory
+// flow consumes it directly. If nothing matches we still return what Ximilar
+// read (card=null) and the app routes the user to manual search.
 
 import { supabaseAdmin } from "../lib/supabase";
-import { identifyCard } from "../lib/cardsightClient";
+import { identifyCard, type XimilarMatch } from "../lib/ximilarClient";
 
 export interface ScanIdentified {
   name: string | null;
@@ -27,9 +29,9 @@ export interface ScanMatchedCard {
   set: { id: string; name: string };
 }
 export interface ScanResult {
-  confidence: string | null; // CardSight visual confidence: High | Medium | Low
+  confidence: string | null; // visual confidence: High | Medium | Low
   matchConfidence: "high" | "low"; // our DB-match confidence
-  identified: ScanIdentified; // what CardSight read (for display / fallback)
+  identified: ScanIdentified; // what Ximilar read (for display / fallback)
   card: ScanMatchedCard | null; // our catalog card, or null → manual search
 }
 
@@ -71,6 +73,32 @@ const toMatchedCard = (c: CardRow): ScanMatchedCard => ({
   set: { id: c.set_id, name: c.sets?.name ?? c.set_id },
 });
 
+// ─── Exact match via TCGPlayer product id ─────────────────────────────────────
+
+// best_match.links can be { "tcgplayer.com": "https://www.tcgplayer.com/product/84606", ... }
+const TCGPLAYER_ID_RE = /tcgplayer\.com\/product\/(\d+)/i;
+
+const tcgplayerIdFromLinks = (
+  links: Record<string, string> | undefined,
+): string | null => {
+  for (const v of Object.values(links ?? {})) {
+    const m = String(v).match(TCGPLAYER_ID_RE);
+    if (m) return m[1];
+  }
+  return null;
+};
+
+async function fetchCardById(id: string): Promise<ScanMatchedCard | null> {
+  const { data } = await supabaseAdmin
+    .from("cards")
+    .select(CARD_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+  return data ? toMatchedCard(data as CardRow) : null;
+}
+
+// ─── Fuzzy fallback (name + number + set) ─────────────────────────────────────
+
 async function matchCard(
   name: string,
   setName: string,
@@ -82,7 +110,6 @@ async function matchCard(
     .select(CARD_SELECT)
     .ilike("name", `%${name}%`)
     .limit(100);
-
   let candidates = (data ?? null) as CardRow[] | null;
 
   // Fallback: by exact number if name found nothing.
@@ -92,7 +119,7 @@ async function matchCard(
       .select(CARD_SELECT)
       .eq("number", number)
       .limit(100);
-    candidates = (r.data ?? null) as CardRow[] | null;
+    candidates = r.data as CardRow[] | null;
   }
 
   const rows = candidates ?? [];
@@ -143,29 +170,55 @@ async function matchCard(
   return { card: toMatchedCard(best), matchConfidence };
 }
 
+// ─── Visual confidence from Ximilar distance ──────────────────────────────────
+
+const confidenceFromDistance = (d: number | null): string => {
+  if (d == null) return "Low";
+  if (d <= 0.35) return "High";
+  if (d <= 0.55) return "Medium";
+  return "Low";
+};
+
+// ─── Entry point ──────────────────────────────────────────────────────────────
+
 export async function identifyAndMatch(
   base64: string,
-  mime: string,
+  _mime: string, // accepted for controller compatibility; Ximilar needs only base64
 ): Promise<ScanResult[]> {
-  const resp = await identifyCard(base64, mime);
-  const detections = resp.detections ?? [];
+  const ident = await identifyCard(base64);
+  const bm: XimilarMatch | null = ident.bestMatch;
 
-  const results: ScanResult[] = [];
-  for (const d of detections) {
-    const name = d.card?.name ?? null;
-    const set = d.card?.releaseName ?? null;
-    const number = d.card?.number ?? null;
+  // Nothing recognized → empty result; app shows "no match / search manually".
+  if (!bm) return [];
 
-    let matched: { card: ScanMatchedCard | null; matchConfidence: "high" | "low" } =
-      { card: null, matchConfidence: "low" };
-    if (name) matched = await matchCard(name, set ?? "", number ?? "");
+  const name = bm.name ?? bm.full_name ?? null;
+  const set = bm.set ?? null;
+  const number = bm.card_number ?? null;
 
-    results.push({
-      confidence: d.confidence ?? null,
-      matchConfidence: matched.matchConfidence,
-      identified: { name, set, number },
-      card: matched.card,
-    });
+  let card: ScanMatchedCard | null = null;
+  let matchConfidence: "high" | "low" = "low";
+
+  // 1) EXACT: TCGPlayer product id from the link === our cards.id.
+  const tcgId = tcgplayerIdFromLinks(bm.links);
+  if (tcgId) {
+    card = await fetchCardById(tcgId);
+    if (card) matchConfidence = "high";
   }
-  return results;
+
+  // 2) FALLBACK: fuzzy name + number + set (e.g. link missing, or JP card whose
+  //    TCGPlayer id maps to the English product rather than our JP catalog row).
+  if (!card && name) {
+    const m = await matchCard(name, set ?? "", number ?? "");
+    card = m.card;
+    matchConfidence = m.matchConfidence;
+  }
+
+  return [
+    {
+      confidence: confidenceFromDistance(ident.distance),
+      matchConfidence,
+      identified: { name, set, number },
+      card,
+    },
+  ];
 }
