@@ -2,6 +2,7 @@ export interface PokemonSet {
   id: string;
   name: string;
   series: string;
+  language?: string;
   printedTotal: number;
   total: number;
   releaseDate: string;
@@ -29,7 +30,7 @@ export interface PokemonCard {
 
 export interface NormalizedPrice {
   cardId: string;
-  source: 'tcgplayer' | 'cardmarket' | 'justtcg' | 'ebay';
+  source: "tcgplayer" | "cardmarket" | "justtcg" | "ebay";
   variant: string | null;
   grade: string | null;
   lowPrice: number | null;

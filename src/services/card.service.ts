@@ -29,6 +29,7 @@ export const getAllSets = async (): Promise<PokemonSet[]> => {
       id: row.id,
       name: row.name,
       series: row.series,
+      language: row.language ?? "English",
       printedTotal: row.printed_total,
       total: row.total_cards_master, // ← was row.total
       releaseDate: row.release_date,
@@ -52,9 +53,11 @@ export const getSetById = async (setId: string): Promise<PokemonSet> => {
       id: dbSet.id,
       name: dbSet.name,
       series: dbSet.series,
+      language: dbSet.language ?? "English",
       printedTotal: dbSet.printed_total,
       total: dbSet.total,
       releaseDate: dbSet.release_date,
+
       images: { symbol: dbSet.symbol_url, logo: dbSet.logo_url },
     };
   }
