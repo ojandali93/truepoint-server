@@ -266,8 +266,7 @@ export const fetchCardPrices = async (
   const { data, error } = await supabaseAdmin
     .from("market_prices")
     .select("card_id, source, variant, grade, market_price")
-    .in("card_id", cardIds)
-    .gt("expires_at", new Date().toISOString());
+    .in("card_id", cardIds);
 
   if (error) {
     console.error("[InventoryRepo] fetchCardPrices error:", error);

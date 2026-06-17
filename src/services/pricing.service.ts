@@ -1,11 +1,18 @@
 // src/services/pricing.service.ts
 // Reads prices from market_prices table and resolves values for inventory/portfolio.
-// Prices are populated by cardMarketPriceSync.service.ts via the bulk sync.
+// Prices are populated by the bulk sync (daily) + on-demand writes.
 // No external API calls here — this is purely a DB reader.
+//
+// AVAILABILITY: reads NEVER filter by expires_at. market_prices keeps exactly
+// one current row per (card_id, source, variant, grade) — upserted in place — so
+// the latest value is ALWAYS readable, even if stale. expires_at remains only as
+// a freshness signal for the background refresh; it never makes a price vanish.
+// This prevents portfolio totals from swinging when a card hasn't been refreshed
+// recently (an expired row used to be filtered out → counted as 0 → big drop).
 
-import { supabaseAdmin } from '../lib/supabase';
-import { TTLCache, TTL } from '../lib/cache';
-import type { NormalizedPrice } from '../types/pokemon.types';
+import { supabaseAdmin } from "../lib/supabase";
+import { TTLCache, TTL } from "../lib/cache";
+import type { NormalizedPrice } from "../types/pokemon.types";
 
 const memCache = new TTLCache<NormalizedPrice[]>();
 
@@ -15,17 +22,14 @@ export const findCachedPrices = async (
   cardId: string,
   source?: string,
 ): Promise<NormalizedPrice[]> => {
-  let q = supabaseAdmin
-    .from('market_prices')
-    .select('*')
-    .eq('card_id', cardId)
-    .gt('expires_at', new Date().toISOString());
+  // No expires_at gate — always return the latest cached row(s) for the card.
+  let q = supabaseAdmin.from("market_prices").select("*").eq("card_id", cardId);
 
-  if (source) q = q.eq('source', source);
+  if (source) q = q.eq("source", source);
 
   const { data, error } = await q;
   if (error) {
-    console.error('[PricingService] findCachedPrices error:', error.message);
+    console.error("[PricingService] findCachedPrices error:", error.message);
     return [];
   }
 
@@ -43,7 +47,7 @@ export const findCachedPrices = async (
 };
 
 // ─── Get all prices for a card (read from cache only) ─────────────────────────
-// Prices come from the bulk CardMarket sync, not fetched on-demand.
+// Prices come from the bulk sync, not fetched on-demand here.
 
 export const getAllPricesForCard = async (
   cardId: string,
@@ -56,9 +60,9 @@ export const getAllPricesForCard = async (
   const memHit = memCache.get(memKey);
   if (memHit) {
     return {
-      tcgplayer: memHit.filter((p) => p.source === 'tcgplayer'),
-      cardmarket: memHit.filter((p) => p.source === 'cardmarket'),
-      ebay: memHit.filter((p) => p.source === 'ebay'),
+      tcgplayer: memHit.filter((p) => p.source === "tcgplayer"),
+      cardmarket: memHit.filter((p) => p.source === "cardmarket"),
+      ebay: memHit.filter((p) => p.source === "ebay"),
     };
   }
 
@@ -68,9 +72,9 @@ export const getAllPricesForCard = async (
   }
 
   return {
-    tcgplayer: cached.filter((p) => p.source === 'tcgplayer'),
-    cardmarket: cached.filter((p) => p.source === 'cardmarket'),
-    ebay: cached.filter((p) => p.source === 'ebay'),
+    tcgplayer: cached.filter((p) => p.source === "tcgplayer"),
+    cardmarket: cached.filter((p) => p.source === "cardmarket"),
+    ebay: cached.filter((p) => p.source === "ebay"),
   };
 };
 
@@ -90,32 +94,42 @@ export const resolveMarketValue = async (
   if (gradingCompany && grade) {
     const gradeLabel = `${gradingCompany.toUpperCase()} ${grade}`;
     const graded = cached.find(
-      (p) => p.grade?.toLowerCase() === gradeLabel.toLowerCase() && p.marketPrice,
+      (p) =>
+        p.grade?.toLowerCase() === gradeLabel.toLowerCase() && p.marketPrice,
     );
-    if (graded?.marketPrice) return { price: graded.marketPrice, source: graded.source };
+    if (graded?.marketPrice)
+      return { price: graded.marketPrice, source: graded.source };
 
     // Fallback to raw price if no graded price found
-    const raw = cached.find((p) => !p.grade && p.source === 'tcgplayer' && p.marketPrice);
-    if (raw?.marketPrice) return { price: raw.marketPrice, source: 'tcgplayer (raw fallback)' };
+    const raw = cached.find(
+      (p) => !p.grade && p.source === "tcgplayer" && p.marketPrice,
+    );
+    if (raw?.marketPrice)
+      return { price: raw.marketPrice, source: "tcgplayer (raw fallback)" };
   } else {
     // TCGPlayer normal variant
     const normal = cached.find(
-      (p) => p.source === 'tcgplayer' && !p.grade &&
-        (p.variant === 'normal' || p.variant === 'unlimited') && p.marketPrice,
+      (p) =>
+        p.source === "tcgplayer" &&
+        !p.grade &&
+        (p.variant === "normal" || p.variant === "unlimited") &&
+        p.marketPrice,
     );
-    if (normal?.marketPrice) return { price: normal.marketPrice, source: 'tcgplayer' };
+    if (normal?.marketPrice)
+      return { price: normal.marketPrice, source: "tcgplayer" };
 
     // Any TCGPlayer raw price
     const anyTcg = cached.find(
-      (p) => p.source === 'tcgplayer' && !p.grade && p.marketPrice,
+      (p) => p.source === "tcgplayer" && !p.grade && p.marketPrice,
     );
-    if (anyTcg?.marketPrice) return { price: anyTcg.marketPrice, source: 'tcgplayer' };
+    if (anyTcg?.marketPrice)
+      return { price: anyTcg.marketPrice, source: "tcgplayer" };
 
     // CardMarket fallback
     const cm = cached.find(
-      (p) => p.source === 'cardmarket' && !p.grade && p.marketPrice,
+      (p) => p.source === "cardmarket" && !p.grade && p.marketPrice,
     );
-    if (cm?.marketPrice) return { price: cm.marketPrice, source: 'cardmarket' };
+    if (cm?.marketPrice) return { price: cm.marketPrice, source: "cardmarket" };
   }
 
   return { price: null, source: null };
@@ -128,25 +142,34 @@ export const batchResolveMarketValues = async (
 ): Promise<Map<string, number | null>> => {
   if (!cardIds.length) return new Map();
 
+  // No expires_at gate — always read the latest raw price per card so portfolio
+  // values never blank out on stale rows.
   const { data } = await supabaseAdmin
-    .from('market_prices')
-    .select('card_id, source, variant, grade, market_price')
-    .in('card_id', cardIds)
-    .is('grade', null)
-    .gt('expires_at', new Date().toISOString());
+    .from("market_prices")
+    .select("card_id, source, variant, grade, market_price")
+    .in("card_id", cardIds)
+    .is("grade", null);
 
   const priceMap = new Map<string, number | null>();
 
   // TCGPlayer first
   for (const row of data ?? []) {
-    if (!priceMap.has(row.card_id) && row.source === 'tcgplayer' && row.market_price) {
+    if (
+      !priceMap.has(row.card_id) &&
+      row.source === "tcgplayer" &&
+      row.market_price
+    ) {
       priceMap.set(row.card_id, row.market_price);
     }
   }
 
   // CardMarket fallback for anything still missing
   for (const row of data ?? []) {
-    if (!priceMap.has(row.card_id) && row.source === 'cardmarket' && row.market_price) {
+    if (
+      !priceMap.has(row.card_id) &&
+      row.source === "cardmarket" &&
+      row.market_price
+    ) {
       priceMap.set(row.card_id, row.market_price);
     }
   }

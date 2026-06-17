@@ -34,11 +34,7 @@ export const findCachedPrices = async (
   cardId: string,
   source?: NormalizedPrice["source"],
 ): Promise<NormalizedPrice[]> => {
-  let q = supabaseAdmin
-    .from(PRICE_TABLE)
-    .select("*")
-    .eq("card_id", cardId)
-    .gt("expires_at", new Date().toISOString());
+  let q = supabaseAdmin.from(PRICE_TABLE).select("*").eq("card_id", cardId);
 
   if (source) q = q.eq("source", source);
 
@@ -85,11 +81,12 @@ export const upsertPrices = async (
 };
 
 export const purgeExpiredPrices = async (): Promise<void> => {
-  const { error } = await supabaseAdmin
-    .from(PRICE_TABLE)
-    .delete()
-    .lt("expires_at", new Date().toISOString());
-  if (error) throw error;
+  // No-op by design. market_prices keeps exactly one current row per
+  // (card_id, source, variant, grade), upserted in place, so an "expired" row
+  // is just the last-known value — NOT garbage. Deleting it would blank out
+  // portfolios for any card not refreshed recently. Freshness is handled by
+  // re-fetching (which updates expires_at), never by deletion.
+  return;
 };
 
 // ─── Sets ─────────────────────────────────────────────────────────────────────

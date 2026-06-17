@@ -2,6 +2,11 @@
 // Condition-aware price resolution for inventory items.
 // Reads from sku_prices (joined to card_skus) and resolves the best price
 // for each (card_id, variant_type, condition_code) combination.
+//
+// AVAILABILITY: reads do NOT filter by expires_at. sku_prices keeps one current
+// row per tcgapis_sku_id (upserted in place), so the latest price is always
+// readable even if stale. Freshness is handled by the nightly SKU sync; expiry
+// no longer makes a price disappear (which used to blank out the portfolio).
 
 import { supabaseAdmin } from "../lib/supabase";
 
@@ -20,17 +25,22 @@ export interface SkuPriceRow {
   lowPrice: number | null;
 }
 
+// Compare variant keys tolerant of casing/separators so inventory's snake_case
+// ("reverse_holofoil") matches the catalog's camelCase ("reverseHolofoil").
+const variantKey = (v: string | null | undefined): string =>
+  (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const sameVariant = (
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean => {
+  const ka = variantKey(a);
+  return ka !== "" && ka === variantKey(b);
+};
+
 /**
  * Batch-resolve SKU market prices for a set of inventory items.
- * Returns a Map keyed by `${cardId}|${variantType}|${conditionCode}`.
- *
- * Resolution per item (handled by the caller via fallback ladder):
- *  1. exact (card + variant + condition)
- *  2. same variant, NM condition
- *  3. any SKU for that card+variant
- *  4. any SKU for that card
- * This function returns ALL sku rows for the requested cards so the caller
- * can apply the ladder in memory without N queries.
+ * Returns a Map keyed by cardId → all SKU rows for that card; the caller applies
+ * the fallback ladder in memory (see pickSkuPrice) without N queries.
  */
 export const fetchSkuPriceRows = async (
   cardIds: string[],
@@ -39,15 +49,11 @@ export const fetchSkuPriceRows = async (
   if (!cardIds.length) return out;
 
   // Join sku_prices → card_skus to get variant/condition with each price.
-  // Supabase: use the foreign relationship by querying card_skus and
-  // embedding the latest price. We do two queries and merge by sku id.
-  const nowIso = new Date().toISOString();
-
+  // No expires_at gate — always return the latest cached price per SKU.
   const { data: priceRows, error: pErr } = await supabaseAdmin
     .from("sku_prices")
     .select("tcgapis_sku_id, card_id, market_price, low_price")
-    .in("card_id", cardIds)
-    .gt("expires_at", nowIso);
+    .in("card_id", cardIds);
 
   if (pErr) {
     console.error("[SkuPriceRepo] price fetch error:", pErr.message);
@@ -91,7 +97,8 @@ export const fetchSkuPriceRows = async (
 
 /**
  * Given the rows for one card and a desired variant+condition, pick the best
- * price using the fallback ladder. English preferred.
+ * price using the fallback ladder. English preferred. Variant comparison is
+ * casing/separator tolerant (reverse_holofoil ↔ reverseHolofoil).
  */
 export const pickSkuPrice = (
   rows: SkuPriceRow[] | undefined,
@@ -112,7 +119,7 @@ export const pickSkuPrice = (
   if (variantType && conditionCode) {
     const exact = pool.find(
       (r) =>
-        r.variantType === variantType &&
+        sameVariant(r.variantType, variantType) &&
         r.conditionCode === conditionCode &&
         priceOf(r) != null,
     );
@@ -123,7 +130,7 @@ export const pickSkuPrice = (
   if (variantType) {
     const nm = pool.find(
       (r) =>
-        r.variantType === variantType &&
+        sameVariant(r.variantType, variantType) &&
         r.conditionCode === "NM" &&
         priceOf(r) != null,
     );
@@ -131,7 +138,7 @@ export const pickSkuPrice = (
 
     // 3. any condition for that variant
     const anyCond = pool.find(
-      (r) => r.variantType === variantType && priceOf(r) != null,
+      (r) => sameVariant(r.variantType, variantType) && priceOf(r) != null,
     );
     if (anyCond)
       return { price: priceOf(anyCond), source: "tcgplayer-sku (variant)" };
