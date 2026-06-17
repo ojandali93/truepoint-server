@@ -66,8 +66,7 @@ function parseSignedPayload(token: string): Record<string, unknown> | null {
 }
 
 export async function getVerificationStatus(userId: string): Promise<{
-  emailVerified: any;
-  verified: boolean;
+  emailVerified: boolean;
   canResend: boolean;
 }> {
   const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
@@ -75,22 +74,18 @@ export async function getVerificationStatus(userId: string): Promise<{
     throw Object.assign(new Error("User not found"), { status: 404 });
   }
   const user = data.user;
-  const verified = Boolean(user.email_confirmed_at);
-  if (verified) return { verified: true, canResend: false };
+  const emailVerified = Boolean(user.email_confirmed_at);
+  if (emailVerified) return { emailVerified: true, canResend: false };
 
   const last = user.user_metadata?.tp_email_ver_sent_at as number | undefined;
   const canResend = last == null || Date.now() - last >= COOLDOWN_MS;
-  return { verified: false, canResend };
+  return { emailVerified: false, canResend };
 }
 
 export async function sendVerificationEmail(
   userId: string,
   email: string,
-): Promise<{
-  sent: any;
-  ok: true;
-  sentAt: string;
-}> {
+): Promise<{ sent: boolean; sentAt: string }> {
   const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
   if (error || !data?.user) {
     throw Object.assign(new Error("User not found"), { status: 404 });
@@ -100,7 +95,7 @@ export async function sendVerificationEmail(
     throw Object.assign(new Error("Email mismatch"), { status: 400 });
   }
   if (user.email_confirmed_at) {
-    return { ok: true, sentAt: new Date().toISOString() };
+    return { sent: false, sentAt: new Date().toISOString() };
   }
 
   const appUrl = process.env.APP_URL?.replace(/\/$/, "") ?? "";
@@ -152,7 +147,7 @@ export async function sendVerificationEmail(
   );
   if (upErr) throw upErr;
 
-  return { ok: true, sentAt: new Date().toISOString() };
+  return { sent: true, sentAt: new Date().toISOString() };
 }
 
 export async function verifyEmailToken(token: string): Promise<{
