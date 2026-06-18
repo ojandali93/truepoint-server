@@ -144,24 +144,37 @@ router.get("/search/global", standardLimiter, async (req, res) => {
 
     const search = `%${q}%`;
 
+    // Open-ended search: return every match, ordered by name. A high safety
+    // ceiling guards against pathological substrings ("ex", "e") dumping the
+    // whole table; an optional ?limit= can lower it. Frontend renders all rows.
+    const MAX_RESULTS = 500;
+    const limit = Math.min(
+      Number(req.query.limit) > 0 ? Number(req.query.limit) : MAX_RESULTS,
+      MAX_RESULTS,
+    );
+
     const [setsResult, cardsResult, productsResult] = await Promise.all([
       supabaseAdmin
         .from("sets")
         .select("id, name, series, symbol_url, logo_url")
         .ilike("name", search)
-        .limit(5),
+        .order("name", { ascending: true })
+        .limit(limit),
 
       supabaseAdmin
         .from("cards")
         .select("id, name, number, rarity, set_id, image_small")
         .ilike("name", search)
-        .limit(8),
+        .order("name", { ascending: true })
+        .order("number", { ascending: true })
+        .limit(limit),
 
       supabaseAdmin
         .from("products")
         .select("id, name, product_type, set_id, image_url")
         .ilike("name", search)
-        .limit(5),
+        .order("name", { ascending: true })
+        .limit(limit),
     ]);
 
     res.json({
