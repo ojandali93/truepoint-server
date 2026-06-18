@@ -103,6 +103,7 @@ async function matchCard(
   name: string,
   setName: string,
   number: string,
+  preferLanguage: string = "English",
 ): Promise<{ card: ScanMatchedCard | null; matchConfidence: "high" | "low" }> {
   // Primary: candidates by card name (most reliable signal).
   let { data } = await supabaseAdmin
@@ -151,6 +152,13 @@ async function matchCard(
       !!cSet &&
       (cSet === wantSet || cSet.includes(wantSet) || wantSet.includes(cSet));
     if (setMatched) score += 2;
+
+    // Language preference: break ties toward the language being scanned
+    // (default English). Small weight so it only decides otherwise-equal
+    // matches — it won't override a strong number/set match for a genuine
+    // Japanese scan. Stops English scans resolving to the JP printing now
+    // that Japanese sets are in the catalog.
+    if (preferLanguage && c.language === preferLanguage) score += 1;
 
     if (score > bestScore) {
       bestScore = score;
