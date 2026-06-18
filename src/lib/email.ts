@@ -5,6 +5,7 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   text?: string;
+  replyTo?: string;
 }
 
 export interface SendEmailResult {
@@ -13,7 +14,9 @@ export interface SendEmailResult {
 }
 
 /** Sends transactional email via Resend. */
-export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
+export async function sendEmail(
+  input: SendEmailInput,
+): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
     throw Object.assign(new Error("RESEND_API_KEY is not configured"), {
@@ -33,6 +36,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       subject: input.subject,
       html: input.html,
       text: input.text,
+      reply_to: input.replyTo,
     },
     {
       headers: {

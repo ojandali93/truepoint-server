@@ -29,6 +29,7 @@ import ebayRoutes from "../routes/ebay.routes";
 import affiliateRoutes from "../routes/affiliate.routes";
 import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
 import scanRoutes from "../routes/scan.routes";
+import feedbackAdminRoutes from "../routes/feedbackAdmin.routes";
 
 dotenv.config();
 
@@ -67,6 +68,7 @@ app.use("/api/v1/portfolio", portfolioRoutes);
 app.use("/api/v1/variants", variantRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/admin", affiliateAdminRoutes);
+app.use("/api/v1/admin", feedbackAdminRoutes);
 
 app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
