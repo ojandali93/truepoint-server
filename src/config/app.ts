@@ -30,6 +30,7 @@ import affiliateRoutes from "../routes/affiliate.routes";
 import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
 import scanRoutes from "../routes/scan.routes";
 import feedbackAdminRoutes from "../routes/feedbackAdmin.routes";
+import adminSyncRoutes from "../routes/adminSync.routes";
 
 dotenv.config();
 
@@ -66,6 +67,7 @@ app.use("/api/v1/sync", syncRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
 app.use("/api/v1/portfolio", portfolioRoutes);
 app.use("/api/v1/variants", variantRoutes);
+app.use("/api/v1/admin", adminSyncRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/admin", affiliateAdminRoutes);
 app.use("/api/v1/admin", feedbackAdminRoutes);
