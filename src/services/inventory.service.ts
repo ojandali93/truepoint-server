@@ -7,6 +7,7 @@ import {
   deleteInventoryItem,
   fetchCardPrices,
   fetchProductPrices,
+  fetchVariantPrices,
   CreateInventoryInput,
   UpdateInventoryInput,
   InventoryRow,
@@ -45,6 +46,13 @@ export interface InventorySummary {
   totalGainLossPct: number | null;
 }
 
+// Normalize a variant_type into the lookup key used by fetchVariantPrices
+// (lowercase, alphanumeric only). "Reverse Holofoil" → "reverseholofoil",
+// "reverse_holofoil" → "reverseholofoil" — so the inventory entry and the
+// card_variants row match regardless of formatting.
+const variantKey = (v: string | null | undefined): string =>
+  (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
 // ─── Price resolution ─────────────────────────────────────────────────────────
 
 // Determine the best market price for an inventory item.
@@ -52,7 +60,8 @@ export interface InventorySummary {
 // Resolution priority:
 //   1. manual_market_value override (set by user or grader return)
 //   2. sealed product → product_price_cache
-//   3. raw card → SKU price (condition + variant aware) → legacy market_prices fallback
+//   3. raw card → card_variants price (denormalized, source of truth) →
+//      representative card price → SKU price → legacy market_prices fallback
 //   4. graded card → graded price by company+grade ONLY (no raw fallback —
 //      see comment in the graded-card branch below for the reasoning)
 const resolveMarketValue = (
@@ -60,6 +69,8 @@ const resolveMarketValue = (
   cardPrices: Map<string, Record<string, number>>,
   productPrices: Map<string, number>,
   skuPrices: Map<string, SkuPriceRow[]>,
+  variantPrices: Map<string, number>,
+  variantPricesAny: Map<string, number>,
 ): MarketValue => {
   // Manual override — takes precedence over all API-sourced prices.
   // Set when (a) a graded card is returned from the grader and the user
@@ -82,8 +93,23 @@ const resolveMarketValue = (
     };
   }
 
-  // Raw card — SKU-aware (condition + variant), fallback to legacy market_prices
+  // Raw card
   if (item.item_type === "raw_card" && item.card_id) {
+    // 1) Exact variant price from card_variants (the source of truth).
+    //    Keyed on card_id + variant_type — exactly what the scanner stores.
+    const exact = variantPrices.get(
+      `${item.card_id}|${variantKey(item.variant_type)}`,
+    );
+    if (exact != null) return { marketPrice: exact, source: "tcgplayer" };
+
+    // 2) The card has a price, but under a different variant (e.g. the scanner
+    //    mis-tagged the variant as holofoil). Show the card's representative
+    //    price so the value isn't zero. Approximate until the variant is fixed.
+    const anyV = variantPricesAny.get(item.card_id);
+    if (anyV != null) return { marketPrice: anyV, source: "tcgplayer" };
+
+    // 3) SKU-aware fallback (condition + variant). Dead until the scanner /
+    //    sku sync populates tcgapis_sku_id, but kept for when it does.
     const skuRows = skuPrices.get(item.card_id);
     const fromSku = pickSkuPrice(
       skuRows,
@@ -94,7 +120,7 @@ const resolveMarketValue = (
       return { marketPrice: fromSku.price, source: fromSku.source };
     }
 
-    // Fallback to legacy variant-level market_prices
+    // 4) Legacy variant-level market_prices fallback.
     const prices = cardPrices.get(item.card_id);
     if (!prices) return { marketPrice: null, source: null };
     if (prices.raw_market)
@@ -183,14 +209,21 @@ export const getInventory = async (
   ];
 
   // Fetch all prices in parallel:
-  //  - SKU prices (condition-aware, primary source for raw cards)
+  //  - card_variants prices (denormalized NM price per variant — primary source
+  //    of truth for raw cards; keyed on card_id + variant_type)
+  //  - SKU prices (condition-aware; currently unused until SKUs are populated)
   //  - legacy card prices (market_prices — graded + fallback)
   //  - sealed product prices
-  const [skuPrices, cardPrices, productPrices] = await Promise.all([
-    fetchSkuPriceRows(cardIds),
-    fetchCardPrices(cardIds),
-    fetchProductPrices(productIds),
-  ]);
+  const [skuPrices, cardPrices, productPrices, variantPriceMaps] =
+    await Promise.all([
+      fetchSkuPriceRows(cardIds),
+      fetchCardPrices(cardIds),
+      fetchProductPrices(productIds),
+      fetchVariantPrices(cardIds),
+    ]);
+
+  const { byVariant: variantPrices, byCard: variantPricesAny } =
+    variantPriceMaps;
 
   // Attach market values and calculate gain/loss
   let totalCostBasis = 0;
@@ -205,6 +238,8 @@ export const getInventory = async (
       cardPrices,
       productPrices,
       skuPrices,
+      variantPrices,
+      variantPricesAny,
     );
 
     const gainLoss =

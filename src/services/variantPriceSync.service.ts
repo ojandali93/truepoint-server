@@ -69,6 +69,12 @@ const syncCardPrices = async (
       label: variantDef.label,
       color: variantDef.color,
       sort_order: variantDef.sortOrder,
+      // denormalized current price (NM): the single source of truth for raw prices
+      low_price: p!.lowPrice ?? null,
+      mid_price: p!.midPrice ?? null,
+      high_price: p!.highPrice ?? null,
+      market_price: p!.marketPrice ?? null,
+      price_updated_at: now,
     });
 
     priceRows.push({

@@ -102,6 +102,34 @@ const INVENTORY_SELECT = `
   )
 `;
 
+const variantKey = (v: string | null | undefined): string =>
+  (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+export const fetchVariantPrices = async (cardIds: string[]) => {
+  const byVariant = new Map<string, number>(); // `${card_id}|${variantkey}` -> price
+  const byCard = new Map<string, number>(); // card_id -> representative price
+  if (cardIds.length === 0) return { byVariant, byCard };
+
+  const { data, error } = await supabaseAdmin
+    .from("card_variants")
+    .select(
+      "card_id, variant_type, low_price, mid_price, high_price, market_price",
+    )
+    .in("card_id", cardIds);
+  if (error) throw error;
+
+  for (const r of data ?? []) {
+    const price = r.market_price ?? r.mid_price ?? r.low_price;
+    if (price == null) continue;
+    byVariant.set(`${r.card_id}|${variantKey(r.variant_type)}`, Number(price));
+    // representative: prefer "normal", else first seen
+    const isNormal = variantKey(r.variant_type) === "normal";
+    if (isNormal || !byCard.has(r.card_id))
+      byCard.set(r.card_id, Number(price));
+  }
+  return { byVariant, byCard };
+};
+
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 export const findInventoryByUser = async (
