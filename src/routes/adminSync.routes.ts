@@ -20,7 +20,11 @@ import { syncVariantPricesForSet } from "../services/variantPriceSync.service";
 import { syncProductPricesForSet } from "../services/productPriceSync.service";
 import { backfillSetImages } from "../services/setImageBackfill.service";
 import { syncAllPortfolios } from "../services/portfolio.service";
-import { fetchAndCacheGradedPrices } from "../services/poketracePriceSync.service";
+import {
+  fetchAndCacheGradedPrices,
+  syncInventoryCardPricesSafe,
+  syncAllCatalogGradedPricesSafe,
+} from "../services/poketracePriceSync.service";
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
 
@@ -152,6 +156,29 @@ router.post("/sync/portfolio", (_req: Request, res: Response) => {
     "Portfolio snapshot sync",
     () => syncAllPortfolios(),
     "admin-sync-portfolio",
+  );
+});
+
+// ─── Global: graded (PokeTrace) pricing ──────────────────────────────────────
+// All inventoried cards — mirrors the /sync/graded-prices cron.
+// POST /api/v1/admin/sync/graded-inventory
+router.post("/sync/graded-inventory", (_req: Request, res: Response) => {
+  background(
+    res,
+    "Graded price sync (inventory)",
+    () => syncInventoryCardPricesSafe(),
+    "admin-sync-graded-inventory",
+  );
+});
+
+// Entire catalog — mirrors the /sync/graded-prices-all daily cron.
+// POST /api/v1/admin/sync/graded-all
+router.post("/sync/graded-all", (_req: Request, res: Response) => {
+  background(
+    res,
+    "Graded price sync (full catalog)",
+    () => syncAllCatalogGradedPricesSafe(),
+    "admin-sync-graded-all",
   );
 });
 
