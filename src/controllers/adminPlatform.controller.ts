@@ -10,6 +10,7 @@ import {
   getActivityLogs,
   getUsers,
   getUserById,
+  getUserDetail as getUserDetailService,
   updateUserPlan,
   getUserErrorLogs,
   getFeatureFlags,
@@ -171,6 +172,21 @@ export const getUser = async (req: Request, res: Response): Promise<void> => {
   try {
     const user = await getUserById(req.params.userId);
     res.json({ data: user });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// GET /admin/users/:userId/detail
+// Full admin snapshot: profile + subscription + live collection valuation +
+// feature-usage counts + recent device/login activity.
+export const getUserDetailHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const detail = await getUserDetailService(req.params.userId);
+    res.json({ data: detail });
   } catch (err) {
     handle(res, err);
   }

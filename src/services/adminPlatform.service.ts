@@ -233,6 +233,152 @@ export const getUserById = async (userId: string) => {
   };
 };
 
+// Rich per-user snapshot for the admin user-detail modal:
+// full profile + subscription + live collection valuation + feature usage
+// counts + recent device/login activity.
+export const getUserDetail = async (userId: string) => {
+  // Full profile
+  const { data: profile, error } = await supabaseAdmin
+    .from("profiles")
+    .select(
+      `id, username, full_name, avatar_url, phone, currency,
+       preferred_grading_company, show_market_values,
+       favorite_pokemon, favorite_set, collecting_years,
+       collection_type, collector_style,
+       email_verified, email_verified_at,
+       affiliation, affiliation_id,
+       created_at, updated_at`,
+    )
+    .eq("id", userId)
+    .single();
+  if (error) throw error;
+
+  // Subscription (may not exist for free users)
+  const { data: subscription } = await supabaseAdmin
+    .from("subscriptions")
+    .select(
+      `plan, status, platform, trial_ends_at, current_period_end,
+       created_at, stripe_customer_id, rc_app_user_id`,
+    )
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  // Linked affiliate (if the user is themselves an affiliate / was attributed)
+  let affiliate: {
+    id: string;
+    name: string;
+    slug: string | null;
+    type: string;
+    status: string;
+  } | null = null;
+  if (profile?.affiliation_id) {
+    const { data: aff } = await supabaseAdmin
+      .from("affiliates")
+      .select("id, name, slug, type, status")
+      .eq("id", profile.affiliation_id)
+      .maybeSingle();
+    affiliate = aff ?? null;
+  }
+
+  // Live inventory valuation + item breakdown. Reuses the exact same price
+  // resolution the user sees in their own inventory, so the value here matches
+  // what they see (and is accurate now that bulk price fetches are paginated).
+  let inventory: {
+    totalCards: number;
+    rawCards: number;
+    gradedCards: number;
+    sealedProducts: number;
+    marketValue: number;
+    costBasis: number;
+    gainLoss: number;
+  } | null = null;
+  try {
+    const { getInventory } = await import("./inventory.service");
+    const { summary } = await getInventory(userId, null);
+    inventory = {
+      totalCards: summary.totalItems,
+      rawCards: summary.rawCards,
+      gradedCards: summary.gradedCards,
+      sealedProducts: summary.sealedProducts,
+      marketValue: summary.totalMarketValue,
+      costBasis: summary.totalCostBasis,
+      gainLoss: summary.totalGainLoss,
+    };
+  } catch (e) {
+    console.error("[AdminPlatform] getUserDetail inventory error:", e);
+    inventory = null; // UI shows "unavailable" rather than a wrong number
+  }
+
+  // Feature-usage + tracking counts (parallel, head-only counts)
+  const countFor = async (table: string, col = "user_id"): Promise<number> => {
+    const { count, error: cErr } = await supabaseAdmin
+      .from(table)
+      .select("id", { count: "exact", head: true })
+      .eq(col, userId);
+    if (cErr) {
+      console.error(`[AdminPlatform] count ${table} error:`, cErr.message);
+      return 0;
+    }
+    return count ?? 0;
+  };
+
+  const [
+    collectionsCount,
+    masterSetsTracked,
+    centeringReports,
+    aiGradingReports,
+    gradingSubmissions,
+    ebayReports,
+    feedbackSubmitted,
+    errorLogs,
+    deviceCount,
+  ] = await Promise.all([
+    countFor("collections"),
+    countFor("master_set_tracking"),
+    countFor("centering_reports"),
+    countFor("ai_grading_reports"),
+    countFor("grading_submissions"),
+    countFor("ebay_analysis_reports"),
+    countFor("feedback"),
+    countFor("error_logs"),
+    countFor("user_devices"),
+  ]);
+
+  // Recent devices + last login (ordered desc, so the first row is the latest)
+  const { data: devices } = await supabaseAdmin
+    .from("user_devices")
+    .select(
+      "device_type, device_name, os, browser, push_provider, last_login_at, last_seen, is_active",
+    )
+    .eq("user_id", userId)
+    .order("last_login_at", { ascending: false, nullsFirst: false })
+    .limit(5);
+
+  const lastLoginAt = devices?.[0]?.last_login_at ?? null;
+
+  return {
+    profile,
+    subscription: subscription ?? null,
+    affiliate,
+    inventory,
+    usage: {
+      collections: collectionsCount,
+      masterSetsTracked,
+      centeringReports,
+      aiGradingReports,
+      gradingSubmissions,
+      ebayReports,
+      feedbackSubmitted,
+      errorLogs,
+    },
+    activity: {
+      lastLoginAt,
+      deviceCount,
+      recentDevices: devices ?? [],
+    },
+  };
+};
+
 export const updateUserPlan = async (
   userId: string,
   plan: "collector" | "pro",

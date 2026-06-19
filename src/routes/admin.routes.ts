@@ -25,6 +25,7 @@ import {
   listActivityLogs,
   listUsers,
   getUser,
+  getUserDetailHandler,
   getUserErrors,
   overrideUserPlan,
   listFeatureFlags,
@@ -61,6 +62,7 @@ router.get("/logs/activity", listActivityLogs as any);
 
 // ─── User management ──────────────────────────────────────────────────────────
 router.get("/users", listUsers as any);
+router.get("/users/:userId/detail", getUserDetailHandler as any);
 router.get("/users/:userId", getUser as any);
 router.get("/users/:userId/errors", getUserErrors as any);
 router.patch("/users/:userId/plan", overrideUserPlan as any);
