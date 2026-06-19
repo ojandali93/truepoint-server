@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "../lib/supabase";
+import { fetchAllByIn } from "../lib/pgFetchAll";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -110,15 +111,24 @@ export const fetchVariantPrices = async (cardIds: string[]) => {
   const byCard = new Map<string, number>(); // card_id -> representative price
   if (cardIds.length === 0) return { byVariant, byCard };
 
-  const { data, error } = await supabaseAdmin
-    .from("card_variants")
-    .select(
+  // Paginated — card_variants has multiple variant rows per card, so a large
+  // "All collections" inventory easily exceeds PostgREST's 1000-row cap.
+  const data = await fetchAllByIn<{
+    card_id: string;
+    variant_type: string | null;
+    low_price: number | null;
+    mid_price: number | null;
+    high_price: number | null;
+    market_price: number | null;
+  }>({
+    table: "card_variants",
+    columns:
       "card_id, variant_type, low_price, mid_price, high_price, market_price",
-    )
-    .in("card_id", cardIds);
-  if (error) throw error;
+    column: "card_id",
+    ids: cardIds,
+  });
 
-  for (const r of data ?? []) {
+  for (const r of data) {
     const price = r.market_price ?? r.mid_price ?? r.low_price;
     if (price == null) continue;
     byVariant.set(`${r.card_id}|${variantKey(r.variant_type)}`, Number(price));
@@ -291,12 +301,25 @@ export const fetchCardPrices = async (
 ): Promise<Map<string, Record<string, number>>> => {
   if (!cardIds.length) return new Map();
 
-  const { data, error } = await supabaseAdmin
-    .from("market_prices")
-    .select("card_id, source, variant, grade, market_price")
-    .in("card_id", cardIds);
-
-  if (error) {
+  // Paginated — market_prices has many source/grade rows per card (a single
+  // graded card can have 30–60 rows), so the combined "All collections" set
+  // blows past PostgREST's 1000-row cap and silently truncates. That is the
+  // bug that made cards show a price inside their collection but "—" in All.
+  let data: Array<{
+    card_id: string;
+    source: string;
+    variant: string | null;
+    grade: string | null;
+    market_price: number | null;
+  }>;
+  try {
+    data = await fetchAllByIn({
+      table: "market_prices",
+      columns: "card_id, source, variant, grade, market_price",
+      column: "card_id",
+      ids: cardIds,
+    });
+  } catch (error) {
     console.error("[InventoryRepo] fetchCardPrices error:", error);
     return new Map();
   }
@@ -364,13 +387,22 @@ export const fetchProductPrices = async (
 ): Promise<Map<string, number>> => {
   if (!productIds.length) return new Map();
 
-  const { data, error } = await supabaseAdmin
-    .from("product_price_cache")
-    .select("product_id, source, market_price")
-    .in("product_id", productIds)
-    .gt("expires_at", new Date().toISOString());
-
-  if (error) {
+  // Paginated for consistency/safety (products are few today, but this keeps
+  // the function correct if a user ever holds many sealed products).
+  let data: Array<{
+    product_id: string;
+    source: string;
+    market_price: number | null;
+  }>;
+  try {
+    data = await fetchAllByIn({
+      table: "product_price_cache",
+      columns: "product_id, source, market_price",
+      column: "product_id",
+      ids: productIds,
+      modify: (q) => q.gt("expires_at", new Date().toISOString()),
+    });
+  } catch (error) {
     console.error("[InventoryRepo] fetchProductPrices error:", error);
     return new Map();
   }
