@@ -210,6 +210,17 @@ export const sendPriceMoversDigest = async (): Promise<{
   sent: number;
   skipped: number;
 }> => {
+  // ─── DISABLED ──────────────────────────────────────────────────────────────
+  // The price-movers digest is turned off. It was not working correctly and is
+  // being held back regardless. This no-op stops all sends even if the cron
+  // (POST /sync/price-movers) keeps firing, without affecting the daily
+  // portfolio-movement notifications, admin broadcasts, or one-off sends.
+  // To re-enable later, set env PRICE_MOVERS_DIGEST_ENABLED=true and redeploy.
+  if (process.env.PRICE_MOVERS_DIGEST_ENABLED !== "true") {
+    console.log("[PriceMovers] digest disabled — skipping send");
+    return { total: 0, sent: 0, skipped: 0 };
+  }
+
   let sent = 0;
   let skipped = 0;
 
