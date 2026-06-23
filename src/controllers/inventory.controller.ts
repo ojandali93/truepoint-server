@@ -184,6 +184,59 @@ export const removeInventoryItem = async (
   }
 };
 
+// GET /inventory/sold — sold items + realized-profit summary
+export const getSoldItems = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const result = await InventoryService.getSoldItems(req.user.id);
+    res.json({ data: result });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// PATCH /inventory/:id/sold — mark an item sold
+export const markItemSold = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const { soldPrice, soldPlatform, soldAt, soldNotes } = req.body;
+    const item = await InventoryService.markItemSold(
+      req.params.id,
+      req.user.id,
+      {
+        soldPrice:
+          soldPrice !== undefined ? Number(soldPrice) : (soldPrice as any),
+        soldPlatform: soldPlatform ?? null,
+        soldAt: soldAt ?? null,
+        soldNotes: soldNotes ?? null,
+      },
+    );
+    res.json({ data: item });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// PATCH /inventory/:id/unsell — revert a sale back to active
+export const revertItemSold = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const item = await InventoryService.revertItemSold(
+      req.params.id,
+      req.user.id,
+    );
+    res.json({ data: item });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
 // POST /inventory/:id/open
 // Open a sealed product — insert pulled cards, delete the product
 export const openSealedProduct = async (

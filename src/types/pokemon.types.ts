@@ -3,6 +3,7 @@ export interface PokemonSet {
   name: string;
   series: string;
   language?: string;
+  game?: string;
   printedTotal: number;
   total: number;
   releaseDate: string;

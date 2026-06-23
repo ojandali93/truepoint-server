@@ -16,6 +16,10 @@ router.use(authenticateUser as any);
 // All user inventory items with market values + summary
 router.get("/", standardLimiter, InventoryController.getInventory as any);
 
+// GET /api/v1/inventory/sold
+// Sold items with realized-profit summary (declared before /:id routes)
+router.get("/sold", standardLimiter, InventoryController.getSoldItems as any);
+
 // POST /api/v1/inventory
 // Add a raw card, graded card, or sealed product
 router.post("/", writeLimiter, InventoryController.addInventoryItem as any);
@@ -36,6 +40,20 @@ router.delete(
   "/:id",
   writeLimiter,
   InventoryController.removeInventoryItem as any,
+);
+
+// PATCH /api/v1/inventory/:id/sold — mark an item sold
+router.patch(
+  "/:id/sold",
+  writeLimiter,
+  InventoryController.markItemSold as any,
+);
+
+// PATCH /api/v1/inventory/:id/unsell — revert a sale back to active
+router.patch(
+  "/:id/unsell",
+  writeLimiter,
+  InventoryController.revertItemSold as any,
 );
 
 // ─── Open sealed product ──────────────────────────────────────────────────────

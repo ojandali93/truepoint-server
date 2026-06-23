@@ -6,6 +6,7 @@ import { fetchAllByIn } from "../lib/pgFetchAll";
 export type ItemType = "raw_card" | "graded_card" | "sealed_product";
 export type GradingCompany = "PSA" | "BGS" | "CGC" | "SGC" | "TAG";
 export type CardCondition = "NM" | "LP" | "MP" | "HP" | "DM";
+export type InventoryStatus = "active" | "sold" | "traded";
 
 export interface InventoryRow {
   id: string;
@@ -26,6 +27,11 @@ export interface InventoryRow {
   manual_market_value: number | null;
   manual_market_value_source: string | null;
   collection_id: string | null;
+  status: InventoryStatus;
+  sold_price: number | null;
+  sold_platform: string | null;
+  sold_at: string | null;
+  sold_notes: string | null;
   added_at: string;
   updated_at: string;
   // Joined
@@ -149,7 +155,8 @@ export const findInventoryByUser = async (
   let q = supabaseAdmin
     .from("inventory")
     .select(INVENTORY_SELECT)
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("status", "active"); // sold items drop out of active inventory + portfolio
 
   if (collectionId) {
     q = q.eq("collection_id", collectionId);
@@ -162,6 +169,71 @@ export const findInventoryByUser = async (
     throw error;
   }
   return (data ?? []) as InventoryRow[];
+};
+
+// All items the user has marked sold, newest sale first.
+export const findSoldByUser = async (
+  userId: string,
+): Promise<InventoryRow[]> => {
+  const { data, error } = await supabaseAdmin
+    .from("inventory")
+    .select(INVENTORY_SELECT)
+    .eq("user_id", userId)
+    .eq("status", "sold")
+    .order("sold_at", { ascending: false, nullsFirst: false });
+
+  if (error) {
+    console.error("[InventoryRepo] findSoldByUser error:", error);
+    throw error;
+  }
+  return (data ?? []) as InventoryRow[];
+};
+
+// Mark an item sold (or, when status='active', revert a sale).
+export const setInventorySoldStatus = async (
+  id: string,
+  userId: string,
+  fields: {
+    status: "active" | "sold";
+    sold_price: number | null;
+    sold_platform: string | null;
+    sold_at: string | null;
+    sold_notes: string | null;
+  },
+): Promise<InventoryRow> => {
+  const { data, error } = await supabaseAdmin
+    .from("inventory")
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", userId)
+    .select(INVENTORY_SELECT)
+    .single();
+
+  if (error) {
+    console.error("[InventoryRepo] setInventorySoldStatus error:", error);
+    throw error;
+  }
+  return data as InventoryRow;
+};
+
+// Set only the status of an inventory item (active | sold | traded). Used by
+// the trade flow to move give-side items out of active inventory and to revert
+// them. Lighter than setInventorySoldStatus — touches no sale fields.
+export const setInventoryStatus = async (
+  id: string,
+  userId: string,
+  status: "active" | "sold" | "traded",
+): Promise<void> => {
+  const { error } = await supabaseAdmin
+    .from("inventory")
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("[InventoryRepo] setInventoryStatus error:", error);
+    throw error;
+  }
 };
 
 export const findInventoryItemById = async (

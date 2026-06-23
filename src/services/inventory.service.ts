@@ -1,5 +1,7 @@
 import {
   findInventoryByUser,
+  findSoldByUser,
+  setInventorySoldStatus,
   findInventoryItemById,
   insertInventoryItem,
   insertInventoryBatch,
@@ -420,4 +422,107 @@ export const getCurrentTotalValue = async (
 ): Promise<number> => {
   const { summary } = await getInventory(userId, collectionId);
   return summary.totalMarketValue;
+};
+
+// ─── Sold tracking ────────────────────────────────────────────────────────────
+
+export interface MarkSoldInput {
+  soldPrice: number; // total amount received for this line
+  soldPlatform?: string | null; // eBay, TCGPlayer, In person, etc.
+  soldAt?: string | null; // ISO date; defaults to now
+  soldNotes?: string | null;
+}
+
+// Mark an active inventory item as sold.
+export const markItemSold = async (
+  id: string,
+  userId: string,
+  input: MarkSoldInput,
+): Promise<InventoryRow> => {
+  const item = await findInventoryItemById(id);
+  if (!item) throw { status: 404, message: "Inventory item not found" };
+  if (item.user_id !== userId) throw { status: 403, message: "Access denied" };
+  if (item.status === "sold")
+    throw { status: 400, message: "Item is already marked sold" };
+  if (input.soldPrice === undefined || input.soldPrice === null)
+    throw { status: 400, message: "soldPrice is required" };
+
+  return setInventorySoldStatus(id, userId, {
+    status: "sold",
+    sold_price: Number(input.soldPrice),
+    sold_platform: input.soldPlatform ?? null,
+    sold_at: input.soldAt ?? new Date().toISOString(),
+    sold_notes: input.soldNotes ?? null,
+  });
+};
+
+// Revert a sale — item returns to active inventory, sale fields cleared.
+export const revertItemSold = async (
+  id: string,
+  userId: string,
+): Promise<InventoryRow> => {
+  const item = await findInventoryItemById(id);
+  if (!item) throw { status: 404, message: "Inventory item not found" };
+  if (item.user_id !== userId) throw { status: 403, message: "Access denied" };
+
+  return setInventorySoldStatus(id, userId, {
+    status: "active",
+    sold_price: null,
+    sold_platform: null,
+    sold_at: null,
+    sold_notes: null,
+  });
+};
+
+export interface SoldItem extends InventoryRow {
+  costBasis: number; // (purchase_price ?? 0) * quantity
+  proceeds: number; // sold_price
+  profit: number; // proceeds - costBasis
+  profitPct: number | null;
+}
+
+export interface SoldSummary {
+  count: number;
+  totalCostBasis: number;
+  totalProceeds: number;
+  totalProfit: number;
+  totalProfitPct: number | null;
+}
+
+// All sold items with per-item + aggregate realized profit.
+export const getSoldItems = async (
+  userId: string,
+): Promise<{ items: SoldItem[]; summary: SoldSummary }> => {
+  const rows = await findSoldByUser(userId);
+
+  let totalCostBasis = 0;
+  let totalProceeds = 0;
+
+  const items: SoldItem[] = rows.map((row) => {
+    const qty = row.quantity ?? 1;
+    const costBasis = (row.purchase_price ?? 0) * qty;
+    const proceeds = row.sold_price ?? 0;
+    const profit = proceeds - costBasis;
+    const profitPct = costBasis > 0 ? (profit / costBasis) * 100 : null;
+
+    totalCostBasis += costBasis;
+    totalProceeds += proceeds;
+
+    return { ...row, costBasis, proceeds, profit, profitPct };
+  });
+
+  const totalProfit = totalProceeds - totalCostBasis;
+  const totalProfitPct =
+    totalCostBasis > 0 ? (totalProfit / totalCostBasis) * 100 : null;
+
+  return {
+    items,
+    summary: {
+      count: rows.length,
+      totalCostBasis,
+      totalProceeds,
+      totalProfit,
+      totalProfitPct,
+    },
+  };
 };

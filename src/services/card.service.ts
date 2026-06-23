@@ -30,6 +30,7 @@ export const getAllSets = async (): Promise<PokemonSet[]> => {
       name: row.name,
       series: row.series,
       language: row.language ?? "English",
+      game: row.game ?? "pokemon", // forward-compatible; defaults until stamped
       printedTotal: row.printed_total,
       total: row.total_cards_master, // ← was row.total
       releaseDate: row.release_date,
@@ -54,6 +55,7 @@ export const getSetById = async (setId: string): Promise<PokemonSet> => {
       name: dbSet.name,
       series: dbSet.series,
       language: dbSet.language ?? "English",
+      game: dbSet.game ?? "pokemon",
       printedTotal: dbSet.printed_total,
       total: dbSet.total,
       releaseDate: dbSet.release_date,
