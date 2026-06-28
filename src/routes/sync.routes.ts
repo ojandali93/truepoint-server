@@ -45,6 +45,7 @@ import { snapshotCardPricesSafe } from "../services/cardPriceHistory.service";
 import { sendPriceMoversDigest } from "../services/priceMoversDigest.service";
 import { syncInventoryCardPricesSafe } from "../services/poketracePriceSync.service";
 import { syncAllCatalogGradedPricesSafe } from "../services/poketracePriceSync.service";
+import { sendPendingIntroEmails } from "../services/introEmail.service";
 
 const router = Router();
 
@@ -588,3 +589,19 @@ router.post("/graded-prices-all", requireSyncKey, async (_req, res) => {
 });
 
 export default router;
+
+// POST /sync/intro-emails — send the founder intro email to users who signed up ~1h ago
+router.post("/intro-emails", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Intro email sweep started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await sendPendingIntroEmails();
+      console.log("[IntroEmail] sweep done:", r);
+    } catch (err: any) {
+      console.error("[IntroEmail] sweep failed:", err?.message);
+    }
+  });
+});
