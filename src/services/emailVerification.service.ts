@@ -37,14 +37,14 @@ export const sendVerificationEmail = async (
   const html = `
 <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 560px;">
   <div style="background: #0D0E11; color: #C9A84C; padding: 18px 22px; font-size: 12px; letter-spacing: 0.08em; font-weight: 500;">
-    TRUEPOINT TCG
+    ReverseHolo TCG
   </div>
   <div style="padding: 32px 22px; background: #f8f8f8; border: 1px solid #e0e0e0; border-top: none;">
     <h2 style="margin: 0 0 14px; font-size: 22px; color: #0D0E11; font-weight: 500;">
       Confirm your email
     </h2>
     <p style="font-size: 14px; line-height: 1.6; color: #333; margin: 0 0 24px;">
-      You're almost done. Click the button below to verify your email and unlock your TruePoint account.
+      You're almost done. Click the button below to verify your email and unlock your ReverseHolo TCG account.
     </p>
     <div style="margin: 0 0 28px;">
       <a href="${verifyUrl}"
@@ -59,26 +59,26 @@ export const sendVerificationEmail = async (
       ${verifyUrl}
     </p>
     <p style="font-size: 12px; color: #888; margin: 0; padding-top: 16px; border-top: 1px solid #e0e0e0;">
-      This link expires in 24 hours. If you didn't sign up for TruePoint, you can ignore this email.
+      This link expires in 24 hours. If you didn't sign up for ReverseHolo TCG, you can ignore this email.
     </p>
   </div>
 </div>
   `.trim();
 
   const text = [
-    "Confirm your TruePoint email",
+    "Confirm your ReverseHolo TCG email",
     "",
     "You're almost done. Click the link below to verify your email and unlock your account:",
     "",
     verifyUrl,
     "",
     "This link expires in 24 hours.",
-    "If you didn't sign up for TruePoint, you can ignore this email.",
+    "If you didn't sign up for ReverseHolo TCG, you can ignore this email.",
   ].join("\n");
 
   const result = await sendEmail({
     to: email,
-    subject: "Confirm your TruePoint email",
+    subject: "Confirm your ReverseHolo TCG email",
     html,
     text,
   });
