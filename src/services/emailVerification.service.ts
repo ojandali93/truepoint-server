@@ -8,7 +8,7 @@ import { supabaseAdmin } from "../lib/supabase";
 import { sendEmail } from "../lib/email";
 
 const TOKEN_TTL_HOURS = 24;
-const FRONTEND_URL = process.env.FRONTEND_URL ?? "https://truepointtcg.com";
+const FRONTEND_URL = process.env.FRONTEND_URL ?? "https://reverseholo.io";
 
 // ─── Send (or re-send) verification email ──────────────────────────────────
 
