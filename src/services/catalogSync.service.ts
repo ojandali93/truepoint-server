@@ -21,6 +21,7 @@ import {
   tcgapisGet,
   POKEMON_CATEGORY_ID,
   POKEMON_JP_CATEGORY_ID,
+  ONE_PIECE_CATEGORY_ID,
   sleep,
 } from "../lib/tcgapisClient";
 
@@ -143,15 +144,20 @@ const upsertRows = async (
 // SETS — native (groupId = id), across English + Japanese categories
 // ═══════════════════════════════════════════════════════════════════════════
 
-const POKEMON_CATEGORIES: { categoryId: number; language: string }[] = [
-  { categoryId: POKEMON_CATEGORY_ID, language: "English" }, // 3
-  { categoryId: POKEMON_JP_CATEGORY_ID, language: "Japanese" }, // 85
+// Every catalog category we ingest, tagged with its game. One Piece is
+// TCGAPIs/TCGplayer category 68 (English). Raw prices flow through the same
+// product-ID-keyed price sync — no graded pricing for One Piece.
+const CATEGORIES: { categoryId: number; language: string; game: string }[] = [
+  { categoryId: POKEMON_CATEGORY_ID, language: "English", game: "pokemon" }, // 3
+  { categoryId: POKEMON_JP_CATEGORY_ID, language: "Japanese", game: "pokemon" }, // 85
+  { categoryId: ONE_PIECE_CATEGORY_ID, language: "English", game: "onepiece" }, // 68
 ];
 
 export const syncSets = async (): Promise<{ synced: number }> => {
-  const expansions: Array<TCGExpansion & { language: string }> = [];
+  const expansions: Array<TCGExpansion & { language: string; game: string }> =
+    [];
 
-  for (const cat of POKEMON_CATEGORIES) {
+  for (const cat of CATEGORIES) {
     let offset = 0;
     let pulled = 0;
     while (true) {
@@ -161,7 +167,9 @@ export const syncSets = async (): Promise<{ synced: number }> => {
         { limit: 100, offset },
       );
       const batch = data.data ?? [];
-      expansions.push(...batch.map((e) => ({ ...e, language: cat.language })));
+      expansions.push(
+        ...batch.map((e) => ({ ...e, language: cat.language, game: cat.game })),
+      );
       pulled += batch.length;
       if (pulled >= data.total || batch.length < 100) break;
       offset += 100;
@@ -179,6 +187,7 @@ export const syncSets = async (): Promise<{ synced: number }> => {
     release_date: exp.publishedOn ? exp.publishedOn.slice(0, 10) : null,
     tcgapis_group_id: exp.groupId,
     language: exp.language,
+    game: exp.game,
     synced_at: new Date().toISOString(),
   }));
 
@@ -195,13 +204,14 @@ export const syncCardsForSet = async (
 ): Promise<{ cards: number; products: number }> => {
   const { data: set } = await supabaseAdmin
     .from("sets")
-    .select("id, tcgapis_group_id, language")
+    .select("id, tcgapis_group_id, language, game")
     .eq("id", setId)
     .single();
 
   if (!set?.tcgapis_group_id) return { cards: 0, products: 0 };
 
   const language = (set.language as string | null) ?? "English";
+  const game = (set.game as string | null) ?? "pokemon";
 
   const apiItems: TCGCard[] = [];
   let offset = 0;
@@ -235,6 +245,7 @@ export const syncCardsForSet = async (
     tcgapis_product_id: c.productId,
     catalog_source: "tcgapis",
     language,
+    game,
     synced_at: now,
   }));
 
@@ -253,6 +264,7 @@ export const syncCardsForSet = async (
     product_type: inferProductType(c.name),
     image_url: c.image ?? null,
     language,
+    game,
     synced_at: now,
   }));
 

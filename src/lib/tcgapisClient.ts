@@ -31,6 +31,7 @@ export const tcgapisHttp = axios.create({
 
 export const POKEMON_CATEGORY_ID = 3;
 export const POKEMON_JP_CATEGORY_ID = 85;
+export const ONE_PIECE_CATEGORY_ID = 68;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

@@ -372,6 +372,7 @@ export const syncAllCatalogGradedPrices = async (): Promise<{
     const { data: pageRows, error: pageErr } = await supabaseAdmin
       .from("cards")
       .select("id, sets!inner(tcgapis_group_id)")
+      .eq("game", "pokemon")
       .not("sets.tcgapis_group_id", "is", null)
       .range(from, to);
 
