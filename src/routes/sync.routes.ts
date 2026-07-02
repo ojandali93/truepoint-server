@@ -528,7 +528,20 @@ router.post("/set-images", requireSyncKey, async (_req, res) => {
   });
 });
 
+// Master switch for AUTOMATIC push notifications (daily summary, price-movers
+// digest). Turned OFF intentionally: the ONLY pushes that go out are admin
+// /broadcast. Flip to true to re-enable the scheduled digests.
+const AUTO_PUSH_ENABLED = false;
+
 router.post("/daily-summary", requireSyncKey, async (_req, res) => {
+  if (!AUTO_PUSH_ENABLED) {
+    res.json({
+      message: "Daily summary DISABLED — automatic notifications are off.",
+      disabled: true,
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
   res.json({
     message: "Daily summary send started",
     timestamp: new Date().toISOString(),
@@ -551,6 +564,15 @@ router.post("/price-history", requireSyncKey, async (_req, res) => {
 });
 
 router.post("/price-movers", requireSyncKey, async (_req, res) => {
+  if (!AUTO_PUSH_ENABLED) {
+    res.json({
+      message:
+        "Price movers digest DISABLED — automatic notifications are off.",
+      disabled: true,
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
   res.json({
     message: "Price movers digest started",
     timestamp: new Date().toISOString(),

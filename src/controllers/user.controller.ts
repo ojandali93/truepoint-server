@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from "../types/user.types";
 import * as UserService from "../services/user.service";
 import { logError } from "../lib/Logger";
 import { sendPushToUser } from "../services/push.service";
+import { notifyAdminsOfSignup } from "../services/adminSignupAlert.service";
 
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
@@ -10,9 +11,22 @@ export const sendTestPush = async (
   req: AuthenticatedRequest,
   res: Response,
 ) => {
+  // DISABLED: notifications are off except admin /broadcast. This test endpoint
+  // no longer sends anything. To re-enable, remove this early return.
+  res.json({
+    data: {
+      sent: 0,
+      disabled: true,
+      message:
+        "Test push is disabled. Only admin broadcast sends notifications.",
+    },
+  });
+  return;
+
+  // eslint-disable-next-line no-unreachable
   try {
     const title =
-      typeof req.body?.title === "string" ? req.body.title : "TruePoint";
+      typeof req.body?.title === "string" ? req.body.title : "Reverse Holo";
     const body =
       typeof req.body?.body === "string"
         ? req.body.body
@@ -74,6 +88,13 @@ export const createMyProfile = async (
   try {
     const profile = await UserService.createProfile(req.user.id, req.body);
     res.status(201).json({ data: profile });
+
+    // Admin-only new-signup alert. Fire-and-forget, fires once per user
+    // (guarded by profiles.admin_signup_alerted_at), no-op unless
+    // ADMIN_ALERT_USER_IDS is set. Never blocks or fails the signup response.
+    notifyAdminsOfSignup(req.user.id).catch((e: any) =>
+      console.error("[AdminSignupAlert] failed:", e?.message),
+    );
   } catch (err: any) {
     await logError({
       source: "create-my-profile", // ← change per controller
