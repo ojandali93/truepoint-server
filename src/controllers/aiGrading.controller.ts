@@ -253,9 +253,11 @@ export const analyzeCard = async (
             edges: analysis.sub.edges / 10,
             surface: analysis.sub.surface / 10,
             tp_score: analysis.tpScore,
+            report: analysis.report, // deep objective report: corners/edges/surface/dings/centering/dimensions
+            tag_score_1000: analysis.predictions.tag.score1000, // TAG 1000-pt, for querying/leaderboards
             centering_ratio_front: analysis.centeringRatio.front,
             centering_ratio_back: analysis.centeringRatio.back,
-            predictions: analysis.predictions, // now an array: { company, likely, range, note }
+            predictions: analysis.predictions, // { psa,bgs,cgc,tag } each with grade+range+limitingFactor+confidence
             issues: analysis.issues,
             strengths: analysis.strengths,
             confidence: analysis.confidence,
@@ -348,6 +350,61 @@ export const deleteReport = async (
   } catch (err: any) {
     await logError({
       source: "delete-report", // ← change per controller
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message });
+  }
+};
+
+// ─── PATCH /grading/ai-reports/:id/actual ─────────────────────────────────────
+// Phase 4 (calibration): when a user gets a card back from a grader, they record
+// the real grade here. Stored alongside the prediction so we can measure
+// prediction-vs-actual error per company over time.
+export const recordActualGrade = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const company = String(req.body?.company ?? "").toLowerCase();
+    const grade = Number(req.body?.grade);
+    const cert = req.body?.cert ? String(req.body.cert) : null;
+
+    if (!["psa", "bgs", "cgc", "tag"].includes(company)) {
+      res.status(400).json({ error: "company must be psa, bgs, cgc, or tag" });
+      return;
+    }
+    if (!Number.isFinite(grade) || grade < 1 || grade > 10) {
+      res.status(400).json({ error: "grade must be a number 1–10" });
+      return;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("ai_grading_reports")
+      .update({
+        actual_company: company,
+        actual_grade: grade,
+        actual_cert: cert,
+        actual_recorded_at: new Date().toISOString(),
+      })
+      .eq("id", req.params.id)
+      .eq("user_id", req.user.id)
+      .select("id")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: "Report not found" });
+      return;
+    }
+    res.json({ data: { recorded: true } });
+  } catch (err: any) {
+    await logError({
+      source: "record-actual-grade",
       message: err?.message ?? "Unknown error",
       error: err,
       userId: (req as any)?.userId ?? null,

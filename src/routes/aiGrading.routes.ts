@@ -12,5 +12,10 @@ router.use(authenticateUser as any);
 router.post("/ai-analyze", writeLimiter, AIG.analyzeCard as any);
 router.get("/ai-reports", standardLimiter, AIG.getReports as any);
 router.delete("/ai-reports/:id", writeLimiter, AIG.deleteReport as any);
+router.patch(
+  "/ai-reports/:id/actual",
+  writeLimiter,
+  AIG.recordActualGrade as any,
+);
 
 export default router;
