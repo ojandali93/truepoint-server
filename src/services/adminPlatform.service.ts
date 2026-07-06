@@ -383,7 +383,26 @@ export const updateUserPlan = async (
   userId: string,
   plan: "collector" | "pro",
   adminNote?: string,
+  durationMonths?: number | null,
 ) => {
+  // A positive duration = a time-boxed comp TRIAL (status "trialing", expires
+  // at the end date). No duration = an indefinite comp grant (status "active").
+  const isTrial = typeof durationMonths === "number" && durationMonths > 0;
+  let endsAtIso: string | null = null;
+  if (isTrial) {
+    const end = new Date();
+    end.setMonth(end.getMonth() + (durationMonths as number));
+    endsAtIso = end.toISOString();
+  }
+
+  const fields = {
+    plan,
+    status: isTrial ? "trialing" : "active",
+    platform: "comp", // complimentary / admin-granted (not apple/android/web)
+    trial_ends_at: endsAtIso, // null for indefinite
+    current_period_end: endsAtIso, // mirror so both readers agree
+  };
+
   // Does the user already have a subscription row?
   const { data: existing, error: selErr } = await supabaseAdmin
     .from("subscriptions")
@@ -393,31 +412,41 @@ export const updateUserPlan = async (
   if (selErr) throw selErr;
 
   if (existing && existing.length > 0) {
-    // Update the existing row → active comp subscription on the new plan.
     const { error } = await supabaseAdmin
       .from("subscriptions")
-      .update({ plan, status: "active", platform: "comp" })
+      .update(fields)
       .eq("id", existing[0].id);
     if (error) throw error;
   } else {
     // No subscription yet (the normal case for a free user). Previously this
     // path did nothing — an .update() filtered by user_id matched zero rows —
     // so admin-granted plans silently never took effect. Create the row.
-    const { error } = await supabaseAdmin.from("subscriptions").insert({
-      user_id: userId,
-      plan,
-      status: "active",
-      platform: "comp", // complimentary / admin-granted (not apple/android/web)
-    });
+    const { error } = await supabaseAdmin
+      .from("subscriptions")
+      .insert({ user_id: userId, ...fields });
     if (error) throw error;
   }
+
+  // Mark the trial as used so the app doesn't also offer its own 7-day free
+  // trial when this user later subscribes through the paywall.
+  await supabaseAdmin
+    .from("profiles")
+    .update({ trial_used: true })
+    .eq("id", userId);
 
   // Log as admin activity
   await supabaseAdmin.from("activity_logs").insert({
     action: "admin.user.plan_override",
     resource_type: "user",
     resource_id: userId,
-    metadata: { new_plan: plan, note: adminNote ?? null, platform: "comp" },
+    metadata: {
+      new_plan: plan,
+      note: adminNote ?? null,
+      platform: "comp",
+      status: fields.status,
+      trial_ends_at: endsAtIso,
+      duration_months: isTrial ? durationMonths : null,
+    },
   });
 };
 

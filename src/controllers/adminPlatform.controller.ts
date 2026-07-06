@@ -207,21 +207,33 @@ export const getUserErrors = async (
 };
 
 // PATCH /admin/users/:userId/plan
-// Body: { plan: 'collector' | 'pro', note?: string }
+// Body: { plan: 'collector' | 'pro', note?: string, durationMonths?: number }
+//   durationMonths > 0  → time-boxed comp trial (status "trialing", auto-expires)
+//   omitted / 0 / null  → indefinite comp grant (status "active")
 export const overrideUserPlan = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   try {
-    const { plan, note } = req.body;
+    const { plan, note, durationMonths } = req.body;
     if (!["collector", "pro"].includes(plan)) {
       res
         .status(400)
         .json({ error: "Invalid plan. Must be collector or pro." });
       return;
     }
-    await updateUserPlan(req.params.userId, plan, note);
-    res.json({ data: { updated: true, plan } });
+    const months =
+      durationMonths === undefined || durationMonths === null
+        ? null
+        : Number(durationMonths);
+    if (months !== null && (!Number.isFinite(months) || months < 0)) {
+      res
+        .status(400)
+        .json({ error: "durationMonths must be a positive number." });
+      return;
+    }
+    await updateUserPlan(req.params.userId, plan, note, months);
+    res.json({ data: { updated: true, plan, durationMonths: months } });
   } catch (err) {
     handle(res, err);
   }
