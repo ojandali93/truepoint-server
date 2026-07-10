@@ -165,12 +165,11 @@ export const resolvePlan = async (
     .eq("user_id", userId)
     .in("status", ["active", "trialing"]);
 
+  // Comp grants (vendor codes / admin) expire by date — there's no store
+  // webhook to flip them, so we date-check them here and drop expired ones to
+  // free. Store subscriptions (apple/android/web) stay status-managed.
   const now = Date.now();
   const rows = (data ?? []).filter((row: any) => {
-    // Comp grants expire by date (there's no store webhook to flip them).
-    // Real store subscriptions (apple/android/web) are status-managed by their
-    // webhooks, so we don't date-check those — avoids a false expiry during the
-    // brief window between period end and the renewal webhook.
     if (row.platform === "comp") {
       const end = row.trial_ends_at ?? row.current_period_end;
       if (end && new Date(end).getTime() < now) return false; // expired
