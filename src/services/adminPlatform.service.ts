@@ -18,14 +18,19 @@ export interface ErrorLogFilters {
 }
 
 export const getErrorLogs = async (filters: ErrorLogFilters = {}) => {
+  // NOTE: this previously used PostgREST embedded joins
+  //   user:profiles!user_id(...), resolver:profiles!resolved_by(...)
+  // which require declared FKs from error_logs → profiles. If those FKs don't
+  // exist, PostgREST throws and the endpoint returns nothing — which is why the
+  // admin Error Logs tab came back empty. We now select plain columns (always
+  // safe) and hydrate the profile names in a second query.
   let q = supabaseAdmin
     .from("error_logs")
     .select(
       `
       id, created_at, severity, source, message, stack_trace,
-      request_path, request_method, metadata, resolved, resolved_at, resolution_note,
-      user:profiles!user_id(id, username, full_name),
-      resolver:profiles!resolved_by(id, username, full_name)
+      request_path, request_method, metadata, resolved, resolved_at,
+      resolution_note, user_id, resolved_by
     `,
       { count: "exact" },
     )
@@ -44,7 +49,35 @@ export const getErrorLogs = async (filters: ErrorLogFilters = {}) => {
 
   const { data, error, count } = await q;
   if (error) throw error;
-  return { logs: data ?? [], total: count ?? 0 };
+
+  const rows = data ?? [];
+
+  // Hydrate the user + resolver profiles (best-effort — a missing profile must
+  // never blank out the whole log list).
+  const ids = Array.from(
+    new Set(
+      rows
+        .flatMap((r: any) => [r.user_id, r.resolved_by])
+        .filter((v): v is string => !!v),
+    ),
+  );
+
+  let byId = new Map<string, any>();
+  if (ids.length > 0) {
+    const { data: profiles } = await supabaseAdmin
+      .from("profiles")
+      .select("id, username, full_name")
+      .in("id", ids);
+    byId = new Map((profiles ?? []).map((p: any) => [p.id, p]));
+  }
+
+  const logs = rows.map((r: any) => ({
+    ...r,
+    user: r.user_id ? (byId.get(r.user_id) ?? null) : null,
+    resolver: r.resolved_by ? (byId.get(r.resolved_by) ?? null) : null,
+  }));
+
+  return { logs, total: count ?? 0 };
 };
 
 export const resolveErrorLog = async (
@@ -96,13 +129,15 @@ export interface ActivityLogFilters {
 }
 
 export const getActivityLogs = async (filters: ActivityLogFilters = {}) => {
+  // Same fix as getErrorLogs: avoid the PostgREST embedded join
+  // (user:profiles!user_id) which silently breaks the endpoint when the FK
+  // isn't declared. Select plain columns, then hydrate the profiles.
   let q = supabaseAdmin
     .from("activity_logs")
     .select(
       `
       id, created_at, action, resource_type, resource_id,
-      metadata, ip_address, duration_ms,
-      user:profiles!user_id(id, username, full_name)
+      metadata, ip_address, duration_ms, user_id
     `,
       { count: "exact" },
     )
@@ -121,7 +156,27 @@ export const getActivityLogs = async (filters: ActivityLogFilters = {}) => {
 
   const { data, error, count } = await q;
   if (error) throw error;
-  return { logs: data ?? [], total: count ?? 0 };
+
+  const rows = data ?? [];
+  const ids = Array.from(
+    new Set(rows.map((r: any) => r.user_id).filter((v): v is string => !!v)),
+  );
+
+  let byId = new Map<string, any>();
+  if (ids.length > 0) {
+    const { data: profiles } = await supabaseAdmin
+      .from("profiles")
+      .select("id, username, full_name")
+      .in("id", ids);
+    byId = new Map((profiles ?? []).map((p: any) => [p.id, p]));
+  }
+
+  const logs = rows.map((r: any) => ({
+    ...r,
+    user: r.user_id ? (byId.get(r.user_id) ?? null) : null,
+  }));
+
+  return { logs, total: count ?? 0 };
 };
 
 // ─── User Management ──────────────────────────────────────────────────────────
