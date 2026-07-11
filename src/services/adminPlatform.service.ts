@@ -672,3 +672,19 @@ export const getPlatformStats = async () => {
     errors: errorSummary,
   };
 };
+
+/**
+ * Delete error logs older than `retainDays` (default 14). Backs the nightly
+ * cron so the table doesn't grow without bound and the admin view stays useful.
+ */
+export const purgeOldErrorLogs = async (retainDays = 14) => {
+  const cutoff = new Date(
+    Date.now() - retainDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const { error, count } = await supabaseAdmin
+    .from("error_logs")
+    .delete({ count: "exact" })
+    .lt("created_at", cutoff);
+  if (error) throw error;
+  return { deleted: count ?? 0, cutoff, retainDays };
+};

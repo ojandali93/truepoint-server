@@ -52,9 +52,15 @@ export const logError = async (params: LogErrorParams): Promise<void> => {
         ? params.error.message
         : String(params.error));
 
+    // Third-party HTTP noise (404 = no data for this id; 429 = rate limited;
+    // 403 = upstream auth/quota) is expected background-job behaviour, not an
+    // application fault. Downgrade it to 'warn' so real errors stand out.
+    const THIRD_PARTY_NOISE = /status code (404|429|403)/.test(message ?? "");
+    const severity = THIRD_PARTY_NOISE ? "warn" : (params.severity ?? "error");
+
     await supabaseAdmin.from("error_logs").insert({
       user_id: params.userId ?? null,
-      severity: params.severity ?? "error",
+      severity,
       source: params.source,
       message,
       stack_trace: stackTrace,

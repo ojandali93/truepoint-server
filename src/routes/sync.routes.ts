@@ -627,3 +627,15 @@ router.post("/intro-emails", requireSyncKey, async (_req, res) => {
     }
   });
 });
+
+// POST /api/v1/sync/purge-error-logs — nightly retention (14 days).
+router.post("/purge-error-logs", async (_req, res) => {
+  try {
+    const { purgeOldErrorLogs } =
+      await import("../services/adminPlatform.service");
+    const result = await purgeOldErrorLogs(14);
+    res.json({ data: result });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Purge failed" });
+  }
+});
