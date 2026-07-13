@@ -82,23 +82,27 @@ export const calculateTruepointScore = (p: CenteringPercentages): number => {
 // ─── Grade Predictions ────────────────────────────────────────────────────────
 // Based on worst axis — matches original Python logic exactly
 
+// PSA: front tolerance for a Gem Mint 10 is 55/45–60/40 (back allows 75/25).
+// A 65/35 front typically drops to a 9; 70/30 to an 8.
 const getPsaGrade = (worse: number): string => {
-  if (worse <= 55) return "10 (Gem Mint)";
-  if (worse <= 60) return "9 (Mint)";
-  if (worse <= 65) return "8 (NM-MT)";
-  if (worse <= 70) return "7 (NM)";
-  if (worse <= 75) return "6 (EX-MT)";
-  if (worse <= 80) return "5 (EX)";
+  if (worse <= 60) return "10 (Gem Mint)";
+  if (worse <= 65) return "9 (Mint)";
+  if (worse <= 70) return "8 (NM-MT)";
+  if (worse <= 75) return "7 (NM)";
+  if (worse <= 80) return "6 (EX-MT)";
+  if (worse <= 85) return "5 (EX)";
   return "4 or lower";
 };
 
+// BGS centering subgrade (front): 50/50 = 10, 55/45 = 9.5, 60/40 = 9,
+// 65/35 = 8.5, 70/30 = 8. Much stricter at the top than PSA.
 const getBgsGrade = (worse: number): string => {
   if (worse <= 50) return "10 (Pristine)";
-  if (worse <= 52) return "9.5 (Gem Mint)";
-  if (worse <= 55) return "9 (Mint)";
-  if (worse <= 60) return "8.5 (NM-MT+)";
-  if (worse <= 65) return "8 (NM-MT)";
-  if (worse <= 70) return "7.5 (NM+)";
+  if (worse <= 55) return "9.5 (Gem Mint)";
+  if (worse <= 60) return "9 (Mint)";
+  if (worse <= 65) return "8.5 (NM-MT+)";
+  if (worse <= 70) return "8 (NM-MT)";
+  if (worse <= 75) return "7.5 (NM+)";
   return "7 or lower";
 };
 
@@ -118,13 +122,15 @@ const getSgcGrade = (worse: number): string => {
   return "8.5 or lower";
 };
 
-// TAG uses same centering standard as PSA but with half-point grades
+// TAG (TCG tolerances, front): Pristine 10 ~51/49 · Gem Mint 10 ~55/45 ·
+// Mint 9 ~60/40 · NM-MT+ 8.5 ~62.5/37.5 · NM-MT 8 ~65/35.
+// (TAG's back tolerances for TCG are much looser: 52 / 65 / 75 / 85 / 95.)
 const getTagGrade = (worse: number): string => {
-  if (worse <= 50) return "10 (Gem Mint)";
-  if (worse <= 55) return "9.5 (Mint+)";
+  if (worse <= 51) return "10 (Pristine)";
+  if (worse <= 55) return "10 (Gem Mint)";
   if (worse <= 60) return "9 (Mint)";
-  if (worse <= 65) return "8.5 (NM-MT+)";
-  if (worse <= 70) return "8 (NM-MT)";
+  if (worse <= 62.5) return "8.5 (NM-MT+)";
+  if (worse <= 65) return "8 (NM-MT)";
   return "7.5 or lower";
 };
 

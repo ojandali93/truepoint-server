@@ -123,7 +123,12 @@ export interface GradingAnalysis {
     psa: { grade: number; label: string };
     bgs: { grade: number; label: string; isBlackLabel: boolean };
     cgc: { grade: number; label: string; isPristine: boolean };
-    tag: { grade: number; label: string; isPristine: boolean; score1000: number };
+    tag: {
+      grade: number;
+      label: string;
+      isPristine: boolean;
+      score1000: number;
+    };
   };
   centeringRatio: { front: string; back: string | null };
   issues: string[];
@@ -182,33 +187,180 @@ const tierName = (grade: number): string => {
   return "";
 };
 
-export function mapTpScore(tpScore: number, sub: SubScores) {
-  const g = tpScore / 10; // grade-equivalent, e.g. 93 -> 9.3
-  const allGem =
-    Math.min(sub.centering, sub.corners, sub.edges, sub.surface) >= 99;
-  const nearPerfect = tpScore >= 99;
+// ─── Centering → per-company grade ceilings ───────────────────────────────────
+//
+// Centering is a HARD GATE, not an average: PSA and BGS apply very different
+// tolerances to the same card, so a single blended score can't represent both.
+// Measured as the larger border over the total of both borders, per axis; the
+// worst of the two axes governs.
+//
+//   PSA  10: front 55/45–60/40   · back up to 75/25 (back is loose)
+//   PSA   9: front ~65/35
+//   PSA   8: front ~70/30
+//   BGS  10: front 50/50         · back 55/45      (Black Label)
+//   BGS 9.5: front 55/45         · back 60/40
+//   BGS   9: front 60/40         · back 65/35
 
-  // PSA — nearest whole number.
-  const psaGrade = toWhole(g);
+/** Larger side of the worst axis from ratio strings like "60/40". */
+function worstAxisPct(lr?: string | null, tb?: string | null): number {
+  const larger = (s?: string | null): number => {
+    const parts = String(s ?? "")
+      .split("/")
+      .map((n) => parseFloat(n))
+      .filter((n) => Number.isFinite(n));
+    if (parts.length !== 2) return 50;
+    return Math.max(parts[0], parts[1]);
+  };
+  return Math.max(larger(lr), larger(tb));
+}
+
+/** PSA whole-grade ceiling from centering. Front strict, back lenient. */
+function psaCenteringCeiling(front: number, back: number): number {
+  const f =
+    front <= 60
+      ? 10 // PSA allows up to 60/40 on the front for a Gem Mint 10
+      : front <= 65
+        ? 9
+        : front <= 70
+          ? 8
+          : front <= 75
+            ? 7
+            : front <= 80
+              ? 6
+              : 5;
+  const b =
+    back <= 75
+      ? 10 // PSA back tolerance is 75/25 even at the top grade
+      : back <= 85
+        ? 9
+        : back <= 90
+          ? 8
+          : 7;
+  return Math.min(f, b);
+}
+
+/** BGS CENTERING SUBGRADE (0.5 scale) — much stricter than PSA. */
+function bgsCenteringSubgrade(front: number, back: number): number {
+  const f =
+    front <= 50
+      ? 10
+      : front <= 55
+        ? 9.5
+        : front <= 60
+          ? 9
+          : front <= 65
+            ? 8.5
+            : front <= 70
+              ? 8
+              : 7;
+  const b =
+    back <= 55
+      ? 10
+      : back <= 60
+        ? 9.5
+        : back <= 65
+          ? 9
+          : back <= 70
+            ? 8.5
+            : back <= 75
+              ? 8
+              : 7;
+  return Math.min(f, b);
+}
+
+/**
+ * TAG centering (TCG tolerances) → grade tier + Pristine eligibility.
+ * Front is strict, back is very loose. BOTH must clear a tier.
+ *   Pristine 10 (990–1000): front ~51/49 · back ~52/48
+ *   Gem Mint 10 (950–989):  front ~55/45 · back ~65/35
+ *   Mint 9      (900–949):  front ~60/40 · back ~75/25
+ *   NM-MT+ 8.5  (850–899):  front ~62.5  · back ~85/15
+ *   NM-MT 8     (800–849):  front ~65/35 · back ~95/5
+ */
+function tagCenteringTcg(
+  front: number,
+  back: number,
+): { ceiling: number; pristineEligible: boolean } {
+  const PRISTINE = 10.5; // sentinel above 10 = Pristine-eligible
+  const f =
+    front <= 51
+      ? PRISTINE
+      : front <= 55
+        ? 10
+        : front <= 60
+          ? 9
+          : front <= 62.5
+            ? 8.5
+            : front <= 65
+              ? 8
+              : 7;
+  const b =
+    back <= 52
+      ? PRISTINE
+      : back <= 65
+        ? 10
+        : back <= 75
+          ? 9
+          : back <= 85
+            ? 8.5
+            : back <= 95
+              ? 8
+              : 7;
+  const tier = Math.min(f, b);
+  return { ceiling: Math.min(10, tier), pristineEligible: tier >= PRISTINE };
+}
+
+export function mapTpScore(
+  tpScore: number,
+  sub: SubScores,
+  centering?: { front?: string | null; back?: string | null },
+) {
+  // Condition score EXCLUDING centering. Centering is applied separately as a
+  // per-company ceiling (below) rather than averaged in — otherwise a card that
+  // PSA would still gem (e.g. 60/40 front) gets silently dragged below a 10 by
+  // the blend, which is exactly why good cards were under-predicting.
+  const condWeighted =
+    (sub.surface * 0.4 + sub.corners * 0.32 + sub.edges * 0.28) / 1;
+  const condMin = Math.min(sub.corners, sub.edges, sub.surface);
+  const condition = clamp100(condWeighted * 0.75 + condMin * 0.25);
+  const g = condition / 10; // grade-equivalent from condition alone
+
+  const frontPct = worstAxisPct(centering?.front, centering?.front);
+  const backPct = centering?.back
+    ? worstAxisPct(centering.back, centering.back)
+    : 50;
+
+  const allGem = Math.min(sub.corners, sub.edges, sub.surface) >= 99;
+
+  // PSA — whole grades, capped by PSA's centering tolerance.
+  const psaCeil = psaCenteringCeiling(frontPct, backPct);
+  const psaGrade = clamp10(Math.min(toWhole(g), psaCeil));
   const psa = {
     grade: psaGrade,
     label: `PSA ${psaGrade} ${PSA_NAMES[psaGrade] ?? ""}`.trim(),
+    centeringCeiling: psaCeil,
   };
 
-  // BGS — nearest half.
-  const bgsGrade = toHalf(g);
-  const bgsBlack = allGem && bgsGrade >= 10;
+  // BGS — half grades. The centering SUBGRADE is strict; the overall grade can
+  // sit up to half a point above a single weak subgrade.
+  const bgsCentSub = bgsCenteringSubgrade(frontPct, backPct);
+  const bgsCeil = Math.min(10, bgsCentSub + 0.5);
+  const bgsGrade = clamp10(Math.min(toHalf(g), bgsCeil));
+  const bgsBlack = allGem && bgsCentSub >= 10 && bgsGrade >= 10;
   const bgs = {
     grade: bgsGrade,
     label: bgsBlack
       ? "BGS 10 Black Label"
       : `BGS ${fmtGrade(bgsGrade)} ${tierName(bgsGrade)}`.trim(),
     isBlackLabel: bgsBlack,
+    centeringSubgrade: bgsCentSub,
   };
 
-  // CGC — nearest half.
-  const cgcGrade = toHalf(g);
-  const cgcPristine = nearPerfect && cgcGrade >= 10;
+  // CGC — PSA-like scale, half grades; Pristine 10 needs near-perfect centering.
+  const cgcCeil = psaCeil;
+  const cgcGrade = clamp10(Math.min(toHalf(g), cgcCeil));
+  const cgcPristine =
+    allGem && frontPct <= 55 && backPct <= 60 && cgcGrade >= 10;
   const cgc = {
     grade: cgcGrade,
     label: cgcPristine
@@ -217,16 +369,30 @@ export function mapTpScore(tpScore: number, sub: SubScores) {
     isPristine: cgcPristine,
   };
 
-  // TAG — nearest half.
-  const tagGrade = toHalf(g);
-  const tagPristine = nearPerfect && tagGrade >= 10;
+  // TAG — TCG centering tolerances (front strict, back loose) + 1000-pt bands.
+  const tagCent = tagCenteringTcg(frontPct, backPct);
+  const tagGrade = clamp10(Math.min(toHalf(g), tagCent.ceiling));
+  // Pristine also requires a flawless card, not just flawless centering.
+  const tagPristine = allGem && tagCent.pristineEligible && tagGrade >= 10;
+  // Map the grade onto TAG's published 1000-pt bands.
+  const tagScore1000 = tagPristine
+    ? 990 + Math.round((Math.min(condition, 100) - 99) * 10) // 990–1000
+    : tagGrade >= 10
+      ? 950 + Math.round(Math.min(39, Math.max(0, condition - 96) * 13)) // 950–989
+      : tagGrade >= 9
+        ? 900 + Math.round(Math.min(49, Math.max(0, condition - 90) * 8)) // 900–949
+        : tagGrade >= 8.5
+          ? 850 + Math.round(Math.min(49, Math.max(0, condition - 85) * 9)) // 850–899
+          : tagGrade >= 8
+            ? 800 + Math.round(Math.min(49, Math.max(0, condition - 80) * 9)) // 800–849
+            : Math.max(100, Math.round(tagGrade * 100));
   const tag = {
     grade: tagGrade,
     label: tagPristine
-      ? "TAG Pristine 10"
+      ? "TAG 10 Pristine"
       : `TAG ${fmtGrade(tagGrade)} ${tierName(tagGrade)}`.trim(),
     isPristine: tagPristine,
-    score1000: Math.max(100, Math.min(1000, Math.round(tpScore * 10))),
+    score1000: Math.max(100, Math.min(1000, tagScore1000)),
   };
 
   return { psa, bgs, cgc, tag };
@@ -241,7 +407,7 @@ const GRADING_PROMPT = (
 Score the card's intrinsic physical quality on a 0–100 scale. This is NOT a PSA/BGS/CGC/TAG grade — DO NOT output any company grade. Score raw quality so it can be mapped to grades afterward.
 
 Evaluate FOUR sub-dimensions, each 0–100, looking at BOTH front and back:
-- centering: how centered the artwork is within the borders (front weighted most). PSA/BGS allow some offset even at the top grades, so don't over-penalize: 50/50–55/45 ≈ 95–100 (both are 10-worthy); 60/40 ≈ 86; 65/35 ≈ 76; 70/30 ≈ 66; worse is poor.
+- centering: MEASURE IT, don't guess. For each axis, compare the two opposite borders: ratio = (wider border ÷ (both borders combined)) × 100. Do this LEFT-TO-RIGHT and TOP-TO-BOTTOM, on the front AND the back, and report the ratios in centering_ratio_front / centering_ratio_back using the WORST axis (e.g. left border 3mm, right 2mm → 3/(3+2) = 60 → "60/40"). Report 50/50 only if it truly is. These ratios drive the grade directly, so accuracy here matters more than anything else. For the 0-100 centering score, use: 50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse is poor.
 - corners: sharpness/wear of all four corners on both sides.
 - edges: cleanliness/whitening/nicks along all edges, both sides.
 - surface: scratches, print lines, dimples, scuffs, holo scratches, gloss, both sides.
@@ -381,7 +547,7 @@ export const analyzeCardForGrading = async (
       issues,
       notes: parsed.notes ?? "",
     },
-    predictions: mapTpScore(tpScore, sub),
+    predictions: mapTpScore(tpScore, sub, centeringRatio),
     centeringRatio,
     issues,
     strengths,
