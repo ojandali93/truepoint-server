@@ -311,7 +311,7 @@ function tagCenteringTcg(
 }
 
 export function mapTpScore(
-  tpScore: number,
+  _tpScore: number,
   sub: SubScores,
   centering?: { front?: string | null; back?: string | null },
 ) {
