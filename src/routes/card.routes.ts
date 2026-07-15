@@ -11,6 +11,7 @@ import {
   identifyFromUrlSchema,
 } from "../schemas/card.schemas";
 import * as CardController from "../controllers/card.controller";
+import * as CardSalesController from "../controllers/cardSales.controller";
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
 
@@ -41,6 +42,11 @@ router.get(
   CardController.getCardPrices as any,
 );
 router.get("/:cardId", standardLimiter, CardController.getCardById as any);
+router.get(
+  "/:cardId/recent-sales",
+  standardLimiter,
+  CardSalesController.getCardRecentSales as any,
+);
 
 // ─── Card Identification ───────────────────────────────────────────────────────
 router.post(
