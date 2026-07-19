@@ -458,12 +458,28 @@ export const getCardGradedPrices = async (
       res.status(400).json({ error: "cardId is required" });
       return;
     }
-    const fetchResult = await fetchAndCacheGradedPrices(cardId);
+    // Refresh from PokeTrace BEST-EFFORT. This used to run un-guarded before
+    // the DB read, so any upstream failure (429 rate-limit, 403 quota) threw
+    // and 500'd the whole endpoint — the card detail screen showed no graded
+    // prices even though perfectly good cached rows existed in market_prices
+    // (which is why the inventory screen still showed them).
+    let cached = true;
+    try {
+      const fetchResult = await fetchAndCacheGradedPrices(cardId);
+      cached = fetchResult.cached;
+    } catch (err: any) {
+      console.warn(
+        "[CardController] graded price refresh failed, serving cache:",
+        err?.message,
+      );
+    }
+
+    // Always serve whatever we have cached, even if the refresh above failed.
     const prices = await getGradedPricesForCard(cardId);
     res.json({
       data: {
         cardId,
-        cached: fetchResult.cached,
+        cached,
         prices,
       },
     });

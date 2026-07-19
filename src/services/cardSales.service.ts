@@ -3,6 +3,7 @@
 // cards.id IS the TCGPlayer product ID (string form), verified via the
 // PokeTrace integration — so we hit TCGAPIs sales-history with it directly.
 import { tcgapisGet } from "../lib/tcgapisClient";
+import { logError } from "../lib/Logger";
 
 export interface RecentSale {
   date: string;
@@ -18,6 +19,8 @@ export interface RecentSalesResult {
   median: number | null;
   average: number | null; // excludes outliers
   sales: RecentSale[];
+  /** null when sales loaded fine; otherwise why they are missing. */
+  unavailableReason: string | null;
 }
 
 interface TcgapisSaleRow {
@@ -73,13 +76,34 @@ export const getRecentSales = async (
 ): Promise<RecentSalesResult> => {
   const productUrl = `https://www.tcgplayer.com/product/${cardId}`;
   let raw: TcgapisSaleRow[] = [];
+  let unavailableReason: string | null = null;
   try {
     const res = await tcgapisGet<TcgapisSalesResponse>(
       `/api/v1/sales-history/${cardId}`,
     );
     raw = res?.data?.sales ?? [];
-  } catch {
-    // No sales / not found / upstream hiccup → empty, not an error.
+  } catch (err: any) {
+    // This used to swallow EVERYTHING silently, so a plan restriction
+    // (sales-history is a Business-tier endpoint — tcgapisGet throws
+    // "Plan restriction" on 402/403) looked exactly like "this card has no
+    // sales". Classify + log it so the real cause is visible.
+    const msg = String(err?.message ?? "");
+    unavailableReason = /plan restriction/i.test(msg)
+      ? "plan_restriction"
+      : /404|not found/i.test(msg)
+        ? "not_found"
+        : "upstream_error";
+    if (unavailableReason !== "not_found") {
+      await logError({
+        source: "card-recent-sales",
+        message: `Recent sales unavailable for ${cardId}: ${msg}`,
+        error: err,
+        userId: null,
+        requestPath: `/api/v1/sales-history/${cardId}`,
+        requestMethod: "GET",
+        metadata: { cardId, reason: unavailableReason },
+      });
+    }
     raw = [];
   }
 
@@ -115,5 +139,6 @@ export const getRecentSales = async (
     median: median(sales.map((s) => s.price)),
     average,
     sales,
+    unavailableReason,
   };
 };
