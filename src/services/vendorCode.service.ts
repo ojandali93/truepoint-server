@@ -117,3 +117,91 @@ export const redeemVendorCode = async (
     description: vc.description ?? null,
   };
 };
+
+// ─── Admin management ─────────────────────────────────────────────────────────
+
+export interface VendorCodeInput {
+  code: string;
+  description?: string | null;
+  plan?: string; // 'pro' | 'collector'
+  durationMonths?: number; // trial length YOU set
+  maxRedemptions?: number | null; // null = unlimited
+  expiresAt?: string | null; // ISO, null = never
+}
+
+/** All codes, newest first, for the admin list. */
+export const listVendorCodes = async () => {
+  const { data, error } = await supabaseAdmin
+    .from("vendor_codes")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+};
+
+/** Create an event/vendor code. Code is normalized to UPPERCASE + unique. */
+export const createVendorCode = async (
+  input: VendorCodeInput,
+  adminUserId: string,
+) => {
+  const code = String(input.code ?? "")
+    .trim()
+    .toUpperCase();
+  if (!code) throw new VendorCodeError("Code is required.", "INVALID");
+  if (!/^[A-Z0-9_-]{2,32}$/.test(code))
+    throw new VendorCodeError(
+      "Code must be 2–32 letters, numbers, - or _.",
+      "INVALID",
+    );
+
+  const duration = Math.max(1, Math.round(input.durationMonths ?? 1));
+  const row = {
+    code,
+    description: input.description?.trim() || null,
+    benefit_type: "comp_trial",
+    plan: input.plan === "collector" ? "collector" : "pro",
+    duration_months: duration,
+    max_redemptions:
+      input.maxRedemptions != null && input.maxRedemptions > 0
+        ? Math.round(input.maxRedemptions)
+        : null,
+    redemption_count: 0,
+    expires_at: input.expiresAt || null,
+    active: true,
+    created_by: adminUserId,
+  };
+
+  const { data, error } = await supabaseAdmin
+    .from("vendor_codes")
+    .insert(row)
+    .select("*")
+    .single();
+  if (error) {
+    if ((error as any).code === "23505")
+      throw new VendorCodeError("That code already exists.", "DUPLICATE");
+    throw error;
+  }
+  return data;
+};
+
+/** Flip a code active/inactive (soft disable — keeps redemption history). */
+export const setVendorCodeActive = async (id: string, active: boolean) => {
+  const { data, error } = await supabaseAdmin
+    .from("vendor_codes")
+    .update({ active })
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+/** Hard-delete a code (its redemptions cascade). */
+export const deleteVendorCode = async (id: string) => {
+  const { error } = await supabaseAdmin
+    .from("vendor_codes")
+    .delete()
+    .eq("id", id);
+  if (error) throw error;
+  return { deleted: true };
+};

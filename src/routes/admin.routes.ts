@@ -2,6 +2,12 @@
 
 import { Router } from "express";
 import { authenticateUser, requireAdmin } from "../middleware/auth.middleware";
+import {
+  adminListCodes,
+  adminCreateCode,
+  adminSetCodeActive,
+  adminDeleteCode,
+} from "../controllers/adminVendorCode.controller";
 
 // ─── Analytics controller (wraps service functions as Express handlers) ───────
 import {
@@ -43,6 +49,11 @@ const router = Router();
 
 // Auth + admin check on every admin route
 router.use(authenticateUser as any, requireAdmin as any);
+
+router.get("/codes", adminListCodes as any);
+router.post("/codes", adminCreateCode as any);
+router.patch("/codes/:id", adminSetCodeActive as any);
+router.delete("/codes/:id", adminDeleteCode as any);
 
 // ─── Overview ─────────────────────────────────────────────────────────────────
 router.get("/stats", platformStats as any);
