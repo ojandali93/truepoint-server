@@ -14,7 +14,10 @@ import {
   updateUserPlan,
   getUserErrorLogs,
   getFeatureFlags,
-  setFeatureFlag,
+  updateFeatureFlagConfig,
+  createFeatureFlag as createFeatureFlagService,
+  deleteFeatureFlag as deleteFeatureFlagService,
+  FeatureFlagPatch,
   getGradingCosts,
   updateGradingCost,
   getAppSettings,
@@ -22,6 +25,7 @@ import {
   getPlatformStats,
 } from "../services/adminPlatform.service";
 import { logError } from "../lib/Logger";
+import { FLAG_AUDIENCES, FlagAudience } from "../services/featureFlag.service";
 import { supabaseAdmin } from "../lib/supabase";
 import { sendPushToUsers } from "../services/push.service";
 import { AuthenticatedRequest } from "../types/user.types";
@@ -114,7 +118,7 @@ export const resolveError = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const adminId = (req as any).userId;
+    const adminId = (req as AuthenticatedRequest).user?.id ?? null;
     const { note } = req.body;
     await resolveErrorLog(req.params.id, adminId, note);
     res.json({ data: { resolved: true } });
@@ -254,21 +258,141 @@ export const listFeatureFlags = async (
   }
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Flag keys become code identifiers (useFlag("my_flag")), so keep them tame.
+const FLAG_KEY_RE = /^[a-z][a-z0-9_]{2,63}$/;
+
 // PATCH /admin/flags/:key
-// Body: { enabled: boolean }
+// Body: any subset of
+//   { enabled, audience, allowed_user_ids, rollout_percentage, description }
 export const updateFeatureFlag = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   try {
-    const adminId = (req as any).userId;
-    const { enabled } = req.body;
-    if (typeof enabled !== "boolean") {
-      res.status(400).json({ error: "enabled must be a boolean" });
+    const adminId = (req as AuthenticatedRequest).user?.id ?? null;
+    const body = req.body ?? {};
+    const patch: FeatureFlagPatch = {};
+
+    if (body.enabled !== undefined) {
+      if (typeof body.enabled !== "boolean") {
+        res.status(400).json({ error: "enabled must be a boolean" });
+        return;
+      }
+      patch.enabled = body.enabled;
+    }
+
+    if (body.audience !== undefined) {
+      if (!FLAG_AUDIENCES.includes(body.audience as FlagAudience)) {
+        res.status(400).json({
+          error: `audience must be one of: ${FLAG_AUDIENCES.join(", ")}`,
+        });
+        return;
+      }
+      patch.audience = body.audience as FlagAudience;
+    }
+
+    if (body.allowed_user_ids !== undefined) {
+      if (!Array.isArray(body.allowed_user_ids)) {
+        res.status(400).json({ error: "allowed_user_ids must be an array" });
+        return;
+      }
+      const ids = body.allowed_user_ids.map((v: unknown) => String(v).trim());
+      const bad = ids.find((id: string) => !UUID_RE.test(id));
+      if (bad) {
+        res.status(400).json({ error: `Not a valid user id: ${bad}` });
+        return;
+      }
+      patch.allowed_user_ids = Array.from(new Set(ids));
+    }
+
+    if (body.rollout_percentage !== undefined) {
+      const pct = Number(body.rollout_percentage);
+      if (!Number.isInteger(pct) || pct < 0 || pct > 100) {
+        res
+          .status(400)
+          .json({ error: "rollout_percentage must be an integer 0–100" });
+        return;
+      }
+      patch.rollout_percentage = pct;
+    }
+
+    if (body.description !== undefined) {
+      patch.description =
+        body.description === null ? null : String(body.description);
+    }
+
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: "No updatable fields supplied" });
       return;
     }
-    await setFeatureFlag(req.params.key, enabled, adminId);
-    res.json({ data: { updated: true, key: req.params.key, enabled } });
+
+    const updated = await updateFeatureFlagConfig(
+      req.params.key,
+      patch,
+      adminId,
+    );
+
+    // No upsert here on purpose — a PATCH to a typo'd key used to silently
+    // create a half-configured flag. Use POST /admin/flags to create.
+    if (!updated) {
+      res.status(404).json({ error: `No flag with key "${req.params.key}"` });
+      return;
+    }
+
+    res.json({ data: updated });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// POST /admin/flags
+// Body: { key: string, description?: string }
+export const createFeatureFlag = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const adminId = (req as AuthenticatedRequest).user?.id ?? null;
+    const key = String(req.body?.key ?? "")
+      .trim()
+      .toLowerCase();
+
+    if (!FLAG_KEY_RE.test(key)) {
+      res.status(400).json({
+        error:
+          "key must be 3–64 chars, lowercase letters/numbers/underscores, starting with a letter",
+      });
+      return;
+    }
+
+    const description =
+      req.body?.description === undefined || req.body?.description === null
+        ? null
+        : String(req.body.description);
+
+    const created = await createFeatureFlagService(key, description, adminId);
+    res.status(201).json({ data: created });
+  } catch (err) {
+    // 23505 = unique_violation on feature_flags.key
+    if ((err as { code?: string })?.code === "23505") {
+      res.status(409).json({ error: "A flag with that key already exists" });
+      return;
+    }
+    handle(res, err);
+  }
+};
+
+// DELETE /admin/flags/:key
+export const deleteFeatureFlag = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    await deleteFeatureFlagService(req.params.key);
+    res.json({ data: { deleted: true, key: req.params.key } });
   } catch (err) {
     handle(res, err);
   }
@@ -330,7 +454,7 @@ export const updateSetting = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const adminId = (req as any).userId;
+    const adminId = (req as AuthenticatedRequest).user?.id ?? null;
     const { value } = req.body;
     if (value === undefined) {
       res.status(400).json({ error: "value is required" });

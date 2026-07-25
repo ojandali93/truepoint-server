@@ -5,6 +5,7 @@
 // logic anywhere else.
 
 import { supabaseAdmin } from "../lib/supabase";
+import { resolveFlagsForUser } from "./featureFlag.service";
 
 // ─── Plan keys ──────────────────────────────────────────────────────────────
 
@@ -341,9 +342,19 @@ export const getPlanSnapshot = async (
 ) => {
   const resolved = await resolvePlan(userId, role);
 
-  const [aiGrading, submissions] = await Promise.all([
+  // Feature flags are resolved alongside usage, but MUST NOT be able to
+  // break this endpoint. /me/plan runs on app boot for every user on both
+  // platforms — if flag resolution threw, the snapshot would 500 and the
+  // whole app would fall back to DEFAULT_FEATURES (everything locked, for
+  // everyone). Degrade to "no flags" instead: dark features stay dark, the
+  // app keeps working.
+  const [aiGrading, submissions, flags] = await Promise.all([
     getMonthlyLimitInfo(userId, "ai_grading_reports", role),
     getMonthlyLimitInfo(userId, "submissions", role),
+    resolveFlagsForUser(userId, role).catch((err) => {
+      console.error("[PlanService] flag resolution failed:", err);
+      return {} as Record<string, boolean>;
+    }),
   ]);
 
   // Build a features map the frontend can use as `features.portfolio_dashboard`
@@ -359,7 +370,8 @@ export const getPlanSnapshot = async (
     effectivePlan: resolved.effectivePlan,
     isAdmin: resolved.isAdmin,
     subscriptionPlatform: resolved.platform,
-    features,
+    features, // entitlement — what your PLAN includes
+    flags, // rollout — what has SHIPPED to you (booleans only)
     usage: {
       aiGradingReports: aiGrading,
       submissions,

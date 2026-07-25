@@ -4,6 +4,11 @@
 //         feature flags, grading costs, app settings.
 
 import { supabaseAdmin } from "../lib/supabase";
+import {
+  FLAG_COLUMNS,
+  FlagAudience,
+  invalidateFlagCache,
+} from "./featureFlag.service";
 
 // ─── Error Logs ───────────────────────────────────────────────────────────────
 
@@ -517,41 +522,110 @@ export const getUserErrorLogs = async (userId: string, limit = 20) => {
 };
 
 // ─── Feature Flags ────────────────────────────────────────────────────────────
+//
+// Admin-side CRUD only. Runtime evaluation lives in featureFlag.service.ts —
+// do not re-implement it here.
+//
+// The old isFeatureEnabled() that used to live in this file has been removed.
+// It had zero callers and defaulted to TRUE on a missing row, which is exactly
+// backwards for a system whose purpose is shipping features dark: a typo'd key
+// would have exposed an unreleased feature to everyone. Use
+// isFlagEnabled(key, userId, role) from featureFlag.service.ts instead.
 
 export const getFeatureFlags = async () => {
   const { data, error } = await supabaseAdmin
     .from("feature_flags")
-    .select("id, key, enabled, description, metadata, updated_at")
+    .select(FLAG_COLUMNS)
     .order("key");
   if (error) throw error;
   return data ?? [];
 };
 
-export const setFeatureFlag = async (
+export interface FeatureFlagPatch {
+  enabled?: boolean;
+  audience?: FlagAudience;
+  allowed_user_ids?: string[];
+  rollout_percentage?: number;
+  description?: string | null;
+}
+
+/**
+ * Partial update of one flag. Only the keys present in `patch` are written,
+ * so toggling `enabled` never clobbers an allowlist.
+ *
+ * Returns null when the key doesn't exist — the controller turns that into a
+ * 404 rather than silently creating a half-configured flag (the previous
+ * implementation upserted, so a typo'd key created a new row with a null
+ * description).
+ */
+export const updateFeatureFlagConfig = async (
   key: string,
-  enabled: boolean,
-  updatedBy: string,
+  patch: FeatureFlagPatch,
+  updatedBy: string | null,
 ) => {
-  const { error } = await supabaseAdmin.from("feature_flags").upsert(
-    {
-      key,
-      enabled,
-      updated_at: new Date().toISOString(),
-      updated_by: updatedBy,
-    },
-    { onConflict: "key" },
-  );
+  const update: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+    updated_by: updatedBy,
+  };
+
+  if (patch.enabled !== undefined) update.enabled = patch.enabled;
+  if (patch.audience !== undefined) update.audience = patch.audience;
+  if (patch.allowed_user_ids !== undefined)
+    update.allowed_user_ids = patch.allowed_user_ids;
+  if (patch.rollout_percentage !== undefined)
+    update.rollout_percentage = patch.rollout_percentage;
+  if (patch.description !== undefined) update.description = patch.description;
+
+  const { data, error } = await supabaseAdmin
+    .from("feature_flags")
+    .update(update)
+    .eq("key", key)
+    .select(FLAG_COLUMNS)
+    .maybeSingle();
+
   if (error) throw error;
+
+  invalidateFlagCache();
+  return data ?? null;
 };
 
-// Check a single flag — use this in route handlers to gate features
-export const isFeatureEnabled = async (key: string): Promise<boolean> => {
-  const { data } = await supabaseAdmin
+/**
+ * Create a flag. Always born dark: enabled=true but audience='off' means the
+ * kill switch is armed and nobody can see it until an audience is chosen.
+ */
+export const createFeatureFlag = async (
+  key: string,
+  description: string | null,
+  createdBy: string | null,
+) => {
+  const { data, error } = await supabaseAdmin
     .from("feature_flags")
-    .select("enabled")
-    .eq("key", key)
+    .insert({
+      key,
+      description,
+      enabled: true,
+      audience: "off",
+      allowed_user_ids: [],
+      rollout_percentage: 0,
+      updated_by: createdBy,
+    })
+    .select(FLAG_COLUMNS)
     .single();
-  return data?.enabled ?? true; // default to enabled if flag doesn't exist
+
+  if (error) throw error;
+
+  invalidateFlagCache();
+  return data;
+};
+
+export const deleteFeatureFlag = async (key: string) => {
+  const { error } = await supabaseAdmin
+    .from("feature_flags")
+    .delete()
+    .eq("key", key);
+  if (error) throw error;
+
+  invalidateFlagCache();
 };
 
 // ─── Grading Costs ────────────────────────────────────────────────────────────

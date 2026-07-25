@@ -36,6 +36,8 @@ import {
   overrideUserPlan,
   listFeatureFlags,
   updateFeatureFlag,
+  createFeatureFlag,
+  deleteFeatureFlag,
   listGradingCosts,
   updateCost,
   listAppSettings,
@@ -80,7 +82,9 @@ router.patch("/users/:userId/plan", overrideUserPlan as any);
 
 // ─── Feature flags ────────────────────────────────────────────────────────────
 router.get("/flags", listFeatureFlags as any);
+router.post("/flags", createFeatureFlag as any);
 router.patch("/flags/:key", updateFeatureFlag as any);
+router.delete("/flags/:key", deleteFeatureFlag as any);
 
 // ─── Grading costs ────────────────────────────────────────────────────────────
 router.get("/grading-costs", listGradingCosts as any);

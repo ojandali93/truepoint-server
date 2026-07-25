@@ -33,7 +33,9 @@ export const errorLoggerMiddleware = async (
     source: "unhandled",
     message,
     error: err,
-    userId: (req as any).userId ?? null,
+    // authenticateUser sets req.user, never req.userId — reading the latter
+    // meant every unhandled error was logged with no user attribution.
+    userId: (req as any).user?.id ?? null,
     severity,
     requestPath: req.path,
     requestMethod: req.method,
