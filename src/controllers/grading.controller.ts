@@ -24,7 +24,7 @@ export const getArbitrage = async (
       source: "get-arbitrage", // ← change per controller
       message: err?.message ?? "Unknown error",
       error: err,
-      userId: (req as any)?.userId ?? null,
+      userId: req.user?.id ?? null,
       requestPath: req.path,
       requestMethod: req.method,
       metadata: { params: req.params, query: req.query },

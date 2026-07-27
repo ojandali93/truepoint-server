@@ -32,6 +32,7 @@ import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
 import scanRoutes from "../routes/scan.routes";
 import feedbackAdminRoutes from "../routes/feedbackAdmin.routes";
 import adminSyncRoutes from "../routes/adminSync.routes";
+import regradeRoutes from "../routes/regrade.routes";
 
 dotenv.config();
 
@@ -76,6 +77,7 @@ app.use("/api/v1/admin", feedbackAdminRoutes);
 app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
 app.use("/api/v1/grading", aiGradingRoutes);
+app.use("/api/v1/regrades", regradeRoutes);
 app.use("/api/v1/codes", vendorCodeRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
