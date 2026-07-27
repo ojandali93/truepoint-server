@@ -16,6 +16,8 @@
 
 import axios, { AxiosRequestConfig } from "axios";
 
+import { logError } from "./Logger";
+
 const HOST =
   process.env.POKETRACE_RAPIDAPI_HOST ?? "poketrace-api.p.rapidapi.com";
 const BASE = `https://${HOST}`;
@@ -23,6 +25,81 @@ const BASE = `https://${HOST}`;
 // PokeTrace returns up to 20 cards per /cards request. We always use this
 // max because price queries are by tcgplayer_ids list (batched).
 const PAGE_LIMIT = 20;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * GET with retry/backoff — mirrors tcgapisGet in tcgapisClient.ts exactly,
+ * so both third-party clients fail the same way.
+ *
+ * Before this existed, a single 429 threw immediately and killed whatever
+ * called it: a bulk-sync batch lost all 20 cards in it, and an on-demand
+ * card-detail fetch just errored. Neither is visible as "PokeTrace is rate
+ * limiting us" from the caller's side — it looks identical to "this grade
+ * genuinely has no market data", which is the wrong failure mode for a
+ * feature (the regrade tracker) whose entire value is grade-price coverage.
+ *
+ * Only logs to error_logs on FINAL failure, not every transient retry — same
+ * reasoning as tcgapisGet: keeps the admin error log signal-rich instead of
+ * noisy with retries that self-healed.
+ */
+const poketraceGet = async <T>(
+  url: string,
+  config: AxiosRequestConfig,
+  retries = 3,
+): Promise<T> => {
+  let lastErr: any = null;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await axios.get<T>(url, config);
+      return res.data;
+    } catch (err: any) {
+      lastErr = err;
+      const status = err?.response?.status;
+
+      // Rate limited — wait and retry (don't count as a retry attempt burn),
+      // same 30s wait tcgapisGet uses.
+      if (status === 429) {
+        await sleep(30000);
+        continue;
+      }
+      // Auth / plan errors are not retryable — RapidAPI returns 401 for a
+      // bad/expired key and 403 when the key isn't subscribed to this API.
+      // Fail fast and loud rather than burning retries on something that
+      // will never succeed.
+      if (status === 401 || status === 402 || status === 403) {
+        await logError({
+          source: "poketrace-plan-restriction",
+          message: `Auth/plan restriction on ${url}: ${err?.response?.data?.message ?? status}`,
+          error: err,
+          userId: null,
+          requestPath: url,
+          requestMethod: "GET",
+          metadata: { params: config.params ?? {} },
+        });
+        throw new Error(
+          `PokeTrace auth/plan restriction: ${err?.response?.data?.message ?? url}`,
+        );
+      }
+      // Transient — backoff and retry.
+      if (i < retries - 1) {
+        await sleep(2000 * (i + 1));
+        continue;
+      }
+    }
+  }
+  // Final failure — log once.
+  await logError({
+    source: "poketrace-get",
+    message: lastErr?.message ?? `Failed after ${retries} retries: ${url}`,
+    error: lastErr,
+    userId: null,
+    requestPath: url,
+    requestMethod: "GET",
+    metadata: { params: config.params ?? {} },
+  });
+  throw lastErr ?? new Error(`Failed after ${retries} retries: ${url}`);
+};
 
 // ─── Types (subset we actually use; PokeTrace returns much more) ──────────────
 
@@ -116,7 +193,7 @@ export const fetchCardsByTcgplayerIds = async (
     );
   }
 
-  const res = await axios.get<CardsResponse>(`${BASE}/cards`, {
+  const data = await poketraceGet<CardsResponse>(`${BASE}/cards`, {
     headers: baseHeaders(),
     params: {
       tcgplayer_ids: tcgplayerIds.join(","),
@@ -125,7 +202,7 @@ export const fetchCardsByTcgplayerIds = async (
     timeout: 20000,
   });
 
-  return res.data?.data ?? [];
+  return data?.data ?? [];
 };
 
 // Convenience: fetch a single card by TCGPlayer ID. Returns null if missing.
