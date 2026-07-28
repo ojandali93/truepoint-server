@@ -10,11 +10,12 @@ import { Router } from "express";
 import { authenticateUser } from "../middleware/auth.middleware";
 import { standardLimiter } from "../middleware/rateLimit.middleware";
 import { requireFlagMiddleware } from "../middleware/flag.middleware";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 import * as RegradeController from "../controllers/regradeTracker.controller";
 
 const router = Router();
 router.use(authenticateUser as any);
-router.use(requireFlagMiddleware("regrade_tracker") as any);
+router.use(requireFlagMiddleware(FLAG_KEYS.REGRADE_TRACKER) as any);
 
 // GET /api/v1/regrades/:cardId/ladder
 // Price at every known grade+company for ANY card — no ownership required.

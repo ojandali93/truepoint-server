@@ -35,6 +35,7 @@ import {
   getUserErrors,
   overrideUserPlan,
   listFeatureFlags,
+  listKnownFlagKeys,
   updateFeatureFlag,
   createFeatureFlag,
   deleteFeatureFlag,
@@ -82,6 +83,7 @@ router.patch("/users/:userId/plan", overrideUserPlan as any);
 
 // ─── Feature flags ────────────────────────────────────────────────────────────
 router.get("/flags", listFeatureFlags as any);
+router.get("/flags/known-keys", listKnownFlagKeys as any);
 router.post("/flags", createFeatureFlag as any);
 router.patch("/flags/:key", updateFeatureFlag as any);
 router.delete("/flags/:key", deleteFeatureFlag as any);

@@ -26,6 +26,7 @@ import {
 } from "../services/adminPlatform.service";
 import { logError } from "../lib/Logger";
 import { FLAG_AUDIENCES, FlagAudience } from "../services/featureFlag.service";
+import { KNOWN_FLAGS } from "../constants/featureFlagKeys";
 import { supabaseAdmin } from "../lib/supabase";
 import { sendPushToUsers } from "../services/push.service";
 import { AuthenticatedRequest } from "../types/user.types";
@@ -256,6 +257,22 @@ export const listFeatureFlags = async (
   } catch (err) {
     handle(res, err);
   }
+};
+
+// GET /admin/flags/known-keys
+//
+// Suggestions for the "create flag" form — every key a useFlag()/
+// requireFlag() call site in the codebase actually checks for, sourced from
+// server/src/constants/featureFlagKeys.ts. Not a hard constraint: the admin
+// UI still accepts a free-typed key for a flag whose code doesn't exist
+// yet (the normal build order is flag first, code second). This just
+// removes the guesswork for the common case of connecting a flag to a
+// feature that's already been built.
+export const listKnownFlagKeys = async (
+  _req: Request,
+  res: Response,
+): Promise<void> => {
+  res.json({ data: KNOWN_FLAGS });
 };
 
 const UUID_RE =
