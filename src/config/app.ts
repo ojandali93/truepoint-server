@@ -29,6 +29,7 @@ import feedbackRoutes from "../routes/feedback.routes";
 import ebayRoutes from "../routes/ebay.routes";
 import affiliateRoutes from "../routes/affiliate.routes";
 import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
+import outreachAdminRoutes from "../routes/outreach.admin.routes";
 import scanRoutes from "../routes/scan.routes";
 import feedbackAdminRoutes from "../routes/feedbackAdmin.routes";
 import adminSyncRoutes from "../routes/adminSync.routes";
@@ -72,6 +73,7 @@ app.use("/api/v1/variants", variantRoutes);
 app.use("/api/v1/admin", adminSyncRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/admin", affiliateAdminRoutes);
+app.use("/api/v1/admin", outreachAdminRoutes);
 app.use("/api/v1/admin", feedbackAdminRoutes);
 
 app.use("/api/v1/grading", gradingRoutes);
