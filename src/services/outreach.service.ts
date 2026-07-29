@@ -12,6 +12,11 @@ import {
   countSignupsForAffiliate,
   type AffiliateInput,
 } from "./affiliate.service";
+import {
+  claimUrl,
+  issueClaimToken,
+  sendAffiliateInvite,
+} from "./affiliateClaim.service";
 
 const CONTACTS_TABLE = "outreach_contacts";
 const INTERACTIONS_TABLE = "outreach_interactions";
@@ -381,14 +386,29 @@ export const deleteInteraction = async (id: string): Promise<void> => {
 // ─── Convert to affiliate ───────────────────────────────────────────────────
 //
 // The "create a code for them" step. Reuses affiliate.service.ts's own
-// create() rather than re-implementing rate/slug/status logic — this
-// function's only job is to also link the new affiliate back onto the
-// outreach contact and bump its stage, in one call.
+// create() rather than re-implementing rate/slug/status logic, AND
+// replicates the same claim-token + best-effort invite-email flow
+// adminCreateAffiliate already does — skipping that would leave the
+// converted contact with a code that exists in the database but no way to
+// find out about it. Email failure is deliberately non-fatal here too: the
+// affiliate record and the link on the outreach contact are the parts that
+// must not be lost, the invite can always be resent from the affiliate
+// admin screen afterward.
+
+export interface ConvertToAffiliateResult {
+  affiliateId: string;
+  invite: {
+    emailed: boolean;
+    emailError?: string;
+    claimUrl: string;
+    tokenError?: string;
+  };
+}
 
 export const convertToAffiliate = async (
   contactId: string,
   affiliateInput: AffiliateInput,
-): Promise<{ affiliateId: string }> => {
+): Promise<ConvertToAffiliateResult> => {
   const { data: contact, error: contactErr } = await supabaseAdmin
     .from(CONTACTS_TABLE)
     .select("id, affiliate_id")
@@ -411,5 +431,33 @@ export const convertToAffiliate = async (
     .eq("id", contactId);
   if (linkErr) throw linkErr;
 
-  return { affiliateId: affiliate.id as string };
+  const invite: ConvertToAffiliateResult["invite"] = {
+    emailed: false,
+    claimUrl: "",
+  };
+  try {
+    const issued = await issueClaimToken(affiliate.id as string);
+    invite.claimUrl = claimUrl(issued.token);
+    if ((affiliate as { contact_email?: string | null }).contact_email) {
+      try {
+        await sendAffiliateInvite(
+          affiliate as Parameters<typeof sendAffiliateInvite>[0],
+          issued.token,
+        );
+        invite.emailed = true;
+      } catch (mailErr) {
+        invite.emailError =
+          mailErr instanceof Error
+            ? mailErr.message
+            : "Failed to send invite email";
+      }
+    }
+  } catch (tokenErr) {
+    invite.tokenError =
+      tokenErr instanceof Error
+        ? tokenErr.message
+        : "Failed to issue claim token";
+  }
+
+  return { affiliateId: affiliate.id as string, invite };
 };
