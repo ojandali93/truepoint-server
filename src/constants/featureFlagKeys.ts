@@ -30,6 +30,7 @@
 export const FLAG_KEYS = {
   TESTER_CANARY: "tester_canary",
   REGRADE_TRACKER: "regrade_tracker",
+  WATCHLIST: "watchlist",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -53,5 +54,12 @@ export const KNOWN_FLAGS: KnownFlag[] = [
     description:
       "Unowned graded arbitrage — price ladder, tracked list, and the " +
       '"Track for regrade" entry point on card detail. Mobile + web.',
+  },
+  {
+    key: FLAG_KEYS.WATCHLIST,
+    label: "Watchlist",
+    description:
+      "Track cards with optional buy-below / sell-above price triggers. " +
+      "Trigger detection is live; push delivery isn't wired up yet.",
   },
 ];
