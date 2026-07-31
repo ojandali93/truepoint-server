@@ -38,7 +38,10 @@ export const addToWatchlist = async (
   try {
     const body = req.body ?? {};
     const created = await WatchlistService.addToWatchlist(req.user.id, {
-      cardId: body.cardId,
+      cardId: body.cardId ?? null,
+      productId: body.productId ?? null,
+      targetCompany: body.targetCompany ?? null,
+      targetGrade: body.targetGrade ?? null,
       buyBelowPrice:
         body.buyBelowPrice !== undefined && body.buyBelowPrice !== null
           ? Number(body.buyBelowPrice)

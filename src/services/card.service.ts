@@ -12,6 +12,7 @@ import {
   CardSearchParams,
 } from "../types/pokemon.types";
 import { supabaseAdmin } from "../lib/supabase";
+import { applyCardNameNumberSearch } from "../lib/cardSearch";
 
 const setsCache = new TTLCache<PokemonSet[]>();
 const cardCache = new TTLCache<PokemonCard>(); // ← add this if missing
@@ -211,7 +212,7 @@ export const searchCards = async (
     .order("name")
     .range(offset, offset + pageSize - 1);
 
-  if (q) query = query.ilike("name", `%${q}%`);
+  if (q) query = applyCardNameNumberSearch(query, q);
   if (setId) query = query.eq("set_id", setId);
   if (rarity) query = query.eq("rarity", rarity);
   if (supertype) query = query.eq("supertype", supertype);

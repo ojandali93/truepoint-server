@@ -12,6 +12,11 @@ import {
   getGradedPricesForCard,
 } from "../services/poketracePriceSync.service";
 import { resolveCardVariants } from "../services/variant.service";
+import {
+  getCardPriceHistory as getCardPriceHistoryService,
+  getProductPriceHistory as getProductPriceHistoryService,
+  type PriceHistoryRange,
+} from "../services/historicPrices.service";
 
 // ─── Sets ─────────────────────────────────────────────────────────────────────
 
@@ -503,65 +508,58 @@ export const getCardPriceHistory = async (
     }
 
     const rangeParam = (req.query.range as string) ?? "7d";
-    const days = rangeParam === "30d" ? 30 : rangeParam === "90d" ? 90 : 7;
+    const range: PriceHistoryRange =
+      rangeParam === "30d" ? "30d" : rangeParam === "90d" ? "90d" : "7d";
 
-    // Compute the lower bound in UTC (YYYY-MM-DD) — matches how snapshotCardPrices
-    // writes snapshot_date.
-    const since = new Date();
-    since.setUTCDate(since.getUTCDate() - days);
-    const sinceDate = since.toISOString().slice(0, 10);
+    const { data: card, error: cardErr } = await supabaseAdmin
+      .from("cards")
+      .select("tcgapis_product_id")
+      .eq("id", cardId)
+      .maybeSingle();
+    if (cardErr) throw cardErr;
 
-    const { data, error } = await supabaseAdmin
-      .from("card_price_history")
-      .select("snapshot_date, variant, market_price")
-      .eq("card_id", cardId)
-      .eq("source", "tcgplayer")
-      .is("grade", null)
-      .gte("snapshot_date", sinceDate)
-      .order("snapshot_date", { ascending: true });
+    const result = await getCardPriceHistoryService(
+      cardId,
+      card?.tcgapis_product_id ?? null,
+      range,
+    );
 
-    if (error) {
-      await logError({
-        source: "get-card-price-history",
-        message: error.message ?? "Failed to read card_price_history",
-        error,
-        userId: (req as any)?.userId ?? null,
-        requestPath: req.path,
-        requestMethod: req.method,
-        metadata: { params: req.params, query: req.query },
-      });
-      res
-        .status(500)
-        .json({ error: error.message ?? "Failed to load history" });
-      return;
-    }
-
-    // Bucket by variant. Skip rows with no usable price.
-    const byVariant = new Map<string, { date: string; price: number }[]>();
-    for (const row of data ?? []) {
-      const v = (row as any).variant ?? "normal";
-      const price = Number((row as any).market_price);
-      if (!isFinite(price) || price <= 0) continue;
-      const date = String((row as any).snapshot_date);
-      const arr = byVariant.get(v) ?? [];
-      arr.push({ date, price });
-      byVariant.set(v, arr);
-    }
-
-    const series = Array.from(byVariant.entries()).map(([variant, points]) => ({
-      variant,
-      points,
-    }));
-
-    res.json({
-      data: {
-        range: days === 7 ? "7d" : days === 30 ? "30d" : "90d",
-        series,
-      },
-    });
+    res.json({ data: result });
   } catch (err: any) {
     await logError({
       source: "get-card-price-history",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message ?? "Failed to load history" });
+  }
+};
+
+// GET /products/:productId/price-history?range=7d|30d|90d
+export const getProductPriceHistoryHandler = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { productId } = req.params;
+    if (!productId) {
+      res.status(400).json({ error: "productId is required" });
+      return;
+    }
+
+    const rangeParam = (req.query.range as string) ?? "7d";
+    const range: PriceHistoryRange =
+      rangeParam === "30d" ? "30d" : rangeParam === "90d" ? "90d" : "7d";
+
+    const result = await getProductPriceHistoryService(productId, range);
+    res.json({ data: result });
+  } catch (err: any) {
+    await logError({
+      source: "get-product-price-history",
       message: err?.message ?? "Unknown error",
       error: err,
       userId: (req as any)?.userId ?? null,

@@ -14,6 +14,7 @@ import * as CardController from "../controllers/card.controller";
 import * as CardSalesController from "../controllers/cardSales.controller";
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
+import { applyCardNameNumberSearch } from "../lib/cardSearch";
 
 const router = Router();
 
@@ -159,6 +160,15 @@ router.get("/search/global", standardLimiter, async (req, res) => {
       MAX_RESULTS,
     );
 
+    let cardsQuery = supabaseAdmin
+      .from("cards")
+      .select("id, name, number, rarity, set_id, image_small");
+    cardsQuery = applyCardNameNumberSearch(cardsQuery, q);
+    cardsQuery = cardsQuery
+      .order("name", { ascending: true })
+      .order("number", { ascending: true })
+      .limit(limit);
+
     const [setsResult, cardsResult, productsResult] = await Promise.all([
       supabaseAdmin
         .from("sets")
@@ -167,13 +177,7 @@ router.get("/search/global", standardLimiter, async (req, res) => {
         .order("name", { ascending: true })
         .limit(limit),
 
-      supabaseAdmin
-        .from("cards")
-        .select("id, name, number, rarity, set_id, image_small")
-        .ilike("name", search)
-        .order("name", { ascending: true })
-        .order("number", { ascending: true })
-        .limit(limit),
+      cardsQuery,
 
       supabaseAdmin
         .from("products")
@@ -272,5 +276,11 @@ router.get("/product/:productId", standardLimiter, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch product" });
   }
 });
+
+router.get(
+  "/product/:productId/price-history",
+  standardLimiter,
+  CardController.getProductPriceHistoryHandler as any,
+);
 
 export default router;
