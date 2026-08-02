@@ -1,7 +1,7 @@
 // src/services/push.service.ts
 //
 // Sends push notifications via Expo's push service. Token storage already
-// exists (user_devices.push_token, populated on login via registerDevice).
+// exists (user_devices.device_token, populated on login via registerDevice).
 // This module reads a user's active device tokens and delivers messages.
 //
 // Uses a raw fetch to Expo's push API (https://exp.host/--/api/v2/push/send)
@@ -60,6 +60,27 @@ const getActiveTokensForUser = async (userId: string): Promise<string[]> => {
     .filter(isExpoToken);
   // De-dupe (same token could appear on multiple device rows)
   return Array.from(new Set(tokens));
+};
+
+// Just the single device this user was most recently active on — used by
+// the admin notification test tool specifically. "Send a test to myself"
+// should mean "the device in front of me right now," not every device
+// that has ever logged into this account. Every OTHER caller of
+// sendPushToUser (real digests, real triggers) keeps reaching every active
+// device — this is intentionally scoped to testing only, not a change to
+// how real notifications get delivered to real users.
+const getMostRecentTokenForUser = async (userId: string): Promise<string[]> => {
+  const { data, error } = await supabaseAdmin
+    .from("user_devices")
+    .select("device_token")
+    .eq("user_id", userId)
+    .not("device_token", "is", null)
+    .order("last_seen", { ascending: false })
+    .limit(1);
+
+  if (error) throw error;
+  const token = data?.[0]?.device_token as string | null | undefined;
+  return isExpoToken(token) ? [token] : [];
 };
 
 // ─── Prune a dead token (Expo says DeviceNotRegistered) ─────────────────────
@@ -134,9 +155,12 @@ const sendToTokens = async (
 export const sendPushToUser = async (
   userId: string,
   message: PushMessage,
+  options?: { mostRecentDeviceOnly?: boolean },
 ): Promise<{ sent: number; failed: number }> => {
   try {
-    const tokens = await getActiveTokensForUser(userId);
+    const tokens = options?.mostRecentDeviceOnly
+      ? await getMostRecentTokenForUser(userId)
+      : await getActiveTokensForUser(userId);
     return await sendToTokens(tokens, message);
   } catch (err: any) {
     await logError({

@@ -189,20 +189,25 @@ const buildDigestForUser = async (userId: string): Promise<string | null> => {
 // Send the digest to one user. Returns true if sent.
 export const sendPriceMoversToUser = async (
   userId: string,
+  options?: { mostRecentDeviceOnly?: boolean },
 ): Promise<boolean> => {
   if (!(await wantsDigest(userId))) return false;
   const body = await buildDigestForUser(userId);
   if (!body) return false;
 
   const count = body.split(" · ").length;
-  const { sent } = await sendPushToUser(userId, {
-    title:
-      count > 1
-        ? `${count} of your cards are moving`
-        : "A card you own is moving",
-    body,
-    data: { type: "price_movers", path: "/(app)/home" },
-  });
+  const { sent } = await sendPushToUser(
+    userId,
+    {
+      title:
+        count > 1
+          ? `${count} of your cards are moving`
+          : "A card you own is moving",
+      body,
+      data: { type: "price_movers", path: "/(app)/home" },
+    },
+    options,
+  );
   return sent > 0;
 };
 

@@ -123,6 +123,22 @@ export const upsertDevice = async (
   userId: string,
   payload: Pick<UserDevice, "device_token" | "device_type" | "device_name">,
 ): Promise<UserDevice> => {
+  // A physical device can only realistically be logged into one account at
+  // a time. If this exact push token is currently attached to a DIFFERENT
+  // user — someone logged out and a different person logged into a
+  // different account on the same phone — remove it from them first.
+  // Without this, a device_token silently accumulates under every account
+  // that has ever used it, and "send to this user's devices" can still
+  // reach whoever is currently holding a phone that used to belong to
+  // someone else's login. (This table has no is_active/audit-trail column
+  // the way device.service.ts's does, so delete rather than deactivate —
+  // matches this repository's existing convention elsewhere in this file.)
+  await supabaseAdmin
+    .from("user_devices")
+    .delete()
+    .eq("device_token", payload.device_token)
+    .neq("user_id", userId);
+
   const { data, error } = await supabaseAdmin
     .from("user_devices")
     .upsert(

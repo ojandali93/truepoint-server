@@ -67,6 +67,7 @@ const getLatestTwoSnapshots = async (
 // Send the summary to one user. Returns true if a push was sent.
 export const sendDailySummaryToUser = async (
   userId: string,
+  options?: { mostRecentDeviceOnly?: boolean },
 ): Promise<boolean> => {
   const snaps = await getLatestTwoSnapshots(userId);
   if (!snaps) return false;
@@ -89,11 +90,15 @@ export const sendDailySummaryToUser = async (
       `${arrow} ${sign}${fmtUSD(change)} (${sign}${pct.toFixed(1)}%) today`;
   }
 
-  const { sent } = await sendPushToUser(userId, {
-    title: "TruePoint — Daily Summary",
-    body,
-    data: { type: "daily_summary", path: "/(app)/home" },
-  });
+  const { sent } = await sendPushToUser(
+    userId,
+    {
+      title: "TruePoint — Daily Summary",
+      body,
+      data: { type: "daily_summary", path: "/(app)/home" },
+    },
+    options,
+  );
   return sent > 0;
 };
 

@@ -9,6 +9,13 @@
 // watchlistTriggers.service.ts's onlyUserId, and the existing single-user
 // exports in portfolioSummary/priceMoversDigest), not as a filter bolted
 // on after the fact.
+//
+// Every send here ALSO targets only the target account's single
+// most-recently-active device — not every device that has ever logged
+// into that account. Accounts (especially ones used for testing/demos
+// over time) can accumulate many historical devices; "send a test to
+// myself" should mean "the device in front of me right now," not a
+// broadcast to everyone who has ever used this login.
 
 import { Response } from "express";
 
@@ -48,13 +55,17 @@ export const testSendNotification = async (
     const targetUserId: string = body.userId || req.user.id;
 
     if (type === "daily-summary") {
-      const sent = await sendDailySummaryToUser(targetUserId);
+      const sent = await sendDailySummaryToUser(targetUserId, {
+        mostRecentDeviceOnly: true,
+      });
       res.json({ data: { type, targetUserId, sent } });
       return;
     }
 
     if (type === "price-movers") {
-      const sent = await sendPriceMoversToUser(targetUserId);
+      const sent = await sendPriceMoversToUser(targetUserId, {
+        mostRecentDeviceOnly: true,
+      });
       res.json({ data: { type, targetUserId, sent } });
       return;
     }
@@ -66,6 +77,7 @@ export const testSendNotification = async (
     const summary = await checkWatchlistTriggers({
       onlyUserId: targetUserId,
       dryRun,
+      mostRecentDeviceOnly: true,
     });
     res.json({ data: { type, targetUserId, dryRun, ...summary } });
   } catch (err: any) {

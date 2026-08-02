@@ -63,6 +63,23 @@ export const registerDevice = async (
 
   const now = new Date().toISOString();
 
+  // A physical device can only realistically be logged into one account at
+  // a time. If this same device_id is currently active under a DIFFERENT
+  // user — someone logged out and a different person logged into a
+  // different account on the same phone — deactivate that old record
+  // first. Mark-inactive rather than delete, matching this file's own
+  // audit-trail convention above, rather than the harder delete used in
+  // user.repository.ts's upsertDevice. Without this, a device_id stays
+  // "active" under every account that has ever used it, and a push aimed
+  // at the old account can still reach whoever is currently holding that
+  // phone.
+  await supabaseAdmin
+    .from("user_devices")
+    .update({ is_active: false, push_token: null, logged_out_at: now })
+    .eq("device_id", input.deviceId)
+    .eq("is_active", true)
+    .neq("user_id", userId);
+
   // Look up existing record for this user+device
   const { data: existing } = await supabaseAdmin
     .from("user_devices")

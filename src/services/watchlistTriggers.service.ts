@@ -62,9 +62,11 @@ export interface TriggerCheckSummary {
 export const checkWatchlistTriggers = async (options?: {
   onlyUserId?: string;
   dryRun?: boolean;
+  mostRecentDeviceOnly?: boolean;
 }): Promise<TriggerCheckSummary> => {
   const onlyUserId = options?.onlyUserId;
   const dryRun = options?.dryRun ?? false;
+  const mostRecentDeviceOnly = options?.mostRecentDeviceOnly ?? false;
 
   let query = supabaseAdmin
     .from("watchlist_items")
@@ -177,11 +179,15 @@ export const checkWatchlistTriggers = async (options?: {
           return;
         }
 
-        const { sent } = await sendPushToUser(r.user_id, {
-          title,
-          body,
-          data: { type: `watchlist_${type}`, watchlistItemId: r.id },
-        });
+        const { sent } = await sendPushToUser(
+          r.user_id,
+          {
+            title,
+            body,
+            data: { type: `watchlist_${type}`, watchlistItemId: r.id },
+          },
+          { mostRecentDeviceOnly },
+        );
         result.sent = sent > 0;
         if (!result.sent) result.reason = "send failed";
         else sentCount++;

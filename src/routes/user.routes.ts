@@ -77,6 +77,17 @@ router.delete(
   writeLimiter,
   UserController.removeMyDevice as any,
 );
+// Logout cleanup calls this one — remove by the actual push token rather
+// than the device row's id, since that's what the client has on hand at
+// sign-out time. This route existed as a controller + service function
+// (removeMyDeviceByToken / removeDeviceByToken) that nothing ever
+// registered — the mobile logout flow has been calling this path since it
+// was written; it was 404ing silently the whole time.
+router.delete(
+  "/me/devices/by-token/:token",
+  writeLimiter,
+  UserController.removeMyDeviceByToken as any,
+);
 router.put(
   "/me/devices/:deviceId/ping",
   standardLimiter,
