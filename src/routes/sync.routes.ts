@@ -17,7 +17,7 @@ import {
   refreshPricesForSet,
 } from "../services/tcgapisSync.service";
 import { logError } from "../lib/Logger";
-import { supabaseAdmin } from "../lib/supabase";
+import { supabaseAdmin, supabase } from "../lib/supabase";
 import {
   refreshAllSkuPrices,
   refreshSkuPricesForSet,
@@ -50,13 +50,41 @@ import { sendPendingIntroEmails } from "../services/introEmail.service";
 
 const router = Router();
 
-const requireSyncKey = (req: Request, res: Response, next: Function): void => {
+// Accepts EITHER mechanism:
+//   - x-sync-key header matching SYNC_SECRET_KEY — external cron (cron-job.org)
+//   - a valid admin JWT, same as any other admin-only endpoint — the admin
+//     panel's sync buttons (settings-sync.tsx) call these same routes
+//     through the standard authenticated api client, which only ever sends
+//     a JWT, never a sync key. Without this fallback every button on that
+//     screen 401s — this wasn't broken by this change, it was already
+//     broken; this is what actually makes them work.
+const requireSyncKey = async (
+  req: Request,
+  res: Response,
+  next: Function,
+): Promise<void> => {
   const key = req.headers["x-sync-key"];
-  if (!key || key !== process.env.SYNC_SECRET_KEY) {
-    res.status(401).json({ error: "Invalid sync key" });
+  if (key && key === process.env.SYNC_SECRET_KEY) {
+    next();
     return;
   }
-  next();
+
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    try {
+      const token = authHeader.split(" ")[1];
+      const { data, error } = await supabase.auth.getUser(token);
+      const role = data?.user?.app_metadata?.role;
+      if (!error && data?.user && role === "admin") {
+        next();
+        return;
+      }
+    } catch {
+      // fall through to 401 below
+    }
+  }
+
+  res.status(401).json({ error: "Invalid sync key" });
 };
 
 // ════════════════════════════════════════════════════════════════════════════
