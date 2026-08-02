@@ -106,37 +106,26 @@ const validateInput = (
   }
 };
 
-// ─── List ───────────────────────────────────────────────────────────────────
-
-export const listWatchlist = async (
-  userId: string,
-): Promise<WatchlistItemRow[]> => {
-  const { data: rows, error } = await supabaseAdmin
-    .from(TABLE)
-    .select(
-      `
-      id, card_id, product_id, target_company, target_grade,
-      buy_below_price, sell_above_price, notes, created_at, updated_at,
-      cards ( id, name, number, image_small, set_id, tcgapis_product_id, sets ( name ) ),
-      products ( id, name, product_type, image_url, set_id, sets ( name ) )
-    `,
-    )
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  if (!rows?.length) return [];
-
-  const cardRows = rows.filter((r: any) => r.card_id);
-  const productRows = rows.filter((r: any) => r.product_id);
-
-  // ── Current prices ──────────────────────────────────────────────────────
-
-  const cardIds = [...new Set(cardRows.map((r: any) => r.card_id as string))];
-  const productIds = [
-    ...new Set(productRows.map((r: any) => r.product_id as string)),
-  ];
-
+// ─── Shared price lookup ────────────────────────────────────────────────────
+//
+// Extracted so the watchlist-trigger cron (watchlistTriggers.service.ts) can
+// compute "what's this item worth right now" using the exact same logic as
+// the list endpoint, rather than a second implementation that could quietly
+// drift from this one. Takes the distinct card/product IDs actually needed
+// and returns three lookup closures over one batched fetch each — same
+// query shape as before, just reusable.
+export const getCurrentPriceLookup = async (
+  cardIds: string[],
+  productIds: string[],
+): Promise<{
+  rawPriceFor: (cardId: string) => number | null;
+  gradedPriceFor: (
+    cardId: string,
+    company: string,
+    grade: string,
+  ) => number | null;
+  productPriceFor: (productId: string) => number | null;
+}> => {
   const { data: cardPriceRows, error: cardPriceErr } = cardIds.length
     ? await supabaseAdmin
         .from("market_prices")
@@ -193,6 +182,43 @@ export const listWatchlist = async (
       null
     );
   };
+
+  return { rawPriceFor, gradedPriceFor, productPriceFor };
+};
+
+// ─── List ───────────────────────────────────────────────────────────────────
+
+export const listWatchlist = async (
+  userId: string,
+): Promise<WatchlistItemRow[]> => {
+  const { data: rows, error } = await supabaseAdmin
+    .from(TABLE)
+    .select(
+      `
+      id, card_id, product_id, target_company, target_grade,
+      buy_below_price, sell_above_price, notes, created_at, updated_at,
+      cards ( id, name, number, image_small, set_id, tcgapis_product_id, sets ( name ) ),
+      products ( id, name, product_type, image_url, set_id, sets ( name ) )
+    `,
+    )
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+  if (!rows?.length) return [];
+
+  const cardRows = rows.filter((r: any) => r.card_id);
+  const productRows = rows.filter((r: any) => r.product_id);
+
+  // ── Current prices ──────────────────────────────────────────────────────
+
+  const cardIds = [...new Set(cardRows.map((r: any) => r.card_id as string))];
+  const productIds = [
+    ...new Set(productRows.map((r: any) => r.product_id as string)),
+  ];
+
+  const { rawPriceFor, gradedPriceFor, productPriceFor } =
+    await getCurrentPriceLookup(cardIds, productIds);
 
   // ── 7-day change ────────────────────────────────────────────────────────
   //

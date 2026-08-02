@@ -18,6 +18,8 @@
 // digest stays quiet until the data is there.
 
 import { supabaseAdmin } from "../lib/supabase";
+import { getAllFlags, evaluateFlag } from "./featureFlag.service";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 import { logError } from "../lib/Logger";
 import { sendPushToUser } from "./push.service";
 
@@ -242,7 +244,21 @@ export const sendPriceMoversDigest = async (): Promise<{
     new Set((deviceRows ?? []).map((r: any) => r.user_id as string)),
   ).filter(Boolean);
 
+  // Per-user gate, same pattern as the other two digests — on top of the
+  // env-var switch above, not instead of it. This one keeps both layers
+  // deliberately: it has a known history of not working correctly, so it
+  // gets held to a higher bar than daily-summary/watchlist-triggers before
+  // either gate gets flipped.
+  const flagRow =
+    (await getAllFlags()).find(
+      (f) => f.key === FLAG_KEYS.NOTIFY_PRICE_MOVERS,
+    ) ?? null;
+
   for (const userId of userIds) {
+    if (!evaluateFlag(flagRow, userId, null)) {
+      skipped++;
+      continue;
+    }
     try {
       const didSend = await sendPriceMoversToUser(userId);
       if (didSend) sent++;

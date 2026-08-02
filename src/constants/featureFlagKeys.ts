@@ -31,6 +31,9 @@ export const FLAG_KEYS = {
   TESTER_CANARY: "tester_canary",
   REGRADE_TRACKER: "regrade_tracker",
   WATCHLIST: "watchlist",
+  NOTIFY_DAILY_SUMMARY: "notify_daily_summary",
+  NOTIFY_WATCHLIST_TRIGGERS: "notify_watchlist_triggers",
+  NOTIFY_PRICE_MOVERS: "notify_price_movers",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -61,5 +64,27 @@ export const KNOWN_FLAGS: KnownFlag[] = [
     description:
       "Track cards with optional buy-below / sell-above price triggers. " +
       "Trigger detection is live; push delivery isn't wired up yet.",
+  },
+  {
+    key: FLAG_KEYS.NOTIFY_DAILY_SUMMARY,
+    label: "Notify: Daily Summary",
+    description:
+      "Daily push with portfolio value and how it moved vs. yesterday and " +
+      "last week. Per-user gated — allowlist testers before widening.",
+  },
+  {
+    key: FLAG_KEYS.NOTIFY_WATCHLIST_TRIGGERS,
+    label: "Notify: Watchlist Triggers",
+    description:
+      "Push when a watchlist item's buy or sell trigger newly crosses. " +
+      "Per-user gated, checked at send time for every account individually.",
+  },
+  {
+    key: FLAG_KEYS.NOTIFY_PRICE_MOVERS,
+    label: "Notify: Price Movers",
+    description:
+      "Digest of notable price movement across owned inventory. Previously " +
+      "disabled for not working correctly — keep this off longer than the " +
+      "other two while that gets re-verified.",
   },
 ];

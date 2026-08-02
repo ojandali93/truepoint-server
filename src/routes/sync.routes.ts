@@ -43,6 +43,7 @@ import { backfillSetImages } from "../services/setImageBackfill.service";
 import { sendDailySummaries } from "../services/portfolioSummary.service";
 import { snapshotCardPricesSafe } from "../services/cardPriceHistory.service";
 import { sendPriceMoversDigest } from "../services/priceMoversDigest.service";
+import { checkWatchlistTriggers } from "../services/watchlistTriggers.service";
 import { syncInventoryCardPricesSafe } from "../services/poketracePriceSync.service";
 import { syncAllCatalogGradedPricesSafe } from "../services/poketracePriceSync.service";
 import { sendPendingIntroEmails } from "../services/introEmail.service";
@@ -528,20 +529,14 @@ router.post("/set-images", requireSyncKey, async (_req, res) => {
   });
 });
 
-// Master switch for AUTOMATIC push notifications (daily summary, price-movers
-// digest). Turned OFF intentionally: the ONLY pushes that go out are admin
-// /broadcast. Flip to true to re-enable the scheduled digests.
-const AUTO_PUSH_ENABLED = false;
+// Per-notification-type gating now lives in each service (a feature flag,
+// evaluated per user at send time — notify_daily_summary,
+// notify_watchlist_triggers, notify_price_movers) rather than one blanket
+// switch here. A brand-new flag defaults to nobody allowlisted, so this is
+// safe-by-default the same way the old switch was, just with the ability
+// to turn on one notification type at a time instead of all-or-nothing.
 
 router.post("/daily-summary", requireSyncKey, async (_req, res) => {
-  if (!AUTO_PUSH_ENABLED) {
-    res.json({
-      message: "Daily summary DISABLED — automatic notifications are off.",
-      disabled: true,
-      timestamp: new Date().toISOString(),
-    });
-    return;
-  }
   res.json({
     message: "Daily summary send started",
     timestamp: new Date().toISOString(),
@@ -564,21 +559,22 @@ router.post("/price-history", requireSyncKey, async (_req, res) => {
 });
 
 router.post("/price-movers", requireSyncKey, async (_req, res) => {
-  if (!AUTO_PUSH_ENABLED) {
-    res.json({
-      message:
-        "Price movers digest DISABLED — automatic notifications are off.",
-      disabled: true,
-      timestamp: new Date().toISOString(),
-    });
-    return;
-  }
   res.json({
     message: "Price movers digest started",
     timestamp: new Date().toISOString(),
   });
   sendPriceMoversDigest().catch((err: any) =>
     console.error("[SyncRoute] Price movers digest failed:", err?.message),
+  );
+});
+
+router.post("/watchlist-triggers", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Watchlist trigger check started",
+    timestamp: new Date().toISOString(),
+  });
+  checkWatchlistTriggers().catch((err: any) =>
+    console.error("[SyncRoute] Watchlist trigger check failed:", err?.message),
   );
 });
 

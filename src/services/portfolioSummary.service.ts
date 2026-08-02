@@ -15,6 +15,8 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
 import { sendPushToUser } from "./push.service";
+import { getAllFlags, evaluateFlag } from "./featureFlag.service";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 
 const fmtUSD = (n: number) =>
   n.toLocaleString("en-US", {
@@ -120,7 +122,22 @@ export const sendDailySummaries = async (): Promise<SummaryResult> => {
     new Set((deviceRows ?? []).map((r: any) => r.user_id as string)),
   ).filter(Boolean);
 
+  // Per-user gate — sendDailySummaryToUser() itself (called directly by the
+  // admin test tool) deliberately does NOT check this, since verifying
+  // content before anyone is flagged in is the whole point of that tool.
+  // This bulk path is the only place the flag matters. Fetched once,
+  // evaluated per-user from memory — getAllFlags() is already 30s-TTL
+  // cached.
+  const flagRow =
+    (await getAllFlags()).find(
+      (f) => f.key === FLAG_KEYS.NOTIFY_DAILY_SUMMARY,
+    ) ?? null;
+
   for (const userId of userIds) {
+    if (!evaluateFlag(flagRow, userId, null)) {
+      skipped++;
+      continue;
+    }
     try {
       const didSend = await sendDailySummaryToUser(userId);
       if (didSend) sent++;
