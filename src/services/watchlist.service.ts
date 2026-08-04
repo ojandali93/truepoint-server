@@ -48,6 +48,7 @@ export interface WatchlistItemRow {
   kind: "card" | "product";
   cardId: string | null;
   productId: string | null;
+  setId: string | null; // cards only — web's card detail route needs it
   targetCompany: string | null;
   targetGrade: string | null;
   name: string;
@@ -295,6 +296,7 @@ export const listWatchlist = async (
       kind,
       cardId: r.card_id,
       productId: r.product_id,
+      setId: r.card_id ? (r.cards?.set_id ?? null) : null,
       targetCompany: r.target_company,
       targetGrade: r.target_grade,
       name,
