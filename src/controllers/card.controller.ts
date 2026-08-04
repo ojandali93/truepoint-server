@@ -14,6 +14,7 @@ import {
 import { resolveCardVariants } from "../services/variant.service";
 import {
   getCardPriceHistory as getCardPriceHistoryService,
+  getGradedCardPriceHistory as getGradedCardPriceHistoryService,
   getProductPriceHistory as getProductPriceHistoryService,
   type PriceHistoryRange,
 } from "../services/historicPrices.service";
@@ -552,7 +553,49 @@ export const getCardPriceHistory = async (
   }
 };
 
-// GET /products/:productId/price-history?range=7d|30d|90d
+// GET /cards/:cardId/price-history/graded?company=PSA&grade=10&range=30d
+export const getGradedCardPriceHistory = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { cardId } = req.params;
+    const company = req.query.company as string;
+    const grade = req.query.grade as string;
+    if (!cardId) {
+      res.status(400).json({ error: "cardId is required" });
+      return;
+    }
+    if (!company || !grade) {
+      res.status(400).json({ error: "company and grade are required" });
+      return;
+    }
+
+    const rangeParam = (req.query.range as string) ?? "7d";
+    const range: PriceHistoryRange =
+      rangeParam === "30d" ? "30d" : rangeParam === "90d" ? "90d" : "7d";
+
+    const result = await getGradedCardPriceHistoryService(
+      cardId,
+      company,
+      grade,
+      range,
+    );
+
+    res.json({ data: result });
+  } catch (err: any) {
+    await logError({
+      source: "get-graded-card-price-history",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params, query: req.query },
+    });
+    res.status(500).json({ error: err?.message ?? "Failed to load history" });
+  }
+};
 export const getProductPriceHistoryHandler = async (
   req: AuthenticatedRequest,
   res: Response,

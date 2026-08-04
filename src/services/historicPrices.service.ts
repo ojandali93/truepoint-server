@@ -33,6 +33,11 @@ export interface PriceHistorySeries {
 export interface PriceHistoryResult {
   range: PriceHistoryRange;
   series: PriceHistorySeries[];
+  /** True when series is just today's current price as a single point,
+   * not real historical trend data — neither TCGAPIs nor the local
+   * snapshot table had anything. The UI should say so rather than
+   * implying a trend from one dot. */
+  isFallbackToCurrentPrice?: boolean;
 }
 
 const rangeDays = (range: PriceHistoryRange): number =>
@@ -137,7 +142,49 @@ const fetchFromCardHistoryTable = async (
   }));
 };
 
-/** Card price history — TCGAPIs first, card_price_history as fallback. */
+/**
+ * Last resort when there's no real trend anywhere: use whatever price is
+ * CURRENTLY cached in market_prices as a single, today-dated point, so the
+ * chart shows something concrete on day one instead of "not enough
+ * history yet." gradeKey null = raw card; otherwise "{company} {grade}"
+ * (e.g. "PSA 10"), matching the string format market_prices.grade uses
+ * everywhere else in this app.
+ */
+const fetchCurrentPriceAsFallback = async (
+  cardId: string,
+  gradeKey: string | null,
+): Promise<PriceHistorySeries[] | null> => {
+  let query = supabaseAdmin
+    .from("market_prices")
+    .select("variant, market_price")
+    .eq("card_id", cardId);
+  query = gradeKey
+    ? query.eq("grade", gradeKey).eq("source", "poketrace")
+    : query.is("grade", null);
+
+  const { data, error } = await query;
+  if (error || !data?.length) return null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const byVariant = new Map<string, PriceHistoryPoint[]>();
+  for (const row of data) {
+    const price = Number((row as { market_price: unknown }).market_price);
+    if (!isFinite(price) || price <= 0) continue;
+    const v =
+      (row as { variant: string | null }).variant ?? gradeKey ?? "normal";
+    if (byVariant.has(v)) continue; // one point per variant is enough here
+    byVariant.set(v, [{ date: today, price }]);
+  }
+  if (byVariant.size === 0) return null;
+
+  return Array.from(byVariant.entries()).map(([variant, points]) => ({
+    variant,
+    points,
+  }));
+};
+
+/** Card price history — TCGAPIs first, card_price_history second, today's
+ * current price as a last-resort single point third. */
 export const getCardPriceHistory = async (
   cardId: string,
   tcgapisProductId: number | null,
@@ -147,8 +194,69 @@ export const getCardPriceHistory = async (
     const series = await fetchFromTcgapis(tcgapisProductId, range);
     if (series) return { range, series };
   }
-  const series = await fetchFromCardHistoryTable(cardId, range);
-  return { range, series };
+  const historySeries = await fetchFromCardHistoryTable(cardId, range);
+  if (historySeries.length > 0) return { range, series: historySeries };
+
+  const fallback = await fetchCurrentPriceAsFallback(cardId, null);
+  return {
+    range,
+    series: fallback ?? [],
+    isFallbackToCurrentPrice: !!fallback,
+  };
+};
+
+/**
+ * Graded card price history — DB-only, no TCGAPIs tier. TCGAPIs is a
+ * TCGPlayer/raw-singles data source; it has no concept of graded cards at
+ * all, so there's nothing to call live here. Reads card_price_history
+ * directly, filtered to one company+grade — the daily snapshot job
+ * (cardPriceHistory.service.ts) has been writing grade-inclusive rows all
+ * along, so real history may already exist even though nothing was ever
+ * built to read it back out until now. Falls back to today's current
+ * graded price as a single point, same as the raw path, if there's
+ * nothing yet.
+ */
+export const getGradedCardPriceHistory = async (
+  cardId: string,
+  company: string,
+  grade: string,
+  range: PriceHistoryRange,
+): Promise<PriceHistoryResult> => {
+  const gradeKey = `${company} ${grade}`;
+  const since = new Date();
+  since.setUTCDate(since.getUTCDate() - rangeDays(range));
+  const sinceStr = since.toISOString().slice(0, 10);
+
+  const { data, error } = await supabaseAdmin
+    .from("card_price_history")
+    .select("snapshot_date, market_price")
+    .eq("card_id", cardId)
+    .eq("source", "poketrace")
+    .eq("grade", gradeKey)
+    .gte("snapshot_date", sinceStr)
+    .order("snapshot_date", { ascending: true });
+  if (error) throw error;
+
+  const points: PriceHistoryPoint[] = [];
+  for (const row of data ?? []) {
+    const price = Number((row as { market_price: unknown }).market_price);
+    if (!isFinite(price) || price <= 0) continue;
+    points.push({
+      date: String((row as { snapshot_date: unknown }).snapshot_date),
+      price,
+    });
+  }
+
+  if (points.length > 0) {
+    return { range, series: [{ variant: gradeKey, points }] };
+  }
+
+  const fallback = await fetchCurrentPriceAsFallback(cardId, gradeKey);
+  return {
+    range,
+    series: fallback ?? [],
+    isFallbackToCurrentPrice: !!fallback,
+  };
 };
 
 /** Product price history — TCGAPIs only. No local fallback exists yet

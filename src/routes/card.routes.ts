@@ -220,6 +220,13 @@ router.get(
   CardController.getCardPriceHistory as any,
 );
 
+// GET /cards/:cardId/price-history/graded?company=PSA&grade=10&range=30d
+router.get(
+  "/:cardId/price-history/graded",
+  standardLimiter,
+  CardController.getGradedCardPriceHistory as any,
+);
+
 // ADD THIS BLOCK to src/routes/card.routes.ts immediately after the
 // existing `/sealed/:setCode` handler (around line 135).
 //
