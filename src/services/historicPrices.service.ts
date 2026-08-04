@@ -183,17 +183,23 @@ const fetchCurrentPriceAsFallback = async (
   }));
 };
 
-/** Card price history — TCGAPIs first, card_price_history second, today's
- * current price as a last-resort single point third. */
+/**
+ * Card price history — card_price_history first, today's current price
+ * as a last-resort single point second. TCGAPIs' /historic-prices was the
+ * original primary source, but coverage turned out too thin in practice —
+ * empty far more often than useful. card_price_history is fully within
+ * this app's own control and keeps accumulating daily regardless of what
+ * TCGAPIs does or doesn't have, so it's the more consistent source right
+ * now. tcgapisProductId is kept as a parameter (unused below) rather than
+ * removed from the signature, so re-adding a TCGAPIs tier later — once its
+ * coverage is trustworthy — doesn't require touching every call site
+ * again.
+ */
 export const getCardPriceHistory = async (
   cardId: string,
-  tcgapisProductId: number | null,
+  _tcgapisProductId: number | null,
   range: PriceHistoryRange,
 ): Promise<PriceHistoryResult> => {
-  if (tcgapisProductId != null) {
-    const series = await fetchFromTcgapis(tcgapisProductId, range);
-    if (series) return { range, series };
-  }
   const historySeries = await fetchFromCardHistoryTable(cardId, range);
   if (historySeries.length > 0) return { range, series: historySeries };
 
