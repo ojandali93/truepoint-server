@@ -404,7 +404,9 @@ export const getSetPrices = async (
       const batch = cardIds.slice(i, i + BATCH);
       const { data: rows, error: pricesErr } = await supabaseAdmin
         .from("market_prices")
-        .select("card_id, source, variant, market_price, low_price, high_price")
+        .select(
+          "card_id, source, variant, market_price, low_price, mid_price, high_price",
+        )
         // flat columns — no 'prices' jsonb
         .in("card_id", batch)
         .is("grade", null) // raw cards only
@@ -417,13 +419,22 @@ export const getSetPrices = async (
       allRows.push(...(rows ?? []));
     }
 
-    // Build price map: cardId → [{ variant, market, source }]
+    // Build price map: cardId → [{ variant, market, low, mid, high, source }]
+    // market is TCGPlayer's own weighted calc — needs enough recent SALES
+    // history, not just listings, so it's null more often than you'd
+    // expect for anything thin-traded (expensive, brand-new, or just
+    // rare). low/mid/high come straight from whatever listing(s) exist
+    // and are usually present even when market isn't. Carrying all of
+    // them through lets the client fall back sensibly instead of showing
+    // nothing for a card that very much has a real, known price.
     const priceMap: Record<
       string,
       {
         variant: string;
         market: number | null;
         low: number | null;
+        mid: number | null;
+        high: number | null;
         source: string;
       }[]
     > = {};
@@ -434,6 +445,8 @@ export const getSetPrices = async (
         variant: row.variant ?? "normal",
         market: row.market_price ?? null,
         low: row.low_price ?? null,
+        mid: row.mid_price ?? null,
+        high: row.high_price ?? null,
         source: row.source,
       });
     }
