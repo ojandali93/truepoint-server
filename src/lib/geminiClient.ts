@@ -141,7 +141,17 @@ export interface GradingAnalysis {
 // Weighted average blended toward the WEAKEST sub-dimension. Tune freely.
 
 const WEIGHTS = { centering: 0.3, surface: 0.28, corners: 0.22, edges: 0.2 };
-const MIN_WEIGHT = 0.25; // how hard the weakest sub-dimension drags the score down
+// Real grading (PSA/BGS/CGC) doesn't average the four sub-grades — the
+// overall grade IS the lowest of the four, full stop ("your final grade
+// is essentially the lowest score across those four categories"). A card
+// with a crease and otherwise-great everything-else is a low grade, not
+// a mediocre-average one. MIN_WEIGHT used to be 0.25 (mostly an average,
+// barely dragged down by the worst category) — that's what let a severe
+// single defect get diluted into a 9/9.5 by three unrelated good scores.
+// 0.85 makes this genuinely minimum-dominant, matching the real rule,
+// while the remaining 0.15 keeps two cards with the same worst score from
+// scoring identically regardless of how the other three compare.
+const MIN_WEIGHT = 0.85;
 
 const clamp100 = (v: number) => Math.max(1, Math.min(100, Math.round(v)));
 
@@ -319,10 +329,15 @@ export function mapTpScore(
   // per-company ceiling (below) rather than averaged in — otherwise a card that
   // PSA would still gem (e.g. 60/40 front) gets silently dragged below a 10 by
   // the blend, which is exactly why good cards were under-predicting.
+  //
+  // The other three (surface/corners/edges) get the SAME "minimum wins"
+  // treatment centering already had — real grading doesn't average a
+  // crease against good corners, the crease caps the grade. 0.85 toward
+  // the minimum, same reasoning as computeTpScore above.
   const condWeighted =
     (sub.surface * 0.4 + sub.corners * 0.32 + sub.edges * 0.28) / 1;
   const condMin = Math.min(sub.corners, sub.edges, sub.surface);
-  const condition = clamp100(condWeighted * 0.75 + condMin * 0.25);
+  const condition = clamp100(condWeighted * 0.15 + condMin * 0.85);
   const g = condition / 10; // grade-equivalent from condition alone
 
   const frontPct = worstAxisPct(centering?.front, centering?.front);
@@ -402,26 +417,47 @@ export function mapTpScore(
 
 const GRADING_PROMPT = (
   cardContext: string,
-) => `You are a trading-card condition analyst. You are given the FRONT image and the BACK image of a single Pokémon TCG card.${cardContext ? " " + cardContext : ""}
+) => `You are a professional trading-card condition grader, held to the same standard as a PSA, BGS, or CGC human grader. You are given the FRONT image and the BACK image of a single Pokémon TCG card.${cardContext ? " " + cardContext : ""}
 
 Score the card's intrinsic physical quality on a 0–100 scale. This is NOT a PSA/BGS/CGC/TAG grade — DO NOT output any company grade. Score raw quality so it can be mapped to grades afterward.
 
+CALIBRATION — read this before scoring anything: most raw cards, even ones that look clean at a glance, have a real defect once actually examined — a soft corner, a whitening edge, a light scratch. Gem-mint cards are genuinely uncommon among raw submissions. Do not default to a high score because nothing jumps out immediately; actively look for defects in each of the four areas below before deciding there are none. A strong score in one dimension must NOT influence your score in another — evaluate each of the four completely independently.
+
 Evaluate FOUR sub-dimensions, each 0–100, looking at BOTH front and back:
-- centering: MEASURE IT, don't guess. For each axis, compare the two opposite borders: ratio = (wider border ÷ (both borders combined)) × 100. Do this LEFT-TO-RIGHT and TOP-TO-BOTTOM, on the front AND the back, and report the ratios in centering_ratio_front / centering_ratio_back using the WORST axis (e.g. left border 3mm, right 2mm → 3/(3+2) = 60 → "60/40"). Report 50/50 only if it truly is. These ratios drive the grade directly, so accuracy here matters more than anything else. For the 0-100 centering score, use: 50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse is poor.
-- corners: sharpness/wear of all four corners on both sides.
-- edges: cleanliness/whitening/nicks along all edges, both sides.
-- surface: scratches, print lines, dimples, scuffs, holo scratches, gloss, both sides.
 
-Use the FULL range honestly — do NOT compress toward the middle. Anchor each score to the grade a clean example of that condition would earn, so a genuinely gem-mint card reaches the top band:
-- 96–100: gem-mint — sharp corners, clean surface, tight centering. This is what a PSA 10 / BGS 9.5–10 card looks like. If it looks flawless to the naked eye, score here. Do NOT hold back or treat this band as "rare."
-- 90–95: mint — one or two trivial flaws (PSA 9).
-- 84–89: near-mint-mint — minor but visible wear: slight edge whitening, light surface, centering ~60/40 (PSA 8).
-- 75–83: near-mint — light wear clearly visible.
-- 60–74: moderate handling wear.
-- 40–59: heavy wear.
-- 1–39: poor/damaged.
+- centering: Measure BOTH axes SEPARATELY — left/right AND top/bottom — on BOTH front and back. For each axis, compare the two opposite borders: ratio = (wider border ÷ combined width) × 100 (e.g. left border 3mm, right 2mm → 3/(3+2) = 60 → "60/40"). A card can be centered well on one axis and poorly on the other — report both truthfully, never merge them into a single number, and never report 50/50 unless it truly is. Score using real grading tolerances, taking the WORST of the two axes on the worse of the two sides:
+  - 96–100: 55/45 or tighter on every axis, both sides
+  - 90–95: up to 60/40 front, up to 90/10 back
+  - 84–89: up to 65/35 front
+  - 75–83: up to 70/30 front
+  - below 75: scale down further the more off-center it is; badly off-center (worse than 70/30) is well below 75, not a moderate score
 
-Judge only what you actually see in the images. A clean, sharp, well-centered card genuinely earns 96–99 — score it there rather than defaulting low. A perfect-looking card SHOULD score in the 96–100 band. Use precise values (e.g. 87, 93, 97), never round-number defaults. If the image is poor quality, keep the score honest and instead LOWER your confidence (do not just lower the score).
+- corners: Examine all 8 corner-instances (4 corners × front/back) INDIVIDUALLY under close inspection. This is a per-corner check, not a general impression — ANY single corner with visible fraying, softness, or whitening caps the score; three sharp corners do not average out one bad one.
+  - 96–100: every corner genuinely sharp, no fraying or whitening anywhere
+  - 90–95: exactly one corner with very slight, barely-visible wear
+  - 84–89: light wear visible to the naked eye on one or two corners
+  - 75–83: visible wear on multiple corners
+  - below 75: soft, rounded, or whitened corners, multiple or severe
+
+- edges: Examine every edge on both sides for whitening, nicks, roughness, or chipping. Whitening severity drives this score directly — count how many distinct edges show it:
+  - 96–100: no visible whitening anywhere, clean cuts on every edge
+  - 90–95: whitening on at most one edge, extremely minor
+  - 84–89: whitening visible on two or more edges, still light
+  - 75–83: whitening on multiple edges, clearly visible
+  - below 75: heavy whitening, nicks, or chipping on multiple edges
+
+- surface: Examine for scratches, creases, indentations, stains, print defects, and gloss loss, on both sides.
+  CREASES ARE SEVERE AND STRUCTURAL, NOT COSMETIC. A crease is a physical bend in the card stock, not a surface mark — treat it accordingly. If you see ANY crease, even a faint or short one, this card is not gem-mint or near-mint: score surface 40 or below, scaled by severity (a faint, short crease scores near the top of that range; a deep, long, or multiple creases score much lower, down to 1–15). Do not let good centering or sharp corners pull this score up when a crease is present — surface is scored on what you see in surface/structure alone. Heavy staining gets the same severity treatment as a crease.
+  For surface issues that are NOT a crease:
+  - 96–100: no scratches, no print defects, full gloss, nothing visible under close inspection
+  - 90–95: one faint scratch or minor print line, barely visible
+  - 84–89: a visible scratch or light surface wear
+  - 75–83: multiple visible scratches or moderate wear
+  - below 75 (still no crease): heavy scratching, scuffing, or visible surface damage
+
+In "issues", list every distinct defect you actually see, with WHERE it is (e.g. "crease across upper-right quadrant, front", "whitening along bottom edge, both sides", "soft lower-left corner, front") — specific location, not just that a defect exists somewhere. An empty issues list should be rare, reserved for cards that are genuinely flawless under close inspection.
+
+confidence reflects how certain you are given IMAGE QUALITY, not how certain you are about the score itself. A clear, well-lit photo of a card with an obvious crease should get HIGH confidence in a LOW score — do not hedge confidence just because the score itself is low. Only lower confidence when the images are blurry, poorly lit, low-resolution, or fail to show an angle you'd need.
 
 Return ONLY valid JSON — no markdown, no code blocks:
 {
@@ -429,12 +465,12 @@ Return ONLY valid JSON — no markdown, no code blocks:
   "corners": <0-100>,
   "edges": <0-100>,
   "surface": <0-100>,
-  "centering_ratio_front": "<e.g. '55/45'>",
-  "centering_ratio_back": "<e.g. '60/40' or null>",
-  "issues": ["<specific defect>"],
-  "strengths": ["<what looks great>"],
+  "centering_ratio_front": "<both axes, e.g. 'L/R 55/45 · T/B 58/42'>",
+  "centering_ratio_back": "<both axes, e.g. 'L/R 60/40 · T/B 65/35', or null>",
+  "issues": ["<specific defect with location>"],
+  "strengths": ["<what genuinely looks great>"],
   "confidence": <0-100>,
-  "notes": "<2-3 sentence overall assessment>"
+  "notes": "<2-3 sentence overall assessment, naming the single most grade-limiting defect if any>"
 }`;
 
 export const analyzeCardForGrading = async (
