@@ -142,16 +142,18 @@ export interface GradingAnalysis {
 
 const WEIGHTS = { centering: 0.3, surface: 0.28, corners: 0.22, edges: 0.2 };
 // Real grading (PSA/BGS/CGC) doesn't average the four sub-grades — the
-// overall grade IS the lowest of the four, full stop ("your final grade
-// is essentially the lowest score across those four categories"). A card
-// with a crease and otherwise-great everything-else is a low grade, not
-// a mediocre-average one. MIN_WEIGHT used to be 0.25 (mostly an average,
-// barely dragged down by the worst category) — that's what let a severe
-// single defect get diluted into a 9/9.5 by three unrelated good scores.
-// 0.85 makes this genuinely minimum-dominant, matching the real rule,
-// while the remaining 0.15 keeps two cards with the same worst score from
-// scoring identically regardless of how the other three compare.
-const MIN_WEIGHT = 0.85;
+// overall grade IS the lowest of the four, full stop. But real grading
+// is also probabilistic, not a hard rule: a given defect severity maps to
+// a DISTRIBUTION of outcomes, not one fixed number (confirmed example:
+// a 58/42 centering ratio matches 73% of real PSA 9s but 21% of real
+// PSA 10s — same measurement, different real outcomes). 0.85 was too
+// literal a reading of "lowest wins" — it let one moderate flaw drag an
+// otherwise-strong card down further than real grading actually would.
+// 0.55 keeps this clearly minimum-LEANING (a bad category still pulls
+// the score down harder than an average would) without the extreme
+// swing — recalibrate further from real test results, this number is a
+// judgment call, not a formula with one correct answer.
+const MIN_WEIGHT = 0.55;
 
 const clamp100 = (v: number) => Math.max(1, Math.min(100, Math.round(v)));
 
@@ -330,14 +332,12 @@ export function mapTpScore(
   // PSA would still gem (e.g. 60/40 front) gets silently dragged below a 10 by
   // the blend, which is exactly why good cards were under-predicting.
   //
-  // The other three (surface/corners/edges) get the SAME "minimum wins"
-  // treatment centering already had — real grading doesn't average a
-  // crease against good corners, the crease caps the grade. 0.85 toward
-  // the minimum, same reasoning as computeTpScore above.
+  // Same recalibration as computeTpScore above — 0.85 overcorrected, 0.55 is
+  // the current middle ground. See that comment for the full reasoning.
   const condWeighted =
     (sub.surface * 0.4 + sub.corners * 0.32 + sub.edges * 0.28) / 1;
   const condMin = Math.min(sub.corners, sub.edges, sub.surface);
-  const condition = clamp100(condWeighted * 0.15 + condMin * 0.85);
+  const condition = clamp100(condWeighted * 0.45 + condMin * 0.55);
   const g = condition / 10; // grade-equivalent from condition alone
 
   const frontPct = worstAxisPct(centering?.front, centering?.front);
@@ -421,7 +421,7 @@ const GRADING_PROMPT = (
 
 Score the card's intrinsic physical quality on a 0–100 scale. This is NOT a PSA/BGS/CGC/TAG grade — DO NOT output any company grade. Score raw quality so it can be mapped to grades afterward.
 
-CALIBRATION — read this before scoring anything: most raw cards, even ones that look clean at a glance, have a real defect once actually examined — a soft corner, a whitening edge, a light scratch. Gem-mint cards are genuinely uncommon among raw submissions. Do not default to a high score because nothing jumps out immediately; actively look for defects in each of the four areas below before deciding there are none. A strong score in one dimension must NOT influence your score in another — evaluate each of the four completely independently.
+CALIBRATION — read this before scoring anything: most collectors overestimate their own cards' condition — real published data shows most raw cards submitted for grading come back lower than the submitter expected. That means: don't assume a card is flawless just because nothing jumps out at first glance — look closely at each of the four areas below before deciding there's nothing there. But this cuts both ways: a card with only a tiny, genuinely trivial imperfection (barely visible, doesn't meaningfully affect the card's appearance) is still a mint-tier card — don't manufacture significance out of something that real grading would treat as negligible. The goal is accuracy in both directions, not a thumb on the scale toward either high or low. A strong score in one dimension must NOT influence your score in another — evaluate each of the four completely independently.
 
 Evaluate FOUR sub-dimensions, each 0–100, looking at BOTH front and back:
 
@@ -434,14 +434,14 @@ Evaluate FOUR sub-dimensions, each 0–100, looking at BOTH front and back:
 
 - corners: Examine all 8 corner-instances (4 corners × front/back) INDIVIDUALLY under close inspection. This is a per-corner check, not a general impression — ANY single corner with visible fraying, softness, or whitening caps the score; three sharp corners do not average out one bad one.
   - 96–100: every corner genuinely sharp, no fraying or whitening anywhere
-  - 90–95: exactly one corner with very slight, barely-visible wear
+  - 90–95: one or two corners with very slight, barely-visible wear — nothing a casual glance would catch
   - 84–89: light wear visible to the naked eye on one or two corners
   - 75–83: visible wear on multiple corners
   - below 75: soft, rounded, or whitened corners, multiple or severe
 
 - edges: Examine every edge on both sides for whitening, nicks, roughness, or chipping. Whitening severity drives this score directly — count how many distinct edges show it:
   - 96–100: no visible whitening anywhere, clean cuts on every edge
-  - 90–95: whitening on at most one edge, extremely minor
+  - 90–95: whitening on at most one edge, and only if genuinely extremely minor — a speck, not a line
   - 84–89: whitening visible on two or more edges, still light
   - 75–83: whitening on multiple edges, clearly visible
   - below 75: heavy whitening, nicks, or chipping on multiple edges
