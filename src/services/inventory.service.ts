@@ -289,7 +289,8 @@ export const addInventoryItem = async (
   input: CreateInventoryInput,
   role: string | null = null,
 ): Promise<InventoryRow> => {
-  // Plan gate — Starter can't add inventory at all; sealed products are Pro-only.
+  // Plan gate — raw + graded singles and sealed products are all
+  // Starter-and-up (core functionality, not paywalled).
   if (input.itemType === "sealed_product") {
     await requireFeature(userId, "sealed_inventory", role);
   } else {

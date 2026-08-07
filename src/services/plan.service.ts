@@ -32,10 +32,12 @@ export type FeatureKey =
   | "ai_grading"; // AI grading reports
 
 const FEATURE_MIN_PLAN: Record<FeatureKey, PlanKey> = {
-  inventory_tracking: "collector",
-  sealed_inventory: "pro",
-  pack_opening: "pro",
-  portfolio_dashboard: "pro",
+  // Starter: raw + graded singles are core, free-tier functionality —
+  // adding cards to inventory should never require a paid plan.
+  inventory_tracking: "starter",
+  sealed_inventory: "starter",
+  pack_opening: "collector",
+  portfolio_dashboard: "starter",
   regrade_arbitrage: "collector",
   submission_tracking: "collector",
   ai_grading: "collector",
