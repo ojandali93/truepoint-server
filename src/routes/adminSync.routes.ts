@@ -17,6 +17,7 @@ import { Router, Request, Response } from "express";
 import { authenticateUser, requireAdmin } from "../middleware/auth.middleware";
 import { syncSetCards } from "../services/tcgapisSync.service";
 import { syncVariantPricesForSet } from "../services/variantPriceSync.service";
+import { recomputeChaseCardsForAllSets } from "../services/chaseCards.service";
 import { syncProductPricesForSet } from "../services/productPriceSync.service";
 import { backfillSetImages } from "../services/setImageBackfill.service";
 import { syncAllPortfolios } from "../services/portfolio.service";
@@ -145,6 +146,21 @@ router.post("/sync/images", (_req: Request, res: Response) => {
     "Set image backfill",
     () => backfillSetImages(),
     "admin-sync-images",
+  );
+});
+
+// ─── Global: chase card recompute (all sets, no re-fetch) ───────────────────
+// Uses whatever prices are already cached in market_prices — fast enough to
+// trigger on demand rather than waiting for the next scheduled price sync.
+// Mainly useful right after this feature ships, since existing cards
+// default to is_chase_card=false until something recomputes them.
+// POST /api/v1/admin/sync/chase-cards
+router.post("/sync/chase-cards", (_req: Request, res: Response) => {
+  background(
+    res,
+    "Chase card recompute (all sets)",
+    () => recomputeChaseCardsForAllSets(),
+    "admin-sync-chase-cards",
   );
 });
 

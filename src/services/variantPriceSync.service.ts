@@ -15,6 +15,7 @@
 
 import { logError } from "../lib/Logger";
 import { supabaseAdmin } from "../lib/supabase";
+import { recomputeChaseCardsForSet } from "./chaseCards.service";
 import { tcgapisGet, resolveVariant, sleep } from "../lib/tcgapisClient";
 
 const PRICE_TTL_MS = 48 * 60 * 60 * 1000; // 48h — survives one missed nightly run
@@ -201,6 +202,22 @@ export const syncAllVariantPrices = async (): Promise<{
       totalPrices += r.prices;
       totalFailed += r.failed;
       setsProcessed++;
+      // Chase status depends on this set's own prices being current —
+      // recompute right after refreshing them, not on a separate schedule
+      // where it could run against stale prices.
+      try {
+        await recomputeChaseCardsForSet(set.id);
+      } catch (chaseErr: any) {
+        await logError({
+          source: "chase-cards-recompute",
+          message: chaseErr?.message ?? "chase card recompute failed",
+          error: chaseErr,
+          userId: null,
+          requestPath: "",
+          requestMethod: "",
+          metadata: { setId: set.id },
+        });
+      }
       await sleep(200);
     } catch (err: any) {
       totalFailed++;

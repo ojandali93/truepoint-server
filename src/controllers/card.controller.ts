@@ -14,7 +14,6 @@ import {
 import { resolveCardVariants } from "../services/variant.service";
 import {
   getCardPriceHistory as getCardPriceHistoryService,
-  getGradedCardPriceHistory as getGradedCardPriceHistoryService,
   getProductPriceHistory as getProductPriceHistoryService,
   type PriceHistoryRange,
 } from "../services/historicPrices.service";
@@ -34,6 +33,81 @@ export const getAllSets = async (_req: AuthenticatedRequest, res: Response) => {
       requestPath: _req.path,
       requestMethod: _req.method,
       metadata: { params: _req.params, query: _req.query },
+    });
+    res.status(500).json({ error: err?.message });
+  }
+};
+
+// GET /cards/chase — every chase card across every set (or one set via
+// ?setId=), grouped by set, ordered by chase_score within each set.
+// Reads pre-computed columns (see chaseCards.service.ts) — no live
+// computation, so this stays fast at full-catalog scale.
+export const getChaseCards = async (
+  req: AuthenticatedRequest,
+  res: Response,
+) => {
+  try {
+    const setId = req.query.setId as string | undefined;
+
+    let query = supabaseAdmin
+      .from("cards")
+      .select(
+        "id, name, number, rarity, image_small, image_large, set_id, chase_score, sets ( id, name, symbol_url, logo_url )",
+      )
+      .eq("is_chase_card", true)
+      .order("chase_score", { ascending: false });
+
+    if (setId) query = query.eq("set_id", setId);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Group by set for the "browse chase cards by set" screen — the
+    // frontend could group client-side, but this keeps that logic in
+    // one place rather than duplicated across web and mobile.
+    const bySet = new Map<
+      string,
+      {
+        setId: string;
+        setName: string;
+        setSymbol: string | null;
+        setLogo: string | null;
+        cards: any[];
+      }
+    >();
+    for (const row of data ?? []) {
+      const set = (row as any).sets;
+      const key = row.set_id;
+      if (!bySet.has(key)) {
+        bySet.set(key, {
+          setId: key,
+          setName: set?.name ?? "Unknown set",
+          setSymbol: set?.symbol_url ?? null,
+          setLogo: set?.logo_url ?? null,
+          cards: [],
+        });
+      }
+      bySet.get(key)!.cards.push({
+        id: row.id,
+        name: row.name,
+        number: row.number,
+        rarity: row.rarity,
+        imageSmall: row.image_small,
+        imageLarge: row.image_large,
+        chaseScore: row.chase_score,
+      });
+    }
+
+    res.json({ data: Array.from(bySet.values()) });
+  } catch (err: any) {
+    await logError({
+      source: "get-chase-cards",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { query: req.query },
     });
     res.status(500).json({ error: err?.message });
   }
@@ -405,9 +479,7 @@ export const getSetPrices = async (
       const batch = cardIds.slice(i, i + BATCH);
       const { data: rows, error: pricesErr } = await supabaseAdmin
         .from("market_prices")
-        .select(
-          "card_id, source, variant, market_price, low_price, mid_price, high_price",
-        )
+        .select("card_id, source, variant, market_price, low_price, high_price")
         // flat columns — no 'prices' jsonb
         .in("card_id", batch)
         .is("grade", null) // raw cards only
@@ -420,22 +492,13 @@ export const getSetPrices = async (
       allRows.push(...(rows ?? []));
     }
 
-    // Build price map: cardId → [{ variant, market, low, mid, high, source }]
-    // market is TCGPlayer's own weighted calc — needs enough recent SALES
-    // history, not just listings, so it's null more often than you'd
-    // expect for anything thin-traded (expensive, brand-new, or just
-    // rare). low/mid/high come straight from whatever listing(s) exist
-    // and are usually present even when market isn't. Carrying all of
-    // them through lets the client fall back sensibly instead of showing
-    // nothing for a card that very much has a real, known price.
+    // Build price map: cardId → [{ variant, market, source }]
     const priceMap: Record<
       string,
       {
         variant: string;
         market: number | null;
         low: number | null;
-        mid: number | null;
-        high: number | null;
         source: string;
       }[]
     > = {};
@@ -446,8 +509,6 @@ export const getSetPrices = async (
         variant: row.variant ?? "normal",
         market: row.market_price ?? null,
         low: row.low_price ?? null,
-        mid: row.mid_price ?? null,
-        high: row.high_price ?? null,
         source: row.source,
       });
     }
@@ -553,49 +614,7 @@ export const getCardPriceHistory = async (
   }
 };
 
-// GET /cards/:cardId/price-history/graded?company=PSA&grade=10&range=30d
-export const getGradedCardPriceHistory = async (
-  req: AuthenticatedRequest,
-  res: Response,
-): Promise<void> => {
-  try {
-    const { cardId } = req.params;
-    const company = req.query.company as string;
-    const grade = req.query.grade as string;
-    if (!cardId) {
-      res.status(400).json({ error: "cardId is required" });
-      return;
-    }
-    if (!company || !grade) {
-      res.status(400).json({ error: "company and grade are required" });
-      return;
-    }
-
-    const rangeParam = (req.query.range as string) ?? "7d";
-    const range: PriceHistoryRange =
-      rangeParam === "30d" ? "30d" : rangeParam === "90d" ? "90d" : "7d";
-
-    const result = await getGradedCardPriceHistoryService(
-      cardId,
-      company,
-      grade,
-      range,
-    );
-
-    res.json({ data: result });
-  } catch (err: any) {
-    await logError({
-      source: "get-graded-card-price-history",
-      message: err?.message ?? "Unknown error",
-      error: err,
-      userId: (req as any)?.userId ?? null,
-      requestPath: req.path,
-      requestMethod: req.method,
-      metadata: { params: req.params, query: req.query },
-    });
-    res.status(500).json({ error: err?.message ?? "Failed to load history" });
-  }
-};
+// GET /products/:productId/price-history?range=7d|30d|90d
 export const getProductPriceHistoryHandler = async (
   req: AuthenticatedRequest,
   res: Response,

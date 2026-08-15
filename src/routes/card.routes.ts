@@ -22,6 +22,8 @@ router.use(authenticateUser as any);
 
 // ─── Sets ──────────────────────────────────────────────────────────────────────
 router.get("/sets", standardLimiter, CardController.getAllSets as any);
+// Must come before /:cardId below, or "chase" would be matched as a cardId.
+router.get("/chase", standardLimiter, CardController.getChaseCards as any);
 router.get("/sets/:setId", standardLimiter, CardController.getSetById as any);
 router.get(
   "/sets/:setId/cards",
@@ -218,13 +220,6 @@ router.get(
   "/:cardId/price-history",
   standardLimiter,
   CardController.getCardPriceHistory as any,
-);
-
-// GET /cards/:cardId/price-history/graded?company=PSA&grade=10&range=30d
-router.get(
-  "/:cardId/price-history/graded",
-  standardLimiter,
-  CardController.getGradedCardPriceHistory as any,
 );
 
 // ADD THIS BLOCK to src/routes/card.routes.ts immediately after the
