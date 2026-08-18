@@ -1,13 +1,17 @@
 // src/services/portfolioSummary.service.ts
 //
-// Sends a daily "portfolio summary" push to each user with inventory:
+// Sends a daily "portfolio summary" push to every user with a device token:
 //   "Your portfolio: $X.XX  ·  +$Y.YY today"
+// or, for a $0 / no-inventory-yet portfolio, an action-oriented nudge to
+// add cards instead of the usual value line.
 //
 // Reads the two most recent aggregate snapshots (collection_id IS NULL) to
 // compute today-vs-yesterday change. Skips users who:
 //   - have no push token (nothing to send to)
 //   - have opted out (notification_settings.notify_price_alerts = false)
-//   - have an empty portfolio (no value, nothing useful to say)
+// Users with no snapshot row at all (never had inventory — syncAllPortfolios
+// only snapshots users WITH inventory) and users with an existing $0
+// snapshot are both still notified, not skipped — see sendDailySummaryToUser.
 //
 // Designed to run right after syncAllPortfolios writes the day's snapshots, so
 // the latest snapshot is already current.
@@ -70,23 +74,29 @@ export const sendDailySummaryToUser = async (
   options?: { mostRecentDeviceOnly?: boolean },
 ): Promise<boolean> => {
   const snaps = await getLatestTwoSnapshots(userId);
-  if (!snaps) return false;
-
-  // Empty portfolio — nothing worth notifying about.
-  if (snaps.today <= 0) return false;
+  // No snapshot row at all (syncAllPortfolios only creates one for users
+  // WITH inventory — see findAllUsersWithInventory — so a brand-new user
+  // with zero cards never gets a row to begin with) is treated the same
+  // as an existing $0 snapshot: still notify, with an action-oriented
+  // message, rather than silently skipping either case.
+  const portfolioValue = snaps?.today ?? 0;
+  const prevValue = snaps?.prev ?? null;
 
   if (!(await wantsSummary(userId))) return false;
 
   let body: string;
-  if (snaps.prev == null) {
-    body = `Your portfolio is worth ${fmtUSD(snaps.today)}.`;
+  if (portfolioValue <= 0) {
+    body =
+      "Your portfolio is currently $0.00 — add your cards to start tracking its value!";
+  } else if (prevValue == null) {
+    body = `Your portfolio is worth ${fmtUSD(portfolioValue)}.`;
   } else {
-    const change = snaps.today - snaps.prev;
-    const pct = snaps.prev > 0 ? (change / snaps.prev) * 100 : 0;
+    const change = portfolioValue - prevValue;
+    const pct = prevValue > 0 ? (change / prevValue) * 100 : 0;
     const arrow = change > 0 ? "▲" : change < 0 ? "▼" : "•";
     const sign = change > 0 ? "+" : "";
     body =
-      `Your portfolio: ${fmtUSD(snaps.today)}  ` +
+      `Your portfolio: ${fmtUSD(portfolioValue)}  ` +
       `${arrow} ${sign}${fmtUSD(change)} (${sign}${pct.toFixed(1)}%) today`;
   }
 
