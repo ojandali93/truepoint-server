@@ -47,6 +47,7 @@ import { checkWatchlistTriggers } from "../services/watchlistTriggers.service";
 import { syncInventoryCardPricesSafe } from "../services/poketracePriceSync.service";
 import { syncAllCatalogGradedPricesSafe } from "../services/poketracePriceSync.service";
 import { sendPendingIntroEmails } from "../services/introEmail.service";
+import { sendRenewalReminders } from "../services/renewalReminder.service";
 
 const router = Router();
 
@@ -648,6 +649,22 @@ router.post("/intro-emails", requireSyncKey, async (_req, res) => {
       console.log("[IntroEmail] sweep done:", r);
     } catch (err: any) {
       console.error("[IntroEmail] sweep failed:", err?.message);
+    }
+  });
+});
+
+// POST /sync/renewal-reminders — remind users whose subscription renews within 3 days
+router.post("/renewal-reminders", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "Renewal reminder sweep started in background.",
+    timestamp: new Date().toISOString(),
+  });
+  setImmediate(async () => {
+    try {
+      const r = await sendRenewalReminders();
+      console.log("[RenewalReminder] sweep done:", r);
+    } catch (err: any) {
+      console.error("[RenewalReminder] sweep failed:", err?.message);
     }
   });
 });
