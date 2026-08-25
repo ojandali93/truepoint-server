@@ -35,7 +35,7 @@ import {
   InventoryRow,
 } from "../repositories/inventory.repository";
 import {
-  fetchHistoricalPriceRows,
+  fetchHistoricalPriceRowsForCards,
   HistoricalPriceRow,
 } from "../repositories/portfolioMovers.repository";
 import { variantKey } from "../lib/variantKey";
@@ -323,7 +323,6 @@ export const getPortfolioMovers = async (
   const windowStart = new Date(now.getTime() - WINDOW_DAYS[window] * DAY_MS);
   const windowStartIso = windowStart.toISOString();
   const windowStartDate = toDateStr(windowStart);
-  const todayDate = toDateStr(now);
   const lookbackStartDate = toDateStr(
     new Date(windowStart.getTime() - HISTORY_LOOKBACK_GRACE_DAYS * DAY_MS),
   );
@@ -345,7 +344,14 @@ export const getPortfolioMovers = async (
     collectionId,
   );
 
-  // 3) Historical prices for every card either set touches, one query.
+  // 3) Historical prices at window start, for every card either set
+  //    touches — one batched-parallel round of per-card targeted lookups,
+  //    not a bulk date-range fetch (see portfolioMovers.repository.ts's
+  //    header comment for why: the range approach times out at this
+  //    table's real row density). This covers the PRIMARY resolution for
+  //    every active holding and the first attempt for every removal;
+  //    removals whose primary attempt fails get one more small, targeted
+  //    fetch later, anchored at their own sale date (Correction 1).
   const cardIds = Array.from(
     new Set(
       [...activeItems, ...soldRows]
@@ -353,10 +359,10 @@ export const getPortfolioMovers = async (
         .map((r) => r.card_id as string),
     ),
   );
-  const historyRows = await fetchHistoricalPriceRows(
+  const historyRows = await fetchHistoricalPriceRowsForCards(
     cardIds,
+    windowStartDate,
     lookbackStartDate,
-    todayDate,
   );
   const rowsByCard = groupByCard(historyRows);
 
@@ -367,7 +373,6 @@ export const getPortfolioMovers = async (
   let approximateCount = 0;
   let addedAndSoldCount = 0;
   let anyHistoryResolved = false;
-  const resolvedWindowStartDates: string[] = [];
 
   const excludedEntry = (
     item: InventoryRow,
@@ -459,7 +464,6 @@ export const getPortfolioMovers = async (
 
     // Fully attributable.
     anyHistoryResolved = true;
-    resolvedWindowStartDates.push(windowStartDate);
     reconstructedStartValue += priceThen * qty;
     const contribution = priceNow * qty - priceThen * qty;
     const contributionPct = priceThen > 0 ? (contribution / (priceThen * qty)) * 100 : null;
@@ -487,9 +491,46 @@ export const getPortfolioMovers = async (
   }
 
   // ── Sold items within the window ──
+  //
+  // Two passes, per Correction 1: try the window-start price first (already
+  // covered by rowsByCard, fetched above for every card). Only the items
+  // that fail that first attempt get a second, small, targeted fetch
+  // anchored at their OWN sale date — in practice a handful of rows at
+  // most, not another sweep over the whole inventory.
   const removals: RemovalEntry[] = [];
-  for (const row of soldRows) {
+  const pendingFallback: InventoryRow[] = [];
+
+  const pushRemoval = (
+    row: InventoryRow,
+    marketValueUsed: number,
+    marketValueSource: "window_start" | "at_sale_fallback",
+  ): void => {
     const qty = row.quantity ?? 1;
+    const marketValueTotal = marketValueUsed * qty;
+    reconstructedStartValue += marketValueTotal;
+
+    removals.push({
+      inventoryId: row.id,
+      cardId: row.card_id,
+      productId: row.product_id,
+      name: displayName(row),
+      soldAt: row.sold_at as string,
+      quantity: qty,
+      soldPrice: row.sold_price ?? 0,
+      marketValueUsed: round2(marketValueUsed),
+      marketValueSource,
+      // Correction 1: realized (soldPrice) vs. market (marketValueUsed)
+      // values are fundamentally different quantities — one is what the
+      // user actually got, the other is what the identity's market-value
+      // accounting uses. Mixing them in the SAME sum would make the
+      // identity meaningless (it would answer neither "how did the market
+      // move" nor "how did I do selling"), so vsMarket is informational
+      // only and never enters inventoryDelta or removals.total.
+      vsMarket: round2((row.sold_price ?? 0) - marketValueTotal),
+    });
+  };
+
+  for (const row of soldRows) {
     if (!row.sold_at) continue; // defensive — query already filters on sold_at
 
     const addedAtMs = row.added_at ? new Date(row.added_at).getTime() : null;
@@ -515,49 +556,57 @@ export const getPortfolioMovers = async (
       continue;
     }
 
-    // Correction 1: try the window-start price first; if the item has no
-    // resolvable price AT window start, fall back to the closest snapshot
-    // at-or-before the actual sale date rather than discarding a removal we
-    // know really happened.
-    let marketValueUsed = resolveHistoricalPrice(row, windowStartDate, rowsByCard);
-    let marketValueSource: "window_start" | "at_sale_fallback" = "window_start";
-    if (!marketValueUsed) {
-      const soldAtDate = toDateStr(new Date(row.sold_at));
-      marketValueUsed = resolveHistoricalPrice(row, soldAtDate, rowsByCard);
-      marketValueSource = "at_sale_fallback";
-    }
-
-    if (!marketValueUsed) {
-      // No price data anywhere for this removal. Flat rule again: this row
-      // contributes 0 to currentValue (it's sold, not active), so it gets 0
-      // in the reconstruction too — never treated as a $0 market movement,
-      // just disclosed via soldPrice, the only figure we actually have.
-      excluded.push(excludedEntry(row, "no_history", row.sold_price ?? 0));
+    const marketValueUsed = resolveHistoricalPrice(row, windowStartDate, rowsByCard);
+    if (marketValueUsed != null) {
+      pushRemoval(row, marketValueUsed, "window_start");
       continue;
     }
 
-    const marketValueTotal = marketValueUsed * qty;
-    reconstructedStartValue += marketValueTotal;
+    pendingFallback.push(row);
+  }
 
-    removals.push({
-      inventoryId: row.id,
-      cardId: row.card_id,
-      productId: row.product_id,
-      name: displayName(row),
-      soldAt: row.sold_at,
-      quantity: qty,
-      soldPrice: row.sold_price ?? 0,
-      marketValueUsed: round2(marketValueUsed),
-      marketValueSource,
-      // Correction 1: realized (soldPrice) vs. market (marketValueUsed)
-      // values are fundamentally different quantities — one is what the
-      // user actually got, the other is what the identity's market-value
-      // accounting uses. Mixing them in the SAME sum would make the
-      // identity meaningless (it would answer neither "how did the market
-      // move" nor "how did I do selling"), so vsMarket is informational
-      // only and never enters inventoryDelta or removals.total.
-      vsMarket: round2((row.sold_price ?? 0) - marketValueTotal),
-    });
+  if (pendingFallback.length > 0) {
+    // Small, targeted, per-item fetches (each item's own sale date), merged
+    // into the SAME rowsByCard map — closestAtOrBefore always filters by
+    // "<= targetDate" before picking a winner, so rows fetched for a later
+    // target date can't leak into an earlier one's resolution even though
+    // they now share a map entry.
+    const fallbackRowSets = await Promise.all(
+      pendingFallback.map((row) => {
+        if (!row.card_id) return Promise.resolve<HistoricalPriceRow[]>([]);
+        const soldAtDate = toDateStr(new Date(row.sold_at as string));
+        const fallbackLookbackStart = toDateStr(
+          new Date(new Date(row.sold_at as string).getTime() - HISTORY_LOOKBACK_GRACE_DAYS * DAY_MS),
+        );
+        return fetchHistoricalPriceRowsForCards(
+          [row.card_id],
+          soldAtDate,
+          fallbackLookbackStart,
+        );
+      }),
+    );
+    for (const rows of fallbackRowSets) {
+      for (const r of rows) {
+        const arr = rowsByCard.get(r.card_id) ?? [];
+        arr.push(r);
+        rowsByCard.set(r.card_id, arr);
+      }
+    }
+
+    for (const row of pendingFallback) {
+      const soldAtDate = toDateStr(new Date(row.sold_at as string));
+      const marketValueUsed = resolveHistoricalPrice(row, soldAtDate, rowsByCard);
+      if (marketValueUsed == null) {
+        // No price data anywhere for this removal. Flat rule again: this
+        // row contributes 0 to currentValue (it's sold, not active), so it
+        // gets 0 in the reconstruction too — never treated as a $0 market
+        // movement, just disclosed via soldPrice, the only figure we
+        // actually have.
+        excluded.push(excludedEntry(row, "no_history", row.sold_price ?? 0));
+        continue;
+      }
+      pushRemoval(row, marketValueUsed, "at_sale_fallback");
+    }
   }
 
   // ── Totals & identity ──
