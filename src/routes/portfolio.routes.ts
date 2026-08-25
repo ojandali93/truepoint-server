@@ -14,6 +14,14 @@ router.use(authenticateUser as any);
 // Full portfolio analytics — history, breakdown, top performers
 router.get("/", standardLimiter, PortfolioController.getPortfolio as any);
 
+// GET  /api/v1/portfolio/movers?window=1d|7d|30d
+// Portfolio change attribution — market movement vs. inventory adds/removals
+router.get(
+  "/movers",
+  standardLimiter,
+  PortfolioController.getMovers as any,
+);
+
 // POST /api/v1/portfolio/snapshot
 // Trigger a snapshot for the current user (also used by cron)
 router.post(

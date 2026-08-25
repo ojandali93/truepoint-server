@@ -23,6 +23,7 @@ import {
 } from "../repositories/skuPrice.repository";
 
 import { requireFeature } from "./plan.service";
+import { matchVariantPrice } from "../lib/variantMatch";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,13 +48,6 @@ export interface InventorySummary {
   totalGainLoss: number;
   totalGainLossPct: number | null;
 }
-
-// Normalize a variant_type into the lookup key used by fetchVariantPrices
-// (lowercase, alphanumeric only). "Reverse Holofoil" → "reverseholofoil",
-// "reverse_holofoil" → "reverseholofoil" — so the inventory entry and the
-// card_variants row match regardless of formatting.
-const variantKey = (v: string | null | undefined): string =>
-  (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
 // ─── Price resolution ─────────────────────────────────────────────────────────
 
@@ -97,20 +91,20 @@ const resolveMarketValue = (
 
   // Raw card
   if (item.item_type === "raw_card" && item.card_id) {
-    // 1) Exact variant price from card_variants (the source of truth).
-    //    Keyed on card_id + variant_type — exactly what the scanner stores.
-    const exact = variantPrices.get(
-      `${item.card_id}|${variantKey(item.variant_type)}`,
+    // 1) Exact variant price from card_variants (the source of truth),
+    //    falling back to a representative "any variant on this card" price
+    //    (e.g. the scanner mis-tagged the variant as holofoil) so the value
+    //    isn't zero. Shared with portfolioMovers.service.ts's historical
+    //    join — see src/lib/variantMatch.ts.
+    const matched = matchVariantPrice(
+      variantPrices,
+      variantPricesAny,
+      item.card_id,
+      item.variant_type,
     );
-    if (exact != null) return { marketPrice: exact, source: "tcgplayer" };
+    if (matched != null) return { marketPrice: matched, source: "tcgplayer" };
 
-    // 2) The card has a price, but under a different variant (e.g. the scanner
-    //    mis-tagged the variant as holofoil). Show the card's representative
-    //    price so the value isn't zero. Approximate until the variant is fixed.
-    const anyV = variantPricesAny.get(item.card_id);
-    if (anyV != null) return { marketPrice: anyV, source: "tcgplayer" };
-
-    // 3) SKU-aware fallback (condition + variant). Dead until the scanner /
+    // 2) SKU-aware fallback (condition + variant). Dead until the scanner /
     //    sku sync populates tcgapis_sku_id, but kept for when it does.
     const skuRows = skuPrices.get(item.card_id);
     const fromSku = pickSkuPrice(
@@ -122,7 +116,7 @@ const resolveMarketValue = (
       return { marketPrice: fromSku.price, source: fromSku.source };
     }
 
-    // 4) Legacy variant-level market_prices fallback.
+    // 3) Legacy variant-level market_prices fallback.
     const prices = cardPrices.get(item.card_id);
     if (!prices) return { marketPrice: null, source: null };
     if (prices.raw_market)

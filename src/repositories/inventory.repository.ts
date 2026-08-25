@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { fetchAllByIn } from "../lib/pgFetchAll";
+import { variantKey } from "../lib/variantKey";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -109,9 +110,6 @@ const INVENTORY_SELECT = `
   )
 `;
 
-const variantKey = (v: string | null | undefined): string =>
-  (v ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-
 export const fetchVariantPrices = async (cardIds: string[]) => {
   const byVariant = new Map<string, number>(); // `${card_id}|${variantkey}` -> price
   const byCard = new Map<string, number>(); // card_id -> representative price
@@ -184,6 +182,35 @@ export const findSoldByUser = async (
 
   if (error) {
     console.error("[InventoryRepo] findSoldByUser error:", error);
+    throw error;
+  }
+  return (data ?? []) as InventoryRow[];
+};
+
+// Items sold within a specific window — used by portfolioMovers.service.ts's
+// removals bucket. Same embedded card/product join as the rest of this file
+// (safe here — the FKs backing it are declared; see findSoldByUser above,
+// which has used this same select in production without issue).
+export const findSoldByUserInWindow = async (
+  userId: string,
+  windowStartIso: string,
+  throughIso: string,
+  collectionId?: string | null,
+): Promise<InventoryRow[]> => {
+  let q = supabaseAdmin
+    .from("inventory")
+    .select(INVENTORY_SELECT)
+    .eq("user_id", userId)
+    .eq("status", "sold")
+    .gte("sold_at", windowStartIso)
+    .lte("sold_at", throughIso);
+
+  if (collectionId) q = q.eq("collection_id", collectionId);
+
+  const { data, error } = await q.order("sold_at", { ascending: false });
+
+  if (error) {
+    console.error("[InventoryRepo] findSoldByUserInWindow error:", error);
     throw error;
   }
   return (data ?? []) as InventoryRow[];
