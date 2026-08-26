@@ -32,7 +32,7 @@ import {
   filterGradePricesForCard,
   RawGradeRow,
 } from "../src/services/gradingArbitrage.service";
-import { getGradeLadder } from "../src/services/regradeTracker.service";
+import { getGradeLadder, findGradedPrice } from "../src/services/regradeTracker.service";
 import {
   parseGradeString,
   isTenPlusGrade,
@@ -48,14 +48,6 @@ const check = (label: string, condition: boolean, detail?: string) => {
     failures++;
     console.log(`  ❌ ${label}${detail ? ` — ${detail}` : ""}`);
   }
-};
-
-// Non-failing diagnostic — for observations that are useful to print but
-// aren't themselves proof of anything (see the grade-string-truncation-bug
-// note in section 4: a company+grade lookup can land on a mislabeled row by
-// pure luck of array order, so it can't be trusted to gate PASS/FAIL).
-const note = (label: string, condition: boolean, detail?: string) => {
-  console.log(`  ${condition ? "ℹ️ " : "⚠️ "}${label}${detail ? ` — ${detail}` : ""}`);
 };
 
 /** Every real row (any source) market_prices has for one card. Live, unfiltered. */
@@ -285,40 +277,33 @@ async function main() {
     source_product_id: null, // not selected by fetchAllRows above; irrelevant to the filter/sort assertions here
   });
 
-  // KNOWN PRE-EXISTING BUG (found by this script, not caused by this ruling,
-  // NOT fixed here — see BACKLOG.md "grade-string truncation collides
-  // multi-word grades"): both services' `grade: parts[1] ?? ...` parsing
-  // collapses "BGS 10 Black" down to "10", identical to plain "BGS 10". A
-  // real pricecharting BGS 10 Black row ($2,943.66 on Kangaskhan) therefore
-  // masquerades as a BGS "10" entry, and since filterGradePricesForCard
-  // sorts by price descending, it can beat the genuine BGS 10 row
-  // ($247.77) to any `.find(company==="BGS" && grade==="10")` lookup —
-  // ladder order isn't price-sorted, so its own .find() is order-dependent
-  // instead. Neither is deterministic proof of anything. So: don't assert
-  // via that lookup. Assert the literal, bug-proof requirement instead —
-  // the exact PokeTrace 10-tier price must never appear anywhere in the
-  // gated output, full stop, regardless of what label it would've sorted
-  // under.
-  const neverLeaksPokeTracePrice = (
-    rows: { price: number; source: string }[],
-    forbiddenPrice: number | null,
-  ) =>
-    // null means there's no live PokeTrace row for this card/tier to leak in
-    // the first place — vacuously true, not a gap in coverage.
-    forbiddenPrice === null ||
-    !rows.some((r) => r.source === "poketrace" && r.price === forbiddenPrice);
+  // FORMERLY a known bug, FIXED 2026-08-26 (pre-flag-open blocker, CLAUDE.md
+  // §6): both services used to derive the displayed grade via a plain
+  // `parts[1]` split, which collapsed "BGS 10 Black" down to "10" —
+  // identical to plain "BGS 10". Fixed by reusing parseGradeString's
+  // `gradeValue` (the FULL value, "10 Black" intact) instead of
+  // re-splitting. Assertions below now trust a company+grade lookup again
+  // (exact-label correctness), AND separately assert that the Black Label
+  // row surfaces under its own distinct "10 Black" label rather than
+  // colliding with "10" — the actual bug, made directly visible instead of
+  // inferred from a leak-proof workaround.
+  const kangaskhanPCBlack = priceFor(kangaskhanRows, "pricecharting", "BGS 10 Black");
 
   const kangaskhanArbOn = filterGradePricesForCard(kangaskhanRows.map(toRawGradeRow), true);
   const kangaskhanArbOff = filterGradePricesForCard(kangaskhanRows.map(toRawGradeRow), false);
-  check(
-    `filterGradePricesForCard (arbitrage): Kangaskhan, flag ON → PokeTrace's BGS 10 price ($${kangaskhanPT}) never leaks into the output, at any label`,
-    neverLeaksPokeTracePrice(kangaskhanArbOn, kangaskhanPT),
-  );
   const kangaskhanArbOnBgs10 = kangaskhanArbOn.find((g) => g.company === "BGS" && g.grade === "10");
-  note(
-    `filterGradePricesForCard (arbitrage): Kangaskhan BGS 10, flag ON → if a "BGS"/"10" entry is present it's PriceCharting's $${kangaskhanPC} (informational — see truncation-bug note above for why this lookup itself is unreliable)`,
-    !kangaskhanArbOnBgs10 || (kangaskhanArbOnBgs10.price === kangaskhanPC && kangaskhanArbOnBgs10.source === "pricecharting"),
+  check(
+    `filterGradePricesForCard (arbitrage): Kangaskhan BGS 10, flag ON → PC's $${kangaskhanPC}, NEVER PokeTrace's $${kangaskhanPT}`,
+    kangaskhanArbOnBgs10?.price === kangaskhanPC && kangaskhanArbOnBgs10?.source === "pricecharting",
     JSON.stringify(kangaskhanArbOnBgs10),
+  );
+  const kangaskhanArbOnBgs10Black = kangaskhanArbOn.find((g) => g.company === "BGS" && g.grade === "10 Black");
+  check(
+    `filterGradePricesForCard (arbitrage): Kangaskhan BGS 10 Black, flag ON → its OWN row ($${kangaskhanPCBlack}), distinct from plain BGS 10 ($${kangaskhanPC}) — the truncation-collision case, directly`,
+    kangaskhanArbOnBgs10Black?.price === kangaskhanPCBlack &&
+      kangaskhanArbOnBgs10Black?.source === "pricecharting" &&
+      kangaskhanArbOnBgs10Black?.price !== kangaskhanArbOnBgs10?.price,
+    JSON.stringify(kangaskhanArbOnBgs10Black),
   );
   const kangaskhanArbOffBgs10 = kangaskhanArbOff.find((g) => g.company === "BGS" && g.grade === "10");
   check(
@@ -327,31 +312,30 @@ async function main() {
   );
 
   const umbreonArbOn = filterGradePricesForCard(umbreonRows.map(toRawGradeRow), true);
-  check(
-    `filterGradePricesForCard (arbitrage): Umbreon ex, flag ON → PokeTrace's PSA 10 price ($${umbreonPT}) never leaks into the output, at any label`,
-    neverLeaksPokeTracePrice(umbreonArbOn, umbreonPT),
-  );
   const umbreonArbOnPsa10 = umbreonArbOn.find((g) => g.company === "PSA" && g.grade === "10");
-  note(
-    `filterGradePricesForCard (arbitrage): Umbreon ex PSA 10, flag ON → if a "PSA"/"10" entry is present it's PriceCharting's $${umbreonPC} (informational)`,
-    !umbreonArbOnPsa10 || (umbreonArbOnPsa10.price === umbreonPC && umbreonArbOnPsa10.source === "pricecharting"),
+  check(
+    `filterGradePricesForCard (arbitrage): Umbreon ex PSA 10, flag ON → PC's $${umbreonPC}, NEVER PokeTrace's $${umbreonPT}`,
+    umbreonArbOnPsa10?.price === umbreonPC && umbreonArbOnPsa10?.source === "pricecharting",
     JSON.stringify(umbreonArbOnPsa10),
   );
 
   // getGradeLadder — a real DB round trip (unlike the pure function above),
-  // same two cards, same truncation caveat, same fix: assert the price
-  // never leaks rather than trusting a company+grade lookup.
+  // same two cards, same exact-label assertions (now trustworthy post-fix).
   const kangaskhanLadderOn = await getGradeLadder("654521", true);
   const kangaskhanLadderOff = await getGradeLadder("654521", false);
-  check(
-    `getGradeLadder: Kangaskhan, flag ON → PokeTrace's BGS 10 price ($${kangaskhanPT}) never leaks into the ladder, at any label`,
-    neverLeaksPokeTracePrice(kangaskhanLadderOn.ladder, kangaskhanPT),
-  );
   const kangaskhanLadderOnBgs10 = kangaskhanLadderOn.ladder.find((e) => e.company === "BGS" && e.grade === "10");
-  note(
-    `getGradeLadder: Kangaskhan BGS 10, flag ON → if a "BGS"/"10" entry is present it's PriceCharting's $${kangaskhanPC} (or absent — informational)`,
-    !kangaskhanLadderOnBgs10 || (kangaskhanLadderOnBgs10.price === kangaskhanPC && kangaskhanLadderOnBgs10.source === "pricecharting"),
+  check(
+    `getGradeLadder: Kangaskhan BGS 10, flag ON → PC's $${kangaskhanPC}, NEVER PokeTrace's $${kangaskhanPT}`,
+    kangaskhanLadderOnBgs10?.price === kangaskhanPC && kangaskhanLadderOnBgs10?.source === "pricecharting",
     JSON.stringify(kangaskhanLadderOnBgs10),
+  );
+  const kangaskhanLadderOnBgs10Black = kangaskhanLadderOn.ladder.find((e) => e.company === "BGS" && e.grade === "10 Black");
+  check(
+    `getGradeLadder: Kangaskhan BGS 10 Black, flag ON → its OWN row ($${kangaskhanPCBlack}), distinct from plain BGS 10 ($${kangaskhanPC})`,
+    kangaskhanLadderOnBgs10Black?.price === kangaskhanPCBlack &&
+      kangaskhanLadderOnBgs10Black?.source === "pricecharting" &&
+      kangaskhanLadderOnBgs10Black?.price !== kangaskhanLadderOnBgs10?.price,
+    JSON.stringify(kangaskhanLadderOnBgs10Black),
   );
   const kangaskhanLadderOffBgs10 = kangaskhanLadderOff.ladder.find((e) => e.company === "BGS" && e.grade === "10");
   check(
@@ -360,15 +344,34 @@ async function main() {
   );
 
   const umbreonLadderOn = await getGradeLadder("602681", true);
-  check(
-    `getGradeLadder: Umbreon ex, flag ON → PokeTrace's PSA 10 price ($${umbreonPT}) never leaks into the ladder, at any label`,
-    neverLeaksPokeTracePrice(umbreonLadderOn.ladder, umbreonPT),
-  );
   const umbreonLadderOnPsa10 = umbreonLadderOn.ladder.find((e) => e.company === "PSA" && e.grade === "10");
-  note(
-    `getGradeLadder: Umbreon ex PSA 10, flag ON → if a "PSA"/"10" entry is present it's PriceCharting's $${umbreonPC} (informational)`,
-    !umbreonLadderOnPsa10 || (umbreonLadderOnPsa10.price === umbreonPC && umbreonLadderOnPsa10.source === "pricecharting"),
+  check(
+    `getGradeLadder: Umbreon ex PSA 10, flag ON → PC's $${umbreonPC}, NEVER PokeTrace's $${umbreonPT}`,
+    umbreonLadderOnPsa10?.price === umbreonPC && umbreonLadderOnPsa10?.source === "pricecharting",
     JSON.stringify(umbreonLadderOnPsa10),
+  );
+
+  // findGradedPrice (listTrackedRegrades' precedence logic) — same
+  // truncation collision, plus this one had NO source gate at all before
+  // 2026-08-26 (found while fixing the truncation bug, not part of the
+  // original build-26-blocker gating pass — see BACKLOG.md history).
+  const kangaskhanTrackedRows = kangaskhanRows.map((r) => ({
+    source: r.source,
+    grade: r.grade,
+    market_price: r.market_price,
+  }));
+  check(
+    `findGradedPrice: Kangaskhan BGS "10", flag ON → PC's $${kangaskhanPC}, NEVER PokeTrace's $${kangaskhanPT}`,
+    findGradedPrice(kangaskhanTrackedRows, "BGS", "10", true) === kangaskhanPC,
+  );
+  check(
+    `findGradedPrice: Kangaskhan BGS "10 Black", flag ON → its OWN row ($${kangaskhanPCBlack}), distinct from plain "10"`,
+    findGradedPrice(kangaskhanTrackedRows, "BGS", "10 Black", true) === kangaskhanPCBlack &&
+      kangaskhanPCBlack !== kangaskhanPC,
+  );
+  check(
+    `findGradedPrice: Kangaskhan BGS "10", flag OFF → PokeTrace's $${kangaskhanPT}`,
+    findGradedPrice(kangaskhanTrackedRows, "BGS", "10", false) === kangaskhanPT,
   );
 
   // ── Verdict ─────────────────────────────────────────────────────────────

@@ -60,7 +60,13 @@ export const listTracked = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const result = await listTrackedRegrades(req.user.id);
+    // Same flag as getLadder — targetPrice/currentPrice/estimatedROI on a
+    // tracked candidate are paid-decision numbers too.
+    const useNewGradedPrecedence = await isFlagEnabled(
+      FLAG_KEYS.PRICECHARTING_PRICING,
+      req.user.id,
+    );
+    const result = await listTrackedRegrades(req.user.id, useNewGradedPrecedence);
     res.json({ data: result });
   } catch (err) {
     handle(res, err, "regrade-list");

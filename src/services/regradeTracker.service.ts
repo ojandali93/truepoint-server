@@ -117,25 +117,26 @@ export const getGradeLadder = async (
   // a user tracks a regrade candidate based on this ladder.
   const ladder: LadderEntry[] = rows
     .filter((r) => r.grade && r.market_price)
-    .filter((r) => {
-      const parsed = parseGradeString(r.grade);
-      if (!parsed) return false;
-      return useNewPrecedence
-        ? sourceAllowedAtTier(r.source, parsed.gradeValue)
-        : r.source === "poketrace";
-    })
-    .map((r) => {
-      const parts = r.grade!.split(" ");
-      const grade = parts[1] ?? r.grade!;
-      return {
-        company: parts[0] ?? "UNKNOWN",
-        grade,
-        gradeValue: parseFloat(grade) || 0,
-        price: r.market_price!,
-        source: r.source,
-        sourceProductId: r.source_product_id ?? null,
-      };
-    })
+    .map((r) => ({ row: r, parsed: parseGradeString(r.grade) }))
+    .filter((x): x is { row: typeof rows[number]; parsed: NonNullable<ReturnType<typeof parseGradeString>> } => x.parsed !== null)
+    .filter(({ row, parsed }) =>
+      useNewPrecedence
+        ? sourceAllowedAtTier(row.source, parsed.gradeValue)
+        : row.source === "poketrace",
+    )
+    // parsed.gradeValue carries the FULL value ("10 Black", "10 Pristine"),
+    // not just its leading numeric token — a plain `parts[1]` split here
+    // truncated "BGS 10 Black" down to "10", indistinguishable from a real
+    // bare "BGS 10" row (pre-flag-open blocker, CLAUDE.md §6; fixed
+    // 2026-08-26 alongside gradingArbitrage.service.ts's identical bug).
+    .map(({ row, parsed }) => ({
+      company: parsed.company,
+      grade: parsed.gradeValue,
+      gradeValue: parseFloat(parsed.gradeValue) || 0,
+      price: row.market_price!,
+      source: row.source,
+      sourceProductId: row.source_product_id ?? null,
+    }))
     .sort(
       (a, b) =>
         a.company.localeCompare(b.company) || a.gradeValue - b.gradeValue,
@@ -266,8 +267,45 @@ export interface TrackedRegradeRow {
   updatedAt: string;
 }
 
+export interface TrackedPriceRow {
+  source: string;
+  grade: string | null;
+  market_price: number | null;
+}
+
+/**
+ * Pure lookup, split out for the same reason filterGradePricesForCard in
+ * gradingArbitrage.service.ts is: unit-testable without a DB round trip.
+ *
+ * Found 2026-08-26 alongside the getGradeLadder/gradingArbitrage gating fix:
+ * this had NEITHER the truncation fix NOR any source gating at all (not
+ * even the old poketrace-only default) — a listTrackedRegrades caller could
+ * get a blended/either-source price for a tracked candidate's
+ * targetPrice/currentPrice, the numbers estimatedProfit/estimatedROI are
+ * computed from. Same locked contract as every other graded-price read
+ * site (CLAUDE.md §6): flag off = poketrace-only, flag on = tier-partitioned.
+ */
+export const findGradedPrice = (
+  rows: TrackedPriceRow[],
+  company: string | null,
+  grade: string | null,
+  useNewPrecedence: boolean,
+): number | null => {
+  if (!company || !grade) return null;
+  const row = rows.find((p) => {
+    const parsed = parseGradeString(p.grade);
+    if (!parsed || p.market_price == null) return false;
+    if (parsed.company !== company || parsed.gradeValue !== grade) return false;
+    return useNewPrecedence
+      ? sourceAllowedAtTier(p.source, parsed.gradeValue)
+      : p.source === "poketrace";
+  });
+  return row?.market_price ?? null;
+};
+
 export const listTrackedRegrades = async (
   userId: string,
+  useNewPrecedence: boolean = false,
 ): Promise<TrackedRegradeRow[]> => {
   const { data: rows, error } = await supabaseAdmin
     .from("tracked_regrades")
@@ -314,29 +352,21 @@ export const listTrackedRegrades = async (
     const set = card?.sets;
     const prices = pricesByCard.get(r.card_id as string) ?? [];
 
-    const findGraded = (
-      company: string | null,
-      grade: string | null,
-    ): number | null => {
-      if (!company || !grade) return null;
-      const row = prices.find((p) => {
-        if (!p.grade || p.market_price == null) return false;
-        const [c, g] = p.grade.split(" ");
-        return c === company && g === grade;
-      });
-      return row?.market_price ?? null;
-    };
-
     const rawPrice =
       prices.find((p) => !p.grade && p.source === "tcgplayer" && p.market_price)
         ?.market_price ??
       prices.find((p) => !p.grade && p.market_price)?.market_price ??
       null;
 
-    const targetPrice = findGraded(r.target_company, r.target_grade);
+    const targetPrice = findGradedPrice(
+      prices,
+      r.target_company,
+      r.target_grade,
+      useNewPrecedence,
+    );
     const currentPrice =
       r.current_company && r.current_grade
-        ? findGraded(r.current_company, r.current_grade)
+        ? findGradedPrice(prices, r.current_company, r.current_grade, useNewPrecedence)
         : rawPrice;
 
     const tier = DEFAULT_TIER[r.target_company] ?? "value";

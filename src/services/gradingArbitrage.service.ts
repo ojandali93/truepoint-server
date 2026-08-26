@@ -118,23 +118,27 @@ export const filterGradePricesForCard = (
 ): GradePrice[] =>
   rows
     .filter((p) => p.grade && p.market_price)
-    .filter((p) => {
-      const parsed = parseGradeString(p.grade);
-      if (!parsed) return false;
-      return useNewPrecedence
-        ? sourceAllowedAtTier(p.source, parsed.gradeValue)
-        : p.source === "poketrace";
-    })
-    .map((p) => {
-      const parts = p.grade!.split(" ");
-      return {
-        company: parts[0] ?? "UNKNOWN",
-        grade: parts[1] ?? p.grade!,
-        price: p.market_price!,
-        source: p.source,
-        sourceProductId: p.source_product_id ?? null,
-      };
-    })
+    .map((p) => ({ row: p, parsed: parseGradeString(p.grade) }))
+    .filter((x): x is { row: RawGradeRow; parsed: NonNullable<ReturnType<typeof parseGradeString>> } => x.parsed !== null)
+    .filter(({ row, parsed }) =>
+      useNewPrecedence
+        ? sourceAllowedAtTier(row.source, parsed.gradeValue)
+        : row.source === "poketrace",
+    )
+    // parsed.gradeValue carries the FULL value ("10 Black", "10 Pristine"),
+    // not just its leading numeric token — a plain `parts[1]` split here
+    // truncated "BGS 10 Black" down to "10", indistinguishable from a real
+    // bare "BGS 10" row (backlogged 2026-08-26, upgraded to a pre-flag-open
+    // blocker; see CLAUDE.md §6). Reusing parseGradeString rather than
+    // re-deriving keeps this in the one place the split logic is allowed
+    // to live — see gradedPricePrecedence.ts's own header comment.
+    .map(({ row, parsed }) => ({
+      company: parsed.company,
+      grade: parsed.gradeValue,
+      price: row.market_price!,
+      source: row.source,
+      sourceProductId: row.source_product_id ?? null,
+    }))
     .sort((a, b) => b.price - a.price);
 
 // ─── Main service ─────────────────────────────────────────────────────────────
