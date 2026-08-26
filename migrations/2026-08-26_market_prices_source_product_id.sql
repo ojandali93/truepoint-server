@@ -1,0 +1,25 @@
+-- 2026-08-26_market_prices_source_product_id.sql
+--
+-- PriceCharting attribution/linkback (licensing email, Brady Haugh @
+-- vgpc.com, archived — Legendary tier permits display with attribution +
+-- linkback until $1k/mo revenue, converts to a commercial agreement past
+-- that). A per-card linkback needs PriceCharting's own product id
+-- (https://www.pricecharting.com/game/<id> — verified live: 301-redirects
+-- to the canonical slugged product page). That id was already coming back
+-- on every search response (PriceChartingProduct.id in
+-- pricechartingClient.ts) but was being discarded before the upsert into
+-- market_prices — never persisted anywhere.
+--
+-- Generic column name (source_product_id, not pricecharting_product_id):
+-- market_prices.source already isn't PriceCharting-specific, and PokeTrace
+-- rows could carry their own product/listing id here too someday. NULL for
+-- every row synced before this migration + before the sync write-path
+-- change — that's fine, not a backfill blocker. Per the license terms, a
+-- generic https://www.pricecharting.com linkback (no per-product id) is an
+-- acceptable fallback for those rows; the attribution UI only needs
+-- source='pricecharting' to decide whether to show attribution at all, and
+-- falls back to the bare domain when source_product_id is null.
+--
+-- Run manually in Supabase SQL editor. Not applied automatically.
+
+ALTER TABLE market_prices ADD COLUMN IF NOT EXISTS source_product_id text;

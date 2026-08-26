@@ -183,6 +183,12 @@ export const syncOneCard = async (card: DemandCard): Promise<CardSyncResult> => 
       mid_price: null,
       high_price: null,
       market_price: g.marketPrice, // already dollars — cents/100 happened in the client
+      // PriceCharting's own product id — was coming back on every search
+      // response and being discarded before this. Needed for the per-card
+      // attribution linkback (https://www.pricecharting.com/game/<id>,
+      // verified live to 301-redirect to the canonical product page); see
+      // migrations/2026-08-26_market_prices_source_product_id.sql.
+      source_product_id: product.id,
       fetched_at: now,
       expires_at: expires,
     }));
@@ -194,6 +200,9 @@ export const syncOneCard = async (card: DemandCard): Promise<CardSyncResult> => 
 
   // Meta row unconditionally (even with 0 graded rows — a match with no
   // 10-tier pricing yet is still "we checked, nothing there right now").
+  // Carries source_product_id too when we have it — harmless on a meta
+  // row (never read as a price), but keeps it available if this row is
+  // ever consulted for the linkback outside the graded-rows path.
   await supabaseAdmin.from("market_prices").upsert(
     {
       card_id: card.cardId,
@@ -204,6 +213,7 @@ export const syncOneCard = async (card: DemandCard): Promise<CardSyncResult> => 
       mid_price: null,
       high_price: null,
       market_price: null,
+      source_product_id: product.id,
       fetched_at: now,
       expires_at: expires,
     },

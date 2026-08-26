@@ -54,6 +54,11 @@ export interface LadderEntry {
   grade: string; // as parsed off market_prices.grade, e.g. "9.5" / "10"
   gradeValue: number; // parsed float, for numeric sort/grouping on the client
   price: number;
+  source: string;
+  // PriceCharting attribution linkback (CLAUDE.md license note) — null for
+  // every other source, and for pricecharting rows synced before
+  // migrations/2026-08-26_market_prices_source_product_id.sql landed.
+  sourceProductId: string | null;
 }
 
 export interface GradeLadderResult {
@@ -87,7 +92,7 @@ export const getGradeLadder = async (
 
   const { data: priceRows, error: priceErr } = await supabaseAdmin
     .from("market_prices")
-    .select("source, grade, market_price, fetched_at")
+    .select("source, grade, market_price, fetched_at, source_product_id")
     .eq("card_id", cardId);
 
   if (priceErr) throw priceErr;
@@ -112,6 +117,8 @@ export const getGradeLadder = async (
         grade,
         gradeValue: parseFloat(grade) || 0,
         price: r.market_price!,
+        source: r.source,
+        sourceProductId: r.source_product_id ?? null,
       };
     })
     .sort(

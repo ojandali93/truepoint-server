@@ -36,6 +36,10 @@ export interface GradePrice {
   grade: string; // 10 | 9 | 9.5 etc
   price: number;
   source: string; // cardmarket | ebay
+  // PriceCharting attribution linkback (CLAUDE.md license note) — null for
+  // every other source, and for pricecharting rows synced before
+  // migrations/2026-08-26_market_prices_source_product_id.sql landed.
+  sourceProductId: string | null;
 }
 
 export interface ArbitrageOpportunity {
@@ -140,9 +144,10 @@ export const getGradingArbitrage = async (
     source: string;
     grade: string | null;
     market_price: number | null;
+    source_product_id: string | null;
   }>({
     table: "market_prices",
-    columns: "card_id, source, grade, market_price",
+    columns: "card_id, source, grade, market_price, source_product_id",
     column: "card_id",
     ids: cardIds,
   });
@@ -179,6 +184,7 @@ export const getGradingArbitrage = async (
           grade: parts[1] ?? p.grade!,
           price: p.market_price!,
           source: p.source,
+          sourceProductId: p.source_product_id ?? null,
         };
       })
       .sort((a, b) => b.price - a.price);

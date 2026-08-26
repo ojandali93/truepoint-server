@@ -285,6 +285,14 @@ export interface GradedPriceRow {
   grade: string; // "10" / "9.5" / etc.
   marketPrice: number;
   fetchedAt: string;
+  // Source attribution (PriceCharting licensing terms — CLAUDE.md, "PriceCharting
+  // display permission" — require attribution + linkback wherever a
+  // source='pricecharting' price renders). sourceProductId backs the
+  // per-card linkback (https://www.pricecharting.com/game/<id>) when
+  // present; null falls back to the bare-domain link per the license's
+  // terms — see migrations/2026-08-26_market_prices_source_product_id.sql.
+  source: string;
+  sourceProductId: string | null;
 }
 
 export interface RawGradedPriceRow {
@@ -292,6 +300,7 @@ export interface RawGradedPriceRow {
   grade: string | null;
   market_price: number | null;
   fetched_at: string | null;
+  source_product_id?: string | null;
 }
 
 /**
@@ -322,6 +331,8 @@ export const filterGradedPriceRows = (
       grade: parsed.gradeValue,
       marketPrice: Number(r.market_price),
       fetchedAt: r.fetched_at as string,
+      source: r.source,
+      sourceProductId: r.source_product_id ?? null,
     });
   }
   return rows;
@@ -354,7 +365,7 @@ export const getGradedPricesForCard = async (
 ): Promise<GradedPriceRow[]> => {
   let query = supabaseAdmin
     .from("market_prices")
-    .select("source, grade, market_price, fetched_at")
+    .select("source, grade, market_price, fetched_at, source_product_id")
     .eq("card_id", cardId)
     .not("market_price", "is", null);
 
