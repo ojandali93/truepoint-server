@@ -1,11 +1,18 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { fetchAllByIn } from "../lib/pgFetchAll";
 import { variantKey } from "../lib/variantKey";
+import { parseGradeString, sourceAllowedAtTier } from "../lib/gradedPricePrecedence";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ItemType = "raw_card" | "graded_card" | "sealed_product";
-export type GradingCompany = "PSA" | "BGS" | "CGC" | "SGC" | "TAG";
+// ACE added 2026-08-25 — PokeTrace has been writing ACE-graded rows into
+// market_prices all along ("ACE 9" etc.), but ACE was missing from this type
+// and from resolveMarketValue's sourceMap (inventory.service.ts), so those
+// prices were unreachable end-to-end. Independent pre-existing bug fix,
+// unrelated to the PriceCharting integration. Mirrors mobile/web
+// constants/grading.ts GRADING_COMPANIES.
+export type GradingCompany = "PSA" | "BGS" | "CGC" | "SGC" | "TAG" | "ACE";
 export type CardCondition = "NM" | "LP" | "MP" | "HP" | "DM";
 export type InventoryStatus = "active" | "sold" | "traded";
 
@@ -395,35 +402,47 @@ export const insertInventoryBatch = async (
   }
 };
 
-/** Flattened per-card prices for inventory.service resolveMarketValue */
-export const fetchCardPrices = async (
+/**
+ * Flattened per-card prices for inventory.service resolveMarketValue.
+ *
+ * `useNewPrecedence` gates CLAUDE.md §6's amended graded-pricing contract
+ * (LOCKED 2026-08-25, AMENDED 2026-08-25) behind FLAG_KEYS.PRICECHARTING_PRICING
+ * — see inventory.service.ts's caller for flag resolution.
+ *
+ *   false (flag off, the default): EXACT pre-contract behavior. Graded rows
+ *     are restricted to source==='poketrace' regardless of what else exists
+ *     in market_prices — this is deliberate, not a no-op: once the
+ *     PriceCharting sync (separate commit) starts writing source='pricecharting'
+ *     rows into this same table, a naive "read everything" query would
+ *     silently start blending them in even with the flag off. Filtering to
+ *     poketrace-only here is what keeps flag-off byte-identical to today's
+ *     behavior as new data lands, not just "the code didn't change."
+ *
+ *   true (flag on): tier-partitioned per gradedPricePrecedence.ts —
+ *     sub-10 stays poketrace-only (PriceCharting's blended fields are dead,
+ *     never read); grade-10-tier and BGS 10 Black Label become
+ *     pricecharting-only, poketrace EXCLUDED entirely at that tier, no
+ *     fallback. A card with only a poketrace row at 10+ resolves to nothing
+ *     for that tier — blank by design, not a bug.
+ */
+export interface MarketPriceRow {
+  card_id: string;
+  source: string;
+  variant: string | null;
+  grade: string | null;
+  market_price: number | null;
+}
+
+/**
+ * Pure aggregation step, split out from fetchCardPrices so the precedence
+ * logic is unit-testable against synthetic rows without hitting the DB —
+ * see scripts/validateGradedPricePrecedence.ts. No I/O, no async.
+ */
+export const aggregateCardPrices = (
   cardIds: string[],
-): Promise<Map<string, Record<string, number>>> => {
-  if (!cardIds.length) return new Map();
-
-  // Paginated — market_prices has many source/grade rows per card (a single
-  // graded card can have 30–60 rows), so the combined "All collections" set
-  // blows past PostgREST's 1000-row cap and silently truncates. That is the
-  // bug that made cards show a price inside their collection but "—" in All.
-  let data: Array<{
-    card_id: string;
-    source: string;
-    variant: string | null;
-    grade: string | null;
-    market_price: number | null;
-  }>;
-  try {
-    data = await fetchAllByIn({
-      table: "market_prices",
-      columns: "card_id, source, variant, grade, market_price",
-      column: "card_id",
-      ids: cardIds,
-    });
-  } catch (error) {
-    console.error("[InventoryRepo] fetchCardPrices error:", error);
-    return new Map();
-  }
-
+  data: MarketPriceRow[],
+  useNewPrecedence: boolean,
+): Map<string, Record<string, number>> => {
   type RawCand = { variant: string | null; price: number };
   const tcgRawByCard = new Map<string, RawCand[]>();
   const cmRawByCard = new Map<string, number>();
@@ -442,7 +461,7 @@ export const fetchCardPrices = async (
   };
 
   for (const row of data ?? []) {
-    const cid = row.card_id as string;
+    const cid = row.card_id;
     const mp = row.market_price;
     if (mp == null) continue;
 
@@ -457,12 +476,25 @@ export const fetchCardPrices = async (
       continue;
     }
 
-    const parts = String(row.grade).trim().split(/\s+/);
-    if (parts.length < 2) continue;
-    const flatKey = `${parts[0].toLowerCase()}_${parts.slice(1).join(" ")}`;
+    const parsed = parseGradeString(row.grade);
+    if (!parsed) continue;
+
+    // Source gate — the entire point of this rewrite. Pre-contract: poketrace
+    // only, unconditionally. Post-contract: tier-partitioned via the shared
+    // helper (sub-10 poketrace-only, 10+ pricecharting-only).
+    const sourceOk = useNewPrecedence
+      ? sourceAllowedAtTier(row.source, parsed.gradeValue)
+      : row.source === "poketrace";
+    if (!sourceOk) continue;
+
     const bucket = gradedByCard.get(cid) ?? {};
-    const prev = bucket[flatKey];
-    if (prev === undefined || mp > prev) bucket[flatKey] = mp;
+    const prev = bucket[parsed.flatKey];
+    // max() across rows is now vestigial rather than load-bearing: the
+    // source gate above admits at most one source per tier, and that
+    // source's own DB unique constraint (card_id, source, variant, grade)
+    // already forbids more than one row per grade — kept as a defensive
+    // no-op, not a precedence mechanism.
+    if (prev === undefined || mp > prev) bucket[parsed.flatKey] = mp;
     gradedByCard.set(cid, bucket);
   }
 
@@ -479,6 +511,32 @@ export const fetchCardPrices = async (
   }
 
   return out;
+};
+
+export const fetchCardPrices = async (
+  cardIds: string[],
+  useNewPrecedence = false,
+): Promise<Map<string, Record<string, number>>> => {
+  if (!cardIds.length) return new Map();
+
+  // Paginated — market_prices has many source/grade rows per card (a single
+  // graded card can have 30–60 rows), so the combined "All collections" set
+  // blows past PostgREST's 1000-row cap and silently truncates. That is the
+  // bug that made cards show a price inside their collection but "—" in All.
+  let data: MarketPriceRow[];
+  try {
+    data = await fetchAllByIn({
+      table: "market_prices",
+      columns: "card_id, source, variant, grade, market_price",
+      column: "card_id",
+      ids: cardIds,
+    });
+  } catch (error) {
+    console.error("[InventoryRepo] fetchCardPrices error:", error);
+    return new Map();
+  }
+
+  return aggregateCardPrices(cardIds, data, useNewPrecedence);
 };
 
 // Fetch cached product prices for a list of product IDs

@@ -34,6 +34,7 @@ export const FLAG_KEYS = {
   NOTIFY_DAILY_SUMMARY: "notify_daily_summary",
   NOTIFY_WATCHLIST_TRIGGERS: "notify_watchlist_triggers",
   NOTIFY_PRICE_MOVERS: "notify_price_movers",
+  PRICECHARTING_PRICING: "pricecharting_pricing",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -86,5 +87,15 @@ export const KNOWN_FLAGS: KnownFlag[] = [
       "Digest of notable price movement across owned inventory. Previously " +
       "disabled for not working correctly — keep this off longer than the " +
       "other two while that gets re-verified.",
+  },
+  {
+    key: FLAG_KEYS.PRICECHARTING_PRICING,
+    label: "PriceCharting Pricing (10-tier + Black Label)",
+    description:
+      "Cutover for CLAUDE.md §6's amended precedence contract: at the " +
+      "grade-10 tier and BGS 10 Black Label, read PriceCharting only " +
+      "(PokeTrace excluded entirely, no fallback — see fetchCardPrices / " +
+      "getGradedPricesForCard). Off = today's behavior unchanged. " +
+      "Off → allowlist (Omar) → everyone.",
   },
 ];

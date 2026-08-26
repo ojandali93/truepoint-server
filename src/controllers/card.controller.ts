@@ -7,6 +7,8 @@ import * as PricingService from "../services/pricing.service";
 import * as CardSyncService from "../services/cardSync.service";
 import { refreshAllPrices } from "../services/tcgapisSync.service";
 import { logError } from "../lib/Logger";
+import { isFlagEnabled } from "../services/featureFlag.service";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 import {
   fetchAndCacheGradedPrices,
   getGradedPricesForCard,
@@ -554,8 +556,16 @@ export const getCardGradedPrices = async (
       );
     }
 
+    // CLAUDE.md §6 amended-contract cutover — see fetchCardPrices /
+    // getGradedPricesForCard doc comments. Same flag as the inventory
+    // resolver, resolved per-request against the requesting user.
+    const useNewGradedPrecedence = await isFlagEnabled(
+      FLAG_KEYS.PRICECHARTING_PRICING,
+      req.user.id,
+    );
+
     // Always serve whatever we have cached, even if the refresh above failed.
-    const prices = await getGradedPricesForCard(cardId);
+    const prices = await getGradedPricesForCard(cardId, useNewGradedPrecedence);
     res.json({
       data: {
         cardId,

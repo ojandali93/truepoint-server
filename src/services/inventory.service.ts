@@ -24,6 +24,8 @@ import {
 
 import { requireFeature } from "./plan.service";
 import { matchVariantPrice } from "../lib/variantMatch";
+import { isFlagEnabled } from "./featureFlag.service";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,12 +139,15 @@ const resolveMarketValue = (
     if (!prices) return { marketPrice: null, source: null };
 
     // Map grading company to source key used in cached_card_prices
+    // ACE added 2026-08-25 — see GradingCompany in inventory.repository.ts
+    // for why this was missing (pre-existing bug, unrelated to PriceCharting).
     const sourceMap: Record<GradingCompany, string> = {
       PSA: "psa",
       BGS: "bgs",
       CGC: "cgc",
       SGC: "sgc",
       TAG: "tag",
+      ACE: "ace",
     };
 
     const sourceKey = sourceMap[item.grading_company];
@@ -204,6 +209,15 @@ export const getInventory = async (
     ),
   ];
 
+  // CLAUDE.md §6 amended-contract cutover — see fetchCardPrices'
+  // useNewPrecedence doc comment. Fails closed (isFlagEnabled already does
+  // this internally): any flag-resolution error means today's behavior,
+  // never the new one, for a request that can't confirm which it should get.
+  const useNewGradedPrecedence = await isFlagEnabled(
+    FLAG_KEYS.PRICECHARTING_PRICING,
+    userId,
+  );
+
   // Fetch all prices in parallel:
   //  - card_variants prices (denormalized NM price per variant — primary source
   //    of truth for raw cards; keyed on card_id + variant_type)
@@ -213,7 +227,7 @@ export const getInventory = async (
   const [skuPrices, cardPrices, productPrices, variantPriceMaps] =
     await Promise.all([
       fetchSkuPriceRows(cardIds),
-      fetchCardPrices(cardIds),
+      fetchCardPrices(cardIds, useNewGradedPrecedence),
       fetchProductPrices(productIds),
       fetchVariantPrices(cardIds),
     ]);

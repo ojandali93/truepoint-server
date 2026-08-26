@@ -23,6 +23,7 @@
 
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
+import { parseGradeString, sourceAllowedAtTier } from "../lib/gradedPricePrecedence";
 import {
   fetchCardsByTcgplayerIds,
   fetchCardByTcgplayerId,
@@ -286,34 +287,92 @@ export interface GradedPriceRow {
   fetchedAt: string;
 }
 
+export interface RawGradedPriceRow {
+  source: string;
+  grade: string | null;
+  market_price: number | null;
+  fetched_at: string | null;
+}
+
+/**
+ * Pure filter+map step, split out from getGradedPricesForCard so the
+ * precedence logic is unit-testable against synthetic rows without hitting
+ * the DB — see scripts/validateGradedPricePrecedence.ts. No I/O, no async.
+ */
+export const filterGradedPriceRows = (
+  data: RawGradedPriceRow[],
+  useNewPrecedence: boolean,
+): GradedPriceRow[] => {
+  const rows: GradedPriceRow[] = [];
+  for (const r of data ?? []) {
+    const parsed = parseGradeString(r.grade);
+    if (!parsed || r.market_price == null) continue;
+
+    if (useNewPrecedence && !sourceAllowedAtTier(r.source, parsed.gradeValue)) {
+      continue;
+    }
+    // Pre-contract path never sees a non-poketrace row in practice (the
+    // query itself narrows to source='poketrace' below), but this function
+    // is also exercised directly in tests with mixed-source input — so gate
+    // it here too rather than relying solely on the caller's query filter.
+    if (!useNewPrecedence && r.source !== "poketrace") continue;
+
+    rows.push({
+      company: parsed.company,
+      grade: parsed.gradeValue,
+      marketPrice: Number(r.market_price),
+      fetchedAt: r.fetched_at as string,
+    });
+  }
+  return rows;
+};
+
+/**
+ * `useNewPrecedence` gates CLAUDE.md §6's amended graded-pricing contract
+ * (LOCKED 2026-08-25, AMENDED 2026-08-25) — same flag, same rewrite, as
+ * inventory.repository.ts's fetchCardPrices. See that function's doc
+ * comment for the full rationale; kept in sync via gradedPricePrecedence.ts
+ * rather than duplicated (duplicating this exact logic is how the
+ * pre-amendment max()-across-sources bug happened).
+ *
+ * false (flag off, the default): EXACT pre-contract behavior —
+ *   source==='poketrace' only, unconditionally (the original `.eq(...)`
+ *   this function always had). PriceCharting rows, once the sync starts
+ *   writing them, are invisible here regardless.
+ *
+ * true (flag on): tier-partitioned — sub-10 poketrace-only (unchanged,
+ *   PriceCharting's blended fields never read), grade-10-tier + BGS 10
+ *   Black Label pricecharting-only, poketrace excluded entirely at that
+ *   tier with no fallback. This is the arbitrage/regrade-ladder display
+ *   (GradedPricesSection / ArbitrageTab / GradeTenComparison on mobile+web)
+ *   — the exact surface a user checks before paying to grade a card, so it
+ *   gets the same contract as portfolio valuation, not a lesser one.
+ */
 export const getGradedPricesForCard = async (
   cardId: string,
+  useNewPrecedence = false,
 ): Promise<GradedPriceRow[]> => {
-  const { data, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from("market_prices")
-    .select("grade, market_price, fetched_at")
+    .select("source, grade, market_price, fetched_at")
     .eq("card_id", cardId)
-    .eq("source", "poketrace")
     .not("market_price", "is", null);
+
+  // Pre-contract: narrow to poketrace at the query level, exactly as before
+  // (this function only ever read one source, so there was never a
+  // cross-source blending bug here — unlike fetchCardPrices).
+  if (!useNewPrecedence) {
+    query = query.eq("source", "poketrace");
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error("[PokeTrace] read error:", error.message);
     return [];
   }
 
-  const rows: GradedPriceRow[] = [];
-  for (const r of data ?? []) {
-    if (!r.grade) continue;
-    const parts = String(r.grade).trim().split(/\s+/);
-    if (parts.length < 2) continue;
-    rows.push({
-      company: parts[0],
-      grade: parts.slice(1).join(" "),
-      marketPrice: Number(r.market_price),
-      fetchedAt: r.fetched_at as string,
-    });
-  }
-  return rows;
+  return filterGradedPriceRows((data ?? []) as RawGradedPriceRow[], useNewPrecedence);
 };
 
 // Fire-and-forget wrapper for the cron path.

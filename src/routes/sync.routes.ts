@@ -46,6 +46,7 @@ import { sendPriceMoversDigest } from "../services/priceMoversDigest.service";
 import { checkWatchlistTriggers } from "../services/watchlistTriggers.service";
 import { syncInventoryCardPricesSafe } from "../services/poketracePriceSync.service";
 import { syncAllCatalogGradedPricesSafe } from "../services/poketracePriceSync.service";
+import { syncPriceChartingPricesSafe } from "../services/pricechartingPriceSync.service";
 import { sendPendingIntroEmails } from "../services/introEmail.service";
 import { sendRenewalReminders } from "../services/renewalReminder.service";
 
@@ -632,6 +633,23 @@ router.post("/graded-prices-all", requireSyncKey, async (_req, res) => {
       "[SyncRoute] PokeTrace full-catalog sync failed:",
       err?.message,
     ),
+  );
+});
+
+// POST /sync/pricecharting-prices
+// Separate service, separate cron-job.org job, NOT bolted onto the
+// PokeTrace sync — see pricechartingPriceSync.service.ts header. Demand-set
+// scoped only (inventory ∪ graded watchlist) — PriceCharting's 1 call/sec
+// hard limit makes a full-catalog equivalent to /graded-prices-all
+// infeasible (72k cards ≈ 20 hours); see CLAUDE.md §6 sizing note.
+router.post("/pricecharting-prices", requireSyncKey, async (_req, res) => {
+  res.json({
+    message: "PriceCharting price sync started",
+    note: "Runs in background, ~9 min at today's demand-set size. Check Render logs for [PriceCharting] entries.",
+    timestamp: new Date().toISOString(),
+  });
+  syncPriceChartingPricesSafe().catch((err: any) =>
+    console.error("[SyncRoute] PriceCharting sync failed:", err?.message),
   );
 });
 
