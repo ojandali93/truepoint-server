@@ -38,9 +38,27 @@ export interface ImportParseError {
   raw: string; // the raw CSV line, for the user to see what failed
 }
 
+// Category gate (Omar's requirement A): a row whose Category isn't
+// Pokemon/One Piece is never an error and never imported — it's excluded
+// at parse time, counted, and carried through to the persistent
+// not-imported record (see NotImportedRow below) with enough identifying
+// text for "add this one manually" to mean something, even though it was
+// never matched against any catalog.
+export interface UnsupportedCategoryRow {
+  rowIndex: number;
+  category: string; // whatever the CSV actually said — not narrowed to the supported union
+  portfolioName: string;
+  set: string;
+  productName: string;
+  cardNumber: string;
+}
+
 export interface ParseCsvResult {
   rows: ParsedImportRow[];
   errors: ImportParseError[];
+  unsupportedCategoryRows: UnsupportedCategoryRow[];
+  categoryCounts: Record<string, number>; // every Category value seen, supported or not
+  unsupportedCategorySummary: string | null; // e.g. "3 items in unsupported categories — ReverseHolo tracks Pokémon and One Piece today"; null when there are none
 }
 
 // ─── Match stage ────────────────────────────────────────────────────────────
@@ -111,4 +129,58 @@ export interface MatchResult {
 export interface MatchRowsResult {
   results: MatchResult[];
   summary: Record<Confidence, number>;
+}
+
+// ─── Commit stage (Phase 3) ─────────────────────────────────────────────────
+
+export type NotImportedReason = "unmatched" | "skipped" | "unsupported-category";
+
+// One shape for all three reasons a row didn't land in inventory —
+// deliberately (Omar's requirement B): the review UI shows one list
+// ("we couldn't confirm or import these — add them manually"), not three.
+export interface NotImportedRow {
+  rowIndex: number;
+  reason: NotImportedReason;
+  portfolioName: string;
+  category: string;
+  set: string;
+  productName: string;
+  cardNumber: string;
+}
+
+// What the client sends for one row it wants written to inventory — either
+// a match the matcher already resolved at exact/high, or a needs-review
+// row the user tapped to confirm a specific candidate. Either way the
+// commit endpoint trusts THIS payload's target ids, not the confidence
+// bucket — re-matching at commit time would let the catalog drift between
+// match and commit; the client is the one source of truth for "the user
+// confirmed row N means card/product X."
+export interface ConfirmedImportItem {
+  rowIndex: number;
+  itemType: ItemType;
+  cardId?: string;
+  productId?: string;
+  grade?: string | null;
+  gradingCompany?: string | null;
+  variantType?: string | null;
+  isSealed?: boolean;
+  quantity: number;
+  purchasePrice?: number | null;
+  condition?: string | null;
+}
+
+export interface CommitImportRequest {
+  idempotencyKey: string;
+  totalRows: number;
+  items: ConfirmedImportItem[];
+  notImported: NotImportedRow[];
+}
+
+export interface CommitImportResult {
+  importJobId: string;
+  imported: number;
+  notImportedCount: number;
+  portfolioValue: number | null; // ReverseHolo's own valuation of the imported items, summed — never Collectr's Market Price column (§1f)
+  notImported: NotImportedRow[];
+  replayed: boolean; // true when this idempotencyKey already had a job — nothing was written this call
 }

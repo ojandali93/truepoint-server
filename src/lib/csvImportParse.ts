@@ -18,6 +18,7 @@ import {
   ImportParseError,
   ParseCsvResult,
   ParsedImportRow,
+  UnsupportedCategoryRow,
 } from "../types/csvImport.types";
 
 export const EXPECTED_HEADERS = [
@@ -172,7 +173,13 @@ export const parseCollectrCsv = (text: string): ParseCsvResult => {
 
   if (records.length === 0) {
     errors.push({ rowIndex: 0, message: "Empty file", raw: "" });
-    return { rows: [], errors };
+    return {
+      rows: [],
+      errors,
+      unsupportedCategoryRows: [],
+      categoryCounts: {},
+      unsupportedCategorySummary: null,
+    };
   }
 
   const header = records[0];
@@ -185,10 +192,18 @@ export const parseCollectrCsv = (text: string): ParseCsvResult => {
     });
     // Header mismatch doesn't necessarily mean every row is unusable, but
     // column positions are no longer trustworthy — stop rather than guess.
-    return { rows: [], errors };
+    return {
+      rows: [],
+      errors,
+      unsupportedCategoryRows: [],
+      categoryCounts: {},
+      unsupportedCategorySummary: null,
+    };
   }
 
   const rows: ParsedImportRow[] = [];
+  const unsupportedCategoryRows: UnsupportedCategoryRow[] = [];
+  const categoryCounts: Record<string, number> = {};
 
   for (let r = 1; r < records.length; r += 1) {
     const rec = records[r];
@@ -224,12 +239,19 @@ export const parseCollectrCsv = (text: string): ParseCsvResult => {
     ] = rec;
 
     const category = categoryRaw.trim();
+    categoryCounts[category] = (categoryCounts[category] ?? 0) + 1;
+
     const game = GAME_BY_CATEGORY[category];
     if (!game) {
-      errors.push({
+      // Category gate (requirement A): NOT a parse error. Excluded, counted,
+      // and reported — never imported, never blocks the rest of the file.
+      unsupportedCategoryRows.push({
         rowIndex,
-        message: `Unrecognized Category "${category}" — expected "Pokemon" or "One Piece"`,
-        raw,
+        category,
+        portfolioName: portfolioName.trim(),
+        set: set.trim(),
+        productName: productName.trim(),
+        cardNumber: cardNumber.trim(),
       });
       continue;
     }
@@ -275,7 +297,12 @@ export const parseCollectrCsv = (text: string): ParseCsvResult => {
     });
   }
 
-  return { rows, errors };
+  const unsupportedCategorySummary =
+    unsupportedCategoryRows.length > 0
+      ? `${unsupportedCategoryRows.length} item${unsupportedCategoryRows.length === 1 ? "" : "s"} in unsupported categories — ReverseHolo tracks Pokémon and One Piece today`
+      : null;
+
+  return { rows, errors, unsupportedCategoryRows, categoryCounts, unsupportedCategorySummary };
 };
 
 const validateHeader = (header: string[]): string[] => {
