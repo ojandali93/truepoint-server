@@ -452,6 +452,7 @@ const toCandidate = (
   setName,
   name: c.name,
   number: "number" in c ? c.number : undefined,
+  imageUrl: "number" in c ? c.imageSmall : c.imageUrl,
 });
 
 export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult => {
@@ -496,6 +497,7 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
         matchedSetName: set.name,
         matchedProductId: candidates[0].id,
         matchedName: candidates[0].name,
+        matchedImageUrl: candidates[0].imageUrl,
         resolvedIsSealed: true,
       };
     }
@@ -616,6 +618,7 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
     matchedCardId: matchedCard.id,
     matchedNumber: matchedCard.number,
     matchedName: matchedCard.name,
+    matchedImageUrl: matchedCard.imageSmall,
     resolvedGrade: grade.targetGrade,
     resolvedGradingCompany: grade.gradingCompany,
     resolvedVariantType: variance.variantType,

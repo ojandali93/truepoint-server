@@ -45,6 +45,7 @@ export interface CatalogCard {
   number: string;
   rarity: string | null;
   setId: string;
+  imageSmall: string | null;
 }
 
 export interface CatalogProduct {
@@ -52,6 +53,7 @@ export interface CatalogProduct {
   name: string;
   productType: string | null;
   setId: string;
+  imageUrl: string | null;
 }
 
 export interface CatalogVariant {
@@ -94,7 +96,7 @@ export const fetchCardsBySetIds = async (
 ): Promise<CatalogCard[]> => {
   const data = await fetchAllByIn<any>({
     table: "cards",
-    columns: "id, name, number, rarity, set_id",
+    columns: "id, name, number, rarity, set_id, image_small",
     column: "set_id",
     ids: setIds,
   });
@@ -104,6 +106,7 @@ export const fetchCardsBySetIds = async (
     number: (r.number as string) ?? "",
     rarity: (r.rarity as string) ?? null,
     setId: String(r.set_id),
+    imageSmall: (r.image_small as string) ?? null,
   }));
 };
 
@@ -112,7 +115,7 @@ export const fetchProductsBySetIds = async (
 ): Promise<CatalogProduct[]> => {
   const data = await fetchAllByIn<any>({
     table: "products",
-    columns: "id, name, product_type, set_id",
+    columns: "id, name, product_type, set_id, image_url",
     column: "set_id",
     ids: setIds,
   });
@@ -121,6 +124,7 @@ export const fetchProductsBySetIds = async (
     name: r.name as string,
     productType: (r.product_type as string) ?? null,
     setId: String(r.set_id),
+    imageUrl: (r.image_url as string) ?? null,
   }));
 };
 

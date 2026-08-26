@@ -98,6 +98,7 @@ export interface MatchCandidate {
   setName: string;
   name: string;
   number?: string;
+  imageUrl?: string | null; // Phase 4: mobile review screen renders candidate cards with art
 }
 
 export type ItemType = "raw_card" | "graded_card" | "sealed_product";
@@ -115,6 +116,7 @@ export interface MatchResult {
   matchedProductId?: string;
   matchedNumber?: string;
   matchedName?: string;
+  matchedImageUrl?: string | null; // Phase 4: mobile review/summary screens render card art
 
   // Target shapes for Phase 3's commit endpoint — computed here so Phase 3
   // never has to re-derive parsing/matching logic, only write the row.
