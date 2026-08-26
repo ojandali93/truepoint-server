@@ -37,6 +37,7 @@ import scanRoutes from "../routes/scan.routes";
 import feedbackAdminRoutes from "../routes/feedbackAdmin.routes";
 import adminSyncRoutes from "../routes/adminSync.routes";
 import regradeRoutes from "../routes/regrade.routes";
+import csvImportRoutes from "../routes/csvImport.routes";
 
 dotenv.config();
 
@@ -71,6 +72,7 @@ app.use("/api/v1/cards", cardRoutes);
 app.use("/api/v1/centering", centeringRoutes);
 app.use("/api/v1/sync", syncRoutes);
 app.use("/api/v1/inventory", inventoryRoutes);
+app.use("/api/v1/import", csvImportRoutes);
 app.use("/api/v1/portfolio", portfolioRoutes);
 app.use("/api/v1/variants", variantRoutes);
 app.use("/api/v1/admin", adminSyncRoutes);
