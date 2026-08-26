@@ -276,29 +276,45 @@ export const findInventoryItemById = async (
   return data as InventoryRow | null;
 };
 
+// Single source of truth for the `inventory` insert row shape — used by
+// BOTH insertInventoryItem and insertInventoryBatch. Extracted 2026-08-26:
+// insertInventoryBatch had drifted from this exact shape (it hardcoded
+// grading_company/grade/serial_number/is_sealed/product_id to null
+// regardless of input, and omitted variant_type entirely), which was fine
+// for its one existing caller (openSealedProduct's raw-card-only batch,
+// which never sets those fields anyway) but wrong for CSV import's batch,
+// which needs all of them. A pure function both call sites share can't
+// drift like that again — see scripts/validateInventoryBatchParity.ts for
+// the check that this extraction didn't change insertInventoryBatch's
+// output for its pre-existing caller.
+export const buildInventoryInsertRow = (
+  userId: string,
+  input: CreateInventoryInput,
+): Record<string, unknown> => ({
+  user_id: userId,
+  item_type: input.itemType,
+  card_id: input.cardId ?? null,
+  product_id: input.productId ?? null,
+  grading_company: input.gradingCompany ?? null,
+  grade: input.grade ?? null,
+  serial_number: input.serialNumber ?? null,
+  is_sealed: input.isSealed ?? null,
+  purchase_price: input.purchasePrice ?? null,
+  purchase_date: input.purchaseDate ?? null,
+  notes: input.notes ?? null,
+  variant_type: input.variantType ?? null,
+  condition: input.condition ?? null,
+  quantity: input.quantity ?? 1,
+  collection_id: input.collection_id ?? null,
+});
+
 export const insertInventoryItem = async (
   userId: string,
   input: CreateInventoryInput,
 ): Promise<InventoryRow> => {
   const { data, error } = await supabaseAdmin
     .from("inventory")
-    .insert({
-      user_id: userId,
-      item_type: input.itemType,
-      card_id: input.cardId ?? null,
-      product_id: input.productId ?? null,
-      grading_company: input.gradingCompany ?? null,
-      grade: input.grade ?? null,
-      serial_number: input.serialNumber ?? null,
-      is_sealed: input.isSealed ?? null,
-      purchase_price: input.purchasePrice ?? null,
-      purchase_date: input.purchaseDate ?? null,
-      notes: input.notes ?? null,
-      variant_type: input.variantType ?? null,
-      condition: input.condition ?? null,
-      quantity: input.quantity ?? 1,
-      collection_id: input.collection_id ?? null,
-    })
+    .insert(buildInventoryInsertRow(userId, input))
     .select(INVENTORY_SELECT)
     .single();
 
@@ -369,22 +385,7 @@ export const insertInventoryBatch = async (
   userId: string,
   items: CreateInventoryInput[],
 ): Promise<void> => {
-  const rows = items.map((input) => ({
-    user_id: userId,
-    item_type: input.itemType,
-    card_id: input.cardId ?? null,
-    product_id: null,
-    grading_company: null,
-    grade: null,
-    serial_number: null,
-    is_sealed: null,
-    purchase_price: input.purchasePrice ?? null,
-    purchase_date: input.purchaseDate ?? null,
-    notes: input.notes ?? null,
-    condition: input.condition ?? null, // ← new
-    quantity: input.quantity ?? 1, // ← new
-    collection_id: input.collection_id ?? null,
-  }));
+  const rows = items.map((input) => buildInventoryInsertRow(userId, input));
 
   const { error } = await supabaseAdmin.from("inventory").insert(rows);
 

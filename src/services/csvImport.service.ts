@@ -16,7 +16,20 @@ import {
   fetchProductsBySetIds,
 } from "../repositories/csvImportCatalog.repository";
 import {
+  CreateInventoryInput,
+  insertInventoryBatch,
+} from "../repositories/inventory.repository";
+import {
+  createImportJob,
+  findImportJobByIdempotencyKey,
+} from "../repositories/importJobs.repository";
+import { getCurrentTotalValue } from "./inventory.service";
+import { requireFeature } from "./plan.service";
+import {
+  CommitImportRequest,
+  CommitImportResult,
   Confidence,
+  ConfirmedImportItem,
   MatchResult,
   MatchRowsResult,
   ParsedImportRow,
@@ -97,4 +110,110 @@ export const matchImportRows = async (
   for (const r of results) summary[r.confidence] += 1;
 
   return { results, summary };
+};
+
+// ─── Commit (Phase 3) ───────────────────────────────────────────────────────
+
+// Chunk size for insertInventoryBatch calls — one INSERT per chunk rather
+// than one per row (522 rows shouldn't be 522 round trips) or one giant
+// INSERT (keeps each statement small and each chunk's failure isolated to
+// itself, same reasoning as csvImportCatalog.repository's id-chunking).
+const COMMIT_CHUNK_SIZE = 200;
+
+const toCreateInventoryInput = (item: ConfirmedImportItem): CreateInventoryInput => ({
+  itemType: item.itemType,
+  cardId: item.cardId ?? null,
+  productId: item.productId ?? null,
+  gradingCompany: (item.gradingCompany as CreateInventoryInput["gradingCompany"]) ?? null,
+  grade: item.grade ?? null,
+  variantType: item.variantType ?? null,
+  isSealed: item.isSealed ?? null,
+  quantity: item.quantity,
+  purchasePrice: item.purchasePrice ?? null,
+  condition: (item.condition as CreateInventoryInput["condition"]) ?? null,
+});
+
+const validateConfirmedItem = (item: ConfirmedImportItem): void => {
+  if (item.itemType === "raw_card" && !item.cardId) {
+    throw { status: 400, message: `row ${item.rowIndex}: card_id is required for raw cards` };
+  }
+  if (item.itemType === "graded_card") {
+    if (!item.cardId) {
+      throw { status: 400, message: `row ${item.rowIndex}: card_id is required for graded cards` };
+    }
+    if (!item.gradingCompany) {
+      throw { status: 400, message: `row ${item.rowIndex}: grading_company is required for graded cards` };
+    }
+    if (!item.grade) {
+      throw { status: 400, message: `row ${item.rowIndex}: grade is required for graded cards` };
+    }
+  }
+  if (item.itemType === "sealed_product" && !item.productId) {
+    throw { status: 400, message: `row ${item.rowIndex}: product_id is required for sealed products` };
+  }
+};
+
+/**
+ * POST /import/commit. User-confirmed matches only — the client is trusted
+ * for WHICH card/product each rowIndex resolves to (see ConfirmedImportItem
+ * in csvImport.types.ts for why re-matching here would be wrong, not just
+ * redundant). Idempotency-keyed: a repeated call with the same
+ * (userId, idempotencyKey) returns the original job's result and writes
+ * nothing new.
+ */
+export const commitImport = async (
+  userId: string,
+  role: string | null,
+  request: CommitImportRequest,
+): Promise<CommitImportResult> => {
+  const existing = await findImportJobByIdempotencyKey(userId, request.idempotencyKey);
+  if (existing) {
+    return {
+      importJobId: existing.id,
+      imported: existing.importedCount,
+      notImportedCount: existing.notImported.length,
+      portfolioValue: existing.portfolioValueAtImport,
+      notImported: existing.notImported,
+      replayed: true,
+    };
+  }
+
+  for (const item of request.items) validateConfirmedItem(item);
+
+  // One feature check per item type present, not per row — same gate
+  // addInventoryItem enforces per single-item add (sealed_inventory vs.
+  // inventory_tracking), applied once for the whole batch rather than
+  // 522 times.
+  const itemTypesPresent = new Set(request.items.map((i) => i.itemType));
+  if (itemTypesPresent.has("sealed_product")) {
+    await requireFeature(userId, "sealed_inventory", role);
+  }
+  if (itemTypesPresent.has("raw_card") || itemTypesPresent.has("graded_card")) {
+    await requireFeature(userId, "inventory_tracking", role);
+  }
+
+  const inputs = request.items.map(toCreateInventoryInput);
+  for (let i = 0; i < inputs.length; i += COMMIT_CHUNK_SIZE) {
+    await insertInventoryBatch(userId, inputs.slice(i, i + COMMIT_CHUNK_SIZE));
+  }
+
+  const portfolioValue = await getCurrentTotalValue(userId);
+
+  const job = await createImportJob(userId, {
+    source: "csv",
+    idempotencyKey: request.idempotencyKey,
+    totalRows: request.totalRows,
+    importedCount: request.items.length,
+    notImported: request.notImported,
+    portfolioValueAtImport: portfolioValue,
+  });
+
+  return {
+    importJobId: job.id,
+    imported: job.importedCount,
+    notImportedCount: job.notImported.length,
+    portfolioValue: job.portfolioValueAtImport,
+    notImported: job.notImported,
+    replayed: false,
+  };
 };

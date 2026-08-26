@@ -8,11 +8,26 @@
 
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
-import { matchImportRows, parseImportCsv } from "../services/csvImport.service";
+import {
+  commitImport,
+  matchImportRows,
+  parseImportCsv,
+} from "../services/csvImport.service";
+import {
+  getImportJob,
+  listImportJobs,
+} from "../repositories/importJobs.repository";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 const handleError = (res: Response, err: unknown) => {
+  if (handlePlanError(res, err)) return;
+  if (err && typeof err === "object" && "status" in err) {
+    const e = err as { status: number; message?: string };
+    res.status(e.status).json({ error: e.message ?? "Error" });
+    return;
+  }
   console.error("[CsvImportController]", err);
-  return res.status(500).json({ error: "An unexpected error occurred" });
+  res.status(500).json({ error: "An unexpected error occurred" });
 };
 
 // POST /import/parse
@@ -49,6 +64,56 @@ export const match = async (req: AuthenticatedRequest, res: Response) => {
     }
     const result = await matchImportRows(rows);
     res.json({ data: result });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// POST /import/commit
+// Body: CommitImportRequest — { idempotencyKey, totalRows, items, notImported }
+export const commit = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { idempotencyKey, totalRows, items, notImported } = req.body ?? {};
+    if (typeof idempotencyKey !== "string" || idempotencyKey.trim() === "") {
+      res.status(400).json({ error: "idempotencyKey (string) is required" });
+      return;
+    }
+    if (!Array.isArray(items) || !Array.isArray(notImported) || typeof totalRows !== "number") {
+      res.status(400).json({ error: "totalRows (number), items (array), notImported (array) are required" });
+      return;
+    }
+    const result = await commitImport(req.user.id, req.user.role ?? null, {
+      idempotencyKey,
+      totalRows,
+      items,
+      notImported,
+    });
+    res.json({ data: result });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// GET /import/jobs/:id — retrieve one job's persistent not-imported record
+// after the import session that created it has ended (requirement B).
+export const getJob = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const job = await getImportJob(req.user.id, req.params.id);
+    if (!job) {
+      res.status(404).json({ error: "Import job not found" });
+      return;
+    }
+    res.json({ data: job });
+  } catch (err) {
+    handleError(res, err);
+  }
+};
+
+// GET /import/jobs — recent import jobs for the current user
+export const listJobs = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const jobs = await listImportJobs(req.user.id);
+    res.json({ data: jobs });
   } catch (err) {
     handleError(res, err);
   }
