@@ -18,6 +18,14 @@
 // Exit code 1 = at least one window diverged, or the run errored — per the
 // approved plan, ANY nonzero divergence here is a Phase 1 bug to fix, not a
 // data-quality footnote.
+//
+// GOOD REGRESSION ACCOUNT: user_id 1ffd8815-bc62-49b8-af28-ce375030df08 (see
+// scripts/validateImportE2E.ts's header) — a standing fixture with 490
+// inventory rows added in one same-day CSV import commit, zero prior
+// history. Best real (not synthetic) additions-bucket/hasAnyHistory=false
+// edge case available: `npx ts-node scripts/validateMovers.ts
+// 1ffd8815-bc62-49b8-af28-ce375030df08`. Confirmed 2026-08-26: all three
+// windows CLOSE at $0.00 divergence against this account's real data.
 
 import "dotenv/config";
 import {

@@ -7,14 +7,33 @@
 // persistent not-imported record back out as if the import session had
 // ended, and shows the portfolio total.
 //
+// STANDING FIXTURE ACCOUNT (Omar's call, 2026-08-26): this is no longer a
+// throwaway. csv-import-test+1787772816902@reverseholo.io,
+// user_id 1ffd8815-bc62-49b8-af28-ce375030df08 — created for this gate,
+// kept afterward on purpose as the import-regression fixture. A 490-item
+// same-day CSV import is the best additions-bucket/hasAnyHistory edge case
+// this codebase has had for portfolioMovers — see
+// scripts/validateMovers.ts, run against this same user id, where the
+// identity closing at $0.00 against a real (not synthetic) same-day-import
+// portfolio is the actual value of keeping this account around. Live gate
+// run 2026-08-26: 423 exact + 67 high = 490 imported, 32 not-imported (27
+// needs-review + 5 unmatched), portfolio value $7,063.53, idempotency
+// re-run confirmed zero additional writes. Don't delete this account or
+// its inventory without updating this comment and validateMovers.ts's own
+// notes on it.
+//
 // REQUIRES, before this will do anything but fail loudly:
 //   1. migrations/2026-08-26_import_jobs.sql applied (Supabase SQL editor —
-//      not applied automatically, see that file).
-//   2. TEST_USER_ID env var set to a real auth.users id for a TEST account.
+//      not applied automatically, see that file). Confirmed applied
+//      2026-08-26.
+//   2. A TEST_USER_ID — defaults to the standing fixture account above;
+//      override via env var to point at a different (still TEST) account.
 //      This script WRITES real inventory rows and a real import_jobs row
-//      for that user — never point it at a live user's account.
+//      for whichever user id it runs against — never point it at a live
+//      user's account.
 //
-// Usage: TEST_USER_ID=<uuid> npx ts-node scripts/validateImportE2E.ts
+// Usage: npx ts-node scripts/validateImportE2E.ts
+//        TEST_USER_ID=<uuid> npx ts-node scripts/validateImportE2E.ts   # override
 
 import "dotenv/config";
 import * as fs from "fs";
@@ -32,15 +51,12 @@ import {
 
 const FIXTURE_PATH = path.join(__dirname, "..", "fixtures", "export (1).csv");
 const IDEMPOTENCY_KEY = "phase3-gate-run-1";
+const STANDING_FIXTURE_USER_ID = "1ffd8815-bc62-49b8-af28-ce375030df08";
 
 const conditionFor = (raw: string): string | null => (raw === "Near Mint" ? "NM" : null);
 
 const main = async () => {
-  const testUserId = process.env.TEST_USER_ID;
-  if (!testUserId) {
-    console.error("TEST_USER_ID env var is required — point this at a real TEST account's user id, never a live user.");
-    process.exit(1);
-  }
+  const testUserId = process.env.TEST_USER_ID || STANDING_FIXTURE_USER_ID;
 
   console.log("═══════════════════════════════════════════════════════════");
   console.log(" PHASE 3 GATE — full fixture, parse -> match -> commit");
