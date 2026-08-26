@@ -21,6 +21,7 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { fetchAllByIn } from "../lib/pgFetchAll";
 import { GRADING_COSTS } from "./gradingArbitrage.service";
+import { parseGradeString, sourceAllowedAtTier } from "../lib/gradedPricePrecedence";
 
 // ─── Shared enums ───────────────────────────────────────────────────────────
 
@@ -76,6 +77,7 @@ export interface GradeLadderResult {
 
 export const getGradeLadder = async (
   cardId: string,
+  useNewPrecedence: boolean = false,
 ): Promise<GradeLadderResult> => {
   // cards.set_id → sets.id is a declared FK, so the embedded join is safe
   // here — same pattern gradingArbitrage.service.ts already relies on.
@@ -107,8 +109,21 @@ export const getGradeLadder = async (
   // Same parsing gradingArbitrage.service.ts uses: market_prices.grade is
   // written as a space-separated "COMPANY GRADE" string ("BGS 9.5"); split
   // and reuse it here rather than re-deriving the convention.
+  //
+  // Source-gated per the locked contract (CLAUDE.md §6), same rule as
+  // fetchCardPrices/getGradedPricesForCard/getGradingArbitrage: pre-contract
+  // (flag off) is poketrace-only, unconditionally; post-contract (flag on)
+  // is tier-partitioned, no blending. This is a paid-decision surface too —
+  // a user tracks a regrade candidate based on this ladder.
   const ladder: LadderEntry[] = rows
     .filter((r) => r.grade && r.market_price)
+    .filter((r) => {
+      const parsed = parseGradeString(r.grade);
+      if (!parsed) return false;
+      return useNewPrecedence
+        ? sourceAllowedAtTier(r.source, parsed.gradeValue)
+        : r.source === "poketrace";
+    })
     .map((r) => {
       const parts = r.grade!.split(" ");
       const grade = parts[1] ?? r.grade!;

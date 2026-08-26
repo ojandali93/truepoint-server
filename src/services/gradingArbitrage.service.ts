@@ -2,9 +2,19 @@
 // Calculates grading ROI for raw cards in a user's inventory.
 // For each raw card: fetches raw price + graded prices (PSA/BGS/CGC),
 // computes profit and ROI after grading costs, ranks by opportunity.
+//
+// sourceAllowedAtTier gating added 2026-08-26 (Omar's build-26-blocker
+// ruling): this is a paid-decision surface — a user pays real money to
+// grade a card based on this ROI. Before this fix it read every source
+// unconditionally, so a stray PokeTrace row at the 10-tier could get
+// blended in alongside (or instead of) PriceCharting once the flag opens,
+// silently overstating or understating the recommendation. Same
+// flag-aware gate as fetchCardPrices/getGradedPricesForCard, imported
+// from the shared lib rather than re-derived — see gradedPricePrecedence.ts.
 
 import { supabaseAdmin } from "../lib/supabase";
 import { fetchAllByIn } from "../lib/pgFetchAll";
+import { parseGradeString, sourceAllowedAtTier } from "../lib/gradedPricePrecedence";
 
 // ─── Grading costs (USD) ──────────────────────────────────────────────────────
 // Standard tier pricing as of 2025. These are approximate — user can override.
@@ -84,6 +94,49 @@ const classify = (
   return "hold";
 };
 
+// ─── Grade-price gating — pure, unit-testable without inventory setup ────────
+
+export interface RawGradeRow {
+  source: string;
+  grade: string | null;
+  market_price: number | null;
+  source_product_id: string | null;
+}
+
+/**
+ * Pure filter+map+sort step, split out from getGradingArbitrage so the
+ * precedence logic is unit-testable against synthetic/live rows for one
+ * card without needing that card to actually be owned in some test user's
+ * inventory — see scripts/validateGradedPricePrecedence.ts. No I/O, no
+ * async. Same source gate as fetchCardPrices/getGradedPricesForCard: flag
+ * off = poketrace-only, unconditionally; flag on = tier-partitioned per
+ * the locked contract, no blending.
+ */
+export const filterGradePricesForCard = (
+  rows: RawGradeRow[],
+  useNewPrecedence: boolean,
+): GradePrice[] =>
+  rows
+    .filter((p) => p.grade && p.market_price)
+    .filter((p) => {
+      const parsed = parseGradeString(p.grade);
+      if (!parsed) return false;
+      return useNewPrecedence
+        ? sourceAllowedAtTier(p.source, parsed.gradeValue)
+        : p.source === "poketrace";
+    })
+    .map((p) => {
+      const parts = p.grade!.split(" ");
+      return {
+        company: parts[0] ?? "UNKNOWN",
+        grade: parts[1] ?? p.grade!,
+        price: p.market_price!,
+        source: p.source,
+        sourceProductId: p.source_product_id ?? null,
+      };
+    })
+    .sort((a, b) => b.price - a.price);
+
 // ─── Main service ─────────────────────────────────────────────────────────────
 
 export const getGradingArbitrage = async (
@@ -91,6 +144,7 @@ export const getGradingArbitrage = async (
   gradingService: string = "PSA",
   gradingTier: string = "value",
   targetGrade: string = "10",
+  useNewPrecedence: boolean = false,
 ): Promise<ArbitrageSummary> => {
   const gradingCost = GRADING_COSTS[gradingService]?.[gradingTier] ?? 25;
 
@@ -174,20 +228,9 @@ export const getGradingArbitrage = async (
       ) ?? prices.find((p) => !p.grade && p.market_price);
     const rawPrice = rawRow?.market_price ?? null;
 
-    // All graded prices
-    const gradePrices: GradePrice[] = prices
-      .filter((p) => p.grade && p.market_price)
-      .map((p) => {
-        const parts = p.grade!.split(" ");
-        return {
-          company: parts[0] ?? "UNKNOWN",
-          grade: parts[1] ?? p.grade!,
-          price: p.market_price!,
-          source: p.source,
-          sourceProductId: p.source_product_id ?? null,
-        };
-      })
-      .sort((a, b) => b.price - a.price);
+    // All graded prices — see filterGradePricesForCard above for the
+    // source-gating rule (CLAUDE.md §6).
+    const gradePrices: GradePrice[] = filterGradePricesForCard(prices, useNewPrecedence);
 
     // Find best graded price for target grade
     const targetGradePrice =

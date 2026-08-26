@@ -12,6 +12,8 @@ import {
   deleteTrackedRegrade,
   TrackedRegradeInput,
 } from "../services/regradeTracker.service";
+import { isFlagEnabled } from "../services/featureFlag.service";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 
 // Status-aware error handler — mirrors inventory.controller.ts's
 // handleError exactly, so a service throwing { status, message } (ownership
@@ -38,7 +40,14 @@ export const getLadder = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const result = await getGradeLadder(req.params.cardId);
+    // Same flag as getCardGradedPrices/getGradingArbitrage — a user tracks
+    // a regrade candidate based on this ladder, so it gets the locked
+    // precedence contract the instant the flag opens for that user.
+    const useNewGradedPrecedence = await isFlagEnabled(
+      FLAG_KEYS.PRICECHARTING_PRICING,
+      req.user.id,
+    );
+    const result = await getGradeLadder(req.params.cardId, useNewGradedPrecedence);
     res.json({ data: result });
   } catch (err) {
     handle(res, err, "regrade-ladder");

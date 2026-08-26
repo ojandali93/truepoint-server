@@ -7,6 +7,8 @@ import {
   GRADING_COSTS,
 } from "../services/gradingArbitrage.service";
 import { logError } from "../lib/Logger";
+import { isFlagEnabled } from "../services/featureFlag.service";
+import { FLAG_KEYS } from "../constants/featureFlagKeys";
 
 // GET /api/v1/grading/arbitrage
 export const getArbitrage = async (
@@ -17,7 +19,21 @@ export const getArbitrage = async (
     const service = (req.query.service as string) ?? "PSA";
     const tier = (req.query.tier as string) ?? "value";
     const grade = (req.query.grade as string) ?? "10";
-    const result = await getGradingArbitrage(req.user.id, service, tier, grade);
+    // Same flag as getCardGradedPrices/fetchCardPrices — this is a paid
+    // decision surface (a user pays to grade based on this ROI), so it
+    // gets the locked precedence contract the instant the flag opens for
+    // that user, not a lesser standard.
+    const useNewGradedPrecedence = await isFlagEnabled(
+      FLAG_KEYS.PRICECHARTING_PRICING,
+      req.user.id,
+    );
+    const result = await getGradingArbitrage(
+      req.user.id,
+      service,
+      tier,
+      grade,
+      useNewGradedPrecedence,
+    );
     res.json({ data: result });
   } catch (err: any) {
     await logError({
