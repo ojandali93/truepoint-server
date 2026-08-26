@@ -74,15 +74,42 @@ const stripLeadingCode = (name: string): string | null => {
  * variant rows). */
 const SET_LABEL_PRINT_STATUS_RE = /\s*\((Unlimited|1st Edition)\)\s*$/i;
 
-// One verified manual override (docs/csv-import-design.md §1a) — a
-// singular/plural mismatch that defeats exact-after-strip matching.
-// Deliberately NOT including "SV: 151" here: Phase 1 flagged it as
-// genuinely ambiguous pending one confirmation from Omar — guessing would
-// violate "no silent import below exact," so it's left to fall through to
-// needs-review/unmatched honestly until that confirmation lands.
+// Manual overrides (docs/csv-import-design.md §1a), each verified against
+// live data by resolving a real fixture row's number to a unique card
+// before adding the entry here — none of these are guesses:
+//
+//   "sun & moon base set" -> "SM Base Set": not a prefix relationship at
+//     all ("Sun & Moon" is spelled out, catalog uses the bare "SM"
+//     abbreviation) — verified via Hypno #60 -> card_id 126931 in set 1863.
+//   "scarlet & violet promo" -> "SV: Scarlet & Violet Promo Cards": missing
+//     trailing "Cards" — verified via Charizard ex #056, unique hit.
+//   "sword & shield promo" -> "SWSH: Sword & Shield Promo Cards": same
+//     "Cards" gap, PLUS verified this is the right one of two candidates —
+//     "SWSH086" also exists on an unrelated "Jumbo Cards" set; the promo
+//     numbering (SWSH###) only lines up with Sword & Shield Promo Cards.
+//   "pokemon 151" -> "SV2a: Pokemon Card 151": this fixture's only "Pokemon
+//     151" row is the JP-tagged Hitmonlee — this target is itself Japanese,
+//     so it only ever fires for a JP row post-language-filter (see
+//     resolveSet's language narrowing above); an English "Pokemon 151" row
+//     would still correctly fall through unmatched.
+//   "sv: 151" -> "SV: Scarlet & Violet 151": Omar's Phase 2 decision — the
+//     "SV: 151" ambiguity IS an EN/JP pair ("SV2a: Pokemon Card 151" is
+//     Japanese, this target is English) and routes English per that
+//     decision. This override is keyed on the literal label "sv: 151", so
+//     it only ever fires for a row whose Set column says that; a
+//     hypothetical JP-tagged row under that same label would get its
+//     candidates narrowed to Japanese-only first, this (English) target
+//     wouldn't survive that filter, and the row would correctly fall
+//     through to unmatched rather than silently landing on either language
+//     — no fixture row exercises this path, so it's untested, not assumed.
 const SET_ALIAS_OVERRIDES: Partial<Record<ImportGame, Record<string, string>>> = {
   pokemon: {
     "mega evolution promos": "ME: Mega Evolution Promo",
+    "sun & moon base set": "SM Base Set",
+    "scarlet & violet promo": "SV: Scarlet & Violet Promo Cards",
+    "sword & shield promo": "SWSH: Sword & Shield Promo Cards",
+    "pokemon 151": "SV2a: Pokemon Card 151",
+    "sv: 151": "SV: Scarlet & Violet 151",
   },
 };
 
@@ -99,8 +126,32 @@ interface SetResolution {
 export const resolveSet = (
   rawSetLabel: string,
   game: ImportGame,
-  liveSets: LiveSet[],
+  liveSetsAllLanguages: LiveSet[],
+  isJp: boolean,
 ): SetResolution => {
+  // Language routing BEFORE name matching, not after — verified live: a
+  // Collectr set label like "Black Bolt" resolves to TWO live catalog rows
+  // that look like an ambiguous duplicate ("SV: Black Bolt" / "SV11B: Black
+  // Bolt") until you notice one is English and the other Japanese. Same
+  // shape hit "White Flare" and "Gym Challenge" — none of them are actual
+  // catalog duplicates; they're EN/JP pairs this function was resolving
+  // without ever looking at language. Narrowing first turns each of those
+  // into a single, unambiguous candidate.
+  //
+  // Asymmetric fallback, deliberately: a non-JP-tagged row ("Inferno X",
+  // "Mega Symphonia" — verified live, each has exactly ONE catalog set and
+  // it's Japanese-only, no English edition exists at all) falls back to
+  // searching all languages when the English-first search comes up empty,
+  // because there's no English alternative it could be silently confused
+  // with. A JP-tagged row does NOT get that fallback — "Trading Card Game
+  // Classic (Japanese)" has no Japanese catalog edition (verified: only the
+  // English "Trading Card Game Classic" exists), and falling back there
+  // would silently match a Japanese-tagged row to an English print, which
+  // is simply wrong, not just low-confidence. That row stays unmatched.
+  const languageFiltered = liveSetsAllLanguages.filter((s) =>
+    isJp ? s.language === "Japanese" : s.language !== "Japanese",
+  );
+
   const printStatusMatch = rawSetLabel.match(SET_LABEL_PRINT_STATUS_RE);
   const impliedVariantHint = printStatusMatch
     ? ((printStatusMatch[1].toLowerCase() === "unlimited"
@@ -112,69 +163,52 @@ export const resolveSet = (
     : rawSetLabel.trim();
   const target = normalizeLoose(label);
 
-  const exact = liveSets.filter((s) => normalizeLoose(s.name) === target);
-  if (exact.length === 1) {
-    return {
-      confidence: "exact",
-      reasonCode: "ok",
-      matched: exact[0],
-      candidates: exact,
-      impliedVariantHint,
-    };
-  }
-  if (exact.length > 1) {
-    return {
-      confidence: "needs-review",
-      reasonCode: "ambiguous-set",
-      candidates: exact,
-      impliedVariantHint,
-    };
-  }
-
-  const stripped = liveSets.filter((s) => {
-    const strippedName = stripLeadingCode(s.name);
-    return strippedName != null && normalizeLoose(strippedName) === target;
-  });
-  if (stripped.length === 1) {
-    return {
-      confidence: "exact",
-      reasonCode: "ok",
-      matched: stripped[0],
-      candidates: stripped,
-      impliedVariantHint,
-    };
-  }
-  if (stripped.length > 1) {
-    return {
-      confidence: "needs-review",
-      reasonCode: "ambiguous-set",
-      candidates: stripped,
-      impliedVariantHint,
-    };
-  }
-
-  const overrideTarget = SET_ALIAS_OVERRIDES[game]?.[target];
-  if (overrideTarget) {
-    const overrideMatch = liveSets.filter(
-      (s) => normalizeLoose(s.name) === normalizeLoose(overrideTarget),
-    );
-    if (overrideMatch.length === 1) {
-      return {
-        confidence: "high",
-        reasonCode: "ok",
-        matched: overrideMatch[0],
-        candidates: overrideMatch,
-        impliedVariantHint,
-      };
+  // The actual name-matching cascade, run against whichever pool of live
+  // sets the caller hands it — a plain function of (pool, target), not a
+  // closure trick, so the fallback below can genuinely re-run it rather
+  // than duplicate its logic.
+  const resolveAgainstPool = (pool: LiveSet[]): SetResolution => {
+    const exact = pool.filter((s) => normalizeLoose(s.name) === target);
+    if (exact.length === 1) {
+      return { confidence: "exact", reasonCode: "ok", matched: exact[0], candidates: exact, impliedVariantHint };
     }
-  }
+    if (exact.length > 1) {
+      return { confidence: "needs-review", reasonCode: "ambiguous-set", candidates: exact, impliedVariantHint };
+    }
 
-  return {
-    confidence: "unmatched",
-    reasonCode: "unmatched-set",
-    candidates: [],
-    impliedVariantHint,
+    const stripped = pool.filter((s) => {
+      const strippedName = stripLeadingCode(s.name);
+      return strippedName != null && normalizeLoose(strippedName) === target;
+    });
+    if (stripped.length === 1) {
+      return { confidence: "exact", reasonCode: "ok", matched: stripped[0], candidates: stripped, impliedVariantHint };
+    }
+    if (stripped.length > 1) {
+      return { confidence: "needs-review", reasonCode: "ambiguous-set", candidates: stripped, impliedVariantHint };
+    }
+
+    const overrideTarget = SET_ALIAS_OVERRIDES[game]?.[target];
+    if (overrideTarget) {
+      const overrideMatch = pool.filter((s) => normalizeLoose(s.name) === normalizeLoose(overrideTarget));
+      if (overrideMatch.length === 1) {
+        return { confidence: "high", reasonCode: "ok", matched: overrideMatch[0], candidates: overrideMatch, impliedVariantHint };
+      }
+    }
+
+    return { confidence: "unmatched", reasonCode: "unmatched-set", candidates: [], impliedVariantHint };
   };
+
+  const primary = resolveAgainstPool(languageFiltered);
+  // Asymmetric fallback, deliberately: only retry unrestricted when the
+  // PRIMARY (language-scoped) search found genuinely nothing AND the row
+  // wasn't JP-tagged. Never fires for isJp rows — a JP-tagged row with no
+  // Japanese catalog match (verified: "Trading Card Game Classic
+  // (Japanese)" has no Japanese edition, only English) stays unmatched
+  // rather than silently landing on the wrong-language print.
+  if (primary.confidence === "unmatched" && !isJp) {
+    return resolveAgainstPool(liveSetsAllLanguages);
+  }
+  return primary;
 };
 
 // ─── Grade parsing ──────────────────────────────────────────────────────────
@@ -422,7 +456,7 @@ const toCandidate = (
 
 export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult => {
   const liveSets = index.setsByGame[row.game] ?? [];
-  const setRes = resolveSet(row.set, row.game, liveSets);
+  const setRes = resolveSet(row.set, row.game, liveSets, row.isJp);
 
   if (!setRes.matched) {
     return {
@@ -447,7 +481,7 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
   // ── Sealed products ──
   if (row.isSealedSignature) {
     const products = index.productsBySetId.get(set.id) ?? [];
-    const target = normalizeLoose(row.productName);
+    const target = normalizeLoose(row.productNameStripped);
     const candidates = products.filter((p) => normalizeLoose(p.name) === target);
 
     if (candidates.length === 1) {
@@ -473,8 +507,8 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
       reasonCode,
       reason:
         candidates.length === 0
-          ? `No product named "${row.productName}" found in ${set.name} (${products.length} products in set)`
-          : `${candidates.length} products named "${row.productName}" in ${set.name}`,
+          ? `No product named "${row.productNameStripped}" found in ${set.name} (${products.length} products in set)`
+          : `${candidates.length} products named "${row.productNameStripped}" in ${set.name}`,
       matchedSetId: set.id,
       matchedSetName: set.name,
       resolvedIsSealed: true,
@@ -494,7 +528,7 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
     // Numberless, non-sealed (e.g. DON!! cards — verified: Rarity populated,
     // Card Number empty, distinct from the sealed signature). Name is the
     // only key available.
-    const target = normalizeLoose(row.productName);
+    const target = normalizeLoose(row.productNameStripped);
     numberCandidates = cards.filter((c) => normalizeLoose(c.name) === target);
   }
 
@@ -507,7 +541,7 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
       reason:
         row.cardNumber !== ""
           ? `No card numbered "${row.cardNumber}" found in ${set.name}`
-          : `No card named "${row.productName}" found in ${set.name} (numberless row)`,
+          : `No card named "${row.productNameStripped}" found in ${set.name} (numberless row)`,
       matchedSetId: set.id,
       matchedSetName: set.name,
     };
@@ -528,13 +562,13 @@ export const matchRow = (row: ParsedImportRow, index: CatalogIndex): MatchResult
     // reprints — same number, different promo-batch qualifier) or share the
     // exact name (numberless). Full raw-name text, including parentheticals,
     // is the only remaining tiebreaker.
-    const target = normalizeLoose(row.productName);
+    const target = normalizeLoose(row.productNameStripped);
     const exactName = numberCandidates.filter((c) => normalizeLoose(c.name) === target);
     if (exactName.length === 1) {
       matchedCard = exactName[0];
       itemConfidence = "high";
       itemReasonCode = "qualifier-tiebreak";
-      itemDetail = `${numberCandidates.length} candidates shared the number; exact name text "${row.productName}" picked one`;
+      itemDetail = `${numberCandidates.length} candidates shared the number; exact name text "${row.productNameStripped}" picked one`;
     } else {
       return {
         rowIndex: row.rowIndex,

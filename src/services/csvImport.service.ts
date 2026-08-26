@@ -52,7 +52,7 @@ export const matchImportRows = async (
   const neededSetIds = new Set<string>();
   for (const row of rows) {
     const liveSets = setsByGame[row.game] ?? [];
-    const res = resolveSet(row.set, row.game, liveSets);
+    const res = resolveSet(row.set, row.game, liveSets, row.isJp);
     if (res.matched) neededSetIds.add(res.matched.id);
     // Ambiguous-set candidates also need their cards/products fetched so
     // the harness/review UI can show what each candidate actually
