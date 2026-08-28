@@ -6,6 +6,7 @@ import {
   findSubscriptionByStripeId,
   upsertSubscription,
   updateSubscriptionStatus,
+  setCancelRequestedAt,
 } from "../repositories/billing.repository";
 import { BillingSubscription } from "../types/billing.types";
 
@@ -33,6 +34,24 @@ const extractPeriodEnd = (sub: Stripe.Subscription | any): string | null => {
     return new Date(sub.trial_end * 1000).toISOString();
   }
   return null;
+};
+
+/**
+ * Derives the cancel_requested_at value to store from Stripe's own
+ * subscription fields — Stripe is the source of truth for cancel intent
+ * (cancel_at_period_end), not any local flag. Used both right after our own
+ * cancel API call and on every customer.subscription.updated webhook, so
+ * local state stays correct even if cancellation is requested or undone
+ * from Stripe's dashboard/billing portal rather than through this app.
+ * `canceled_at` (Stripe's own timestamp for when cancellation was
+ * scheduled) is preferred over `new Date()` so the stored time matches
+ * Stripe's record exactly; falls back to now() only if Stripe omits it.
+ */
+const deriveCancelRequestedAt = (sub: Stripe.Subscription): string | null => {
+  if (!sub.cancel_at_period_end) return null;
+  return sub.canceled_at
+    ? new Date(sub.canceled_at * 1000).toISOString()
+    : new Date().toISOString();
 };
 
 // ─── Checkout Session ─────────────────────────────────────────────────────────
@@ -179,10 +198,19 @@ export const handleWebhookEvent = async (
         sub.status as BillingSubscription["status"],
         periodEndIso,
       );
+      // Keep cancel intent in sync with Stripe's own cancel_at_period_end on
+      // every update — covers cancellation OR reactivation initiated
+      // anywhere (this app, Stripe dashboard, a future billing portal), not
+      // just the /billing/subscription DELETE path below.
+      await setCancelRequestedAt(sub.id, deriveCancelRequestedAt(sub));
       break;
     }
 
     case "customer.subscription.deleted": {
+      // True expiration — the one place status actually becomes 'canceled'.
+      // Deliberately does NOT touch cancel_requested_at (left as whatever it
+      // already was) — see migrations/2026-08-28_subscriptions_cancel_requested_at.sql
+      // for why that's useful signal, not an oversight.
       const sub = event.data.object as Stripe.Subscription;
       const saved = await findSubscriptionByStripeId(sub.id);
       if (saved) {
@@ -240,10 +268,21 @@ export const cancelSubscription = async (userId: string): Promise<void> => {
   const sub = await findSubscriptionByUserId(userId);
   if (!sub) throw { status: 404, message: "No active subscription found" };
 
-  // Cancel at period end — user keeps access until it expires
-  await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+  // Cancel at period end — user keeps access until it expires. status is
+  // deliberately NOT touched here: resolvePlan() only grants access for
+  // status IN ('active','trialing'), so flipping it to 'canceled' the
+  // instant this is requested would revoke a still-paying user's plan
+  // immediately, contradicting "keeps access until it expires" above. status
+  // stays whatever it already was; only cancel_requested_at records intent.
+  // The real status transition happens later, unchanged, in
+  // handleWebhookEvent's "customer.subscription.deleted" case (true
+  // expiration) — see migrations/2026-08-28_subscriptions_cancel_requested_at.sql.
+  const updated = await stripe.subscriptions.update(sub.stripeSubscriptionId, {
     cancel_at_period_end: true,
   });
 
-  await updateSubscriptionStatus(sub.stripeSubscriptionId, "canceled");
+  await setCancelRequestedAt(
+    sub.stripeSubscriptionId,
+    deriveCancelRequestedAt(updated),
+  );
 };

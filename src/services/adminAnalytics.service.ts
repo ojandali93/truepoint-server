@@ -30,7 +30,9 @@ export const getUserStats = async () => {
       .from("profiles")
       .select("id", { count: "exact", head: true })
       .gte("created_at", sevenDaysAgo),
-    supabaseAdmin.from("subscriptions").select("plan, status"),
+    supabaseAdmin
+      .from("subscriptions")
+      .select("plan, status, cancel_requested_at"),
   ]);
 
   const allSubs = subs ?? [];
@@ -44,6 +46,11 @@ export const getUserStats = async () => {
     trialing: allSubs.filter((s) => s.status === "trialing").length,
     canceled: allSubs.filter((s) => s.status === "canceled").length,
     past_due: allSubs.filter((s) => s.status === "past_due").length,
+    // Still counted as active above (status is unchanged — see
+    // migrations/2026-08-28_subscriptions_cancel_requested_at.sql) but
+    // surfaced separately here so this pending-cancellation cohort doesn't
+    // just vanish from the dashboard until it actually expires.
+    cancel_pending: activeSubs.filter((s) => !!s.cancel_requested_at).length,
   };
 
   const free = (totalUsers ?? 0) - activeSubs.length;
@@ -59,6 +66,7 @@ export const getUserStats = async () => {
       pro: byPlan.pro,
       trialing: byPlan.trialing,
       canceled: byPlan.canceled,
+      cancelPending: byPlan.cancel_pending,
       pastDue: byPlan.past_due,
       totalPaid: byPlan.collector + byPlan.pro,
       conversionRate:

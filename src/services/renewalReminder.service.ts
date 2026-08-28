@@ -28,7 +28,7 @@ const FETCH_LIMIT = 500;
 
 type Platform = "stripe" | "apple" | "google";
 
-interface RenewalCandidate {
+export interface RenewalCandidate {
   id: string;
   user_id: string;
   plan: string;
@@ -111,9 +111,16 @@ Questions? Just reply to this email, or reach us at ${SUPPORT_EMAIL}.
   return { subject, html, text };
 }
 
-// ─── The sweep ──────────────────────────────────────────────────────────────
+// ─── Candidate query (extracted so it's independently testable — see
+// scripts/validateCancelLifecycle.ts — without invoking the send loop's
+// real email side effects) ──────────────────────────────────────────────────
 
-export async function sendRenewalReminders(): Promise<RenewalReminderSweepResult> {
+export interface RenewalReminderCandidates {
+  candidates: RenewalCandidate[];
+  cancelPendingCount: number;
+}
+
+export async function getRenewalReminderCandidates(): Promise<RenewalReminderCandidates> {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const windowEndIso = new Date(
@@ -133,11 +140,30 @@ export async function sendRenewalReminders(): Promise<RenewalReminderSweepResult
     )
     .in("platform", platforms)
     .eq("status", "active")
+    // A cancel-pending subscription still has status='active' (see
+    // migrations/2026-08-28_subscriptions_cancel_requested_at.sql — that's
+    // the whole point, access continues) but is NOT "renewing" — it's
+    // scheduled to end, not auto-renew. A single-column null check, so it's
+    // one PostgREST filter like the rest of this WHERE, no app-code dedupe
+    // needed the way the sent-marker check below requires.
+    .is("cancel_requested_at", null)
     .gt("current_period_end", nowIso)
     .lte("current_period_end", windowEndIso)
     .limit(FETCH_LIMIT);
 
   if (error) throw error;
+
+  // Count-only, for the log line / result metric — same filters minus the
+  // cancel_requested_at exclusion, inverted. Not folded into the main query
+  // since these rows are deliberately never fetched into `candidates`.
+  const { count: cancelPendingCount } = await supabaseAdmin
+    .from("subscriptions")
+    .select("id", { count: "exact", head: true })
+    .in("platform", platforms)
+    .eq("status", "active")
+    .not("cancel_requested_at", "is", null)
+    .gt("current_period_end", nowIso)
+    .lte("current_period_end", windowEndIso);
 
   const candidates = ((data ?? []) as RenewalCandidate[])
     .filter(
@@ -148,11 +174,19 @@ export async function sendRenewalReminders(): Promise<RenewalReminderSweepResult
     )
     .slice(0, BATCH);
 
+  return { candidates, cancelPendingCount: cancelPendingCount ?? 0 };
+}
+
+// ─── The sweep ──────────────────────────────────────────────────────────────
+
+export async function sendRenewalReminders(): Promise<RenewalReminderSweepResult> {
+  const { candidates, cancelPendingCount } = await getRenewalReminderCandidates();
+
   const result: RenewalReminderSweepResult = {
     considered: candidates.length,
     sent: 0,
     skippedNoEmail: 0,
-    skippedCancelPending: 0,
+    skippedCancelPending: cancelPendingCount,
     failed: 0,
   };
 

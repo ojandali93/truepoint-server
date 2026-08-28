@@ -1,0 +1,40 @@
+-- 2026-08-28_subscriptions_cancel_requested_at.sql
+--
+-- Fixes a real bug: billing.service.ts::cancelSubscription set
+-- subscriptions.status = 'canceled' the instant a user clicked "Cancel" on
+-- web, even though Stripe's cancel_at_period_end:true means they keep access
+-- until the period actually ends. plan.service.ts::resolvePlan only grants
+-- access for status IN ('active','trialing'), so that immediate flip
+-- revoked a still-paying user's plan on the spot — the opposite of what the
+-- code's own comment ("access continues until it expires") promised. It also
+-- broke Flow B's canceled-vs-expired distinction and made the
+-- renewal-reminder sweep's `status='active'` exclusion accidentally correct
+-- (for the wrong reason) rather than actually checking cancel intent.
+--
+-- Fix: status stops changing at cancel-request time. A new nullable
+-- timestamp records cancel intent without touching status/entitlement.
+-- status still flips to 'canceled' at the existing, unchanged transition
+-- point — Stripe's customer.subscription.deleted webhook (and RevenueCat's
+-- EXPIRATION event, for Apple, also unchanged).
+--
+-- Column name matches FEEDBACK_DESIGN.md §1.4/§3.3's already-planned
+-- `cancel_requested_at` (same concept: "cancellation requested, access not
+-- yet cut") — created here first because the Stripe cancel-button bug fix
+-- needed it immediately; Phase 2 will populate the same column for Apple
+-- from the RevenueCat CANCELLATION handler instead of adding a second one.
+-- FEEDBACK_DESIGN.md should be read as already having this column when that
+-- phase starts.
+--
+-- Deliberately NOT cleared when status flips to 'canceled' at true
+-- expiration: a non-null cancel_requested_at at that point is a free,
+-- useful signal ("this expired because the user asked to cancel" vs NULL,
+-- "this expired/lapsed for another reason, e.g. failed payment").
+--
+-- Spelling: avoids "canceled"/"cancelled" entirely in the identifier itself,
+-- per FEEDBACK_DESIGN.md §1.3's footgun note — matches subscriptions.status's
+-- existing single-'l' 'canceled' value without re-deriving it.
+--
+-- Run manually in Supabase SQL editor. Not applied automatically.
+
+ALTER TABLE subscriptions
+  ADD COLUMN IF NOT EXISTS cancel_requested_at timestamptz;

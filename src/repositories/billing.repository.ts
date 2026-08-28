@@ -15,6 +15,7 @@ type SubscriptionRow = {
   trial_ends_at: string | null;
   current_period_end: string | null;
   created_at: string;
+  cancel_requested_at: string | null;
 };
 
 const rowToSubscription = (row: SubscriptionRow): BillingSubscription => ({
@@ -30,6 +31,7 @@ const rowToSubscription = (row: SubscriptionRow): BillingSubscription => ({
   trialEndsAt: row.trial_ends_at,
   currentPeriodEnd: row.current_period_end ?? "",
   createdAt: row.created_at,
+  cancelRequestedAt: row.cancel_requested_at,
 });
 
 // ─── Reads ──────────────────────────────────────────────────────────────────
@@ -116,7 +118,14 @@ export const findSubscriptionByProviderId = async (
 export const upsertSubscription = async (
   payload: Omit<
     BillingSubscription,
-    "id" | "createdAt" | "platform" | "rcAppUserId" | "providerSubscriptionId"
+    | "id"
+    | "createdAt"
+    | "platform"
+    | "rcAppUserId"
+    | "providerSubscriptionId"
+    // Repository-controlled, not caller-supplied — always reset to null
+    // here (see the cancel_requested_at write below for why).
+    | "cancelRequestedAt"
   >,
 ): Promise<BillingSubscription> => {
   const { data, error } = await supabaseAdmin
@@ -131,6 +140,14 @@ export const upsertSubscription = async (
         status: payload.status,
         trial_ends_at: payload.trialEndsAt,
         current_period_end: payload.currentPeriodEnd,
+        // Always reset on upsert: the only caller is verifyCheckoutSession,
+        // i.e. a checkout that just completed. A subscription that was just
+        // created/reactivated through checkout cannot simultaneously be
+        // cancel-pending — without this, ON CONFLICT DO UPDATE only touches
+        // the columns listed here, so a stale cancel_requested_at from a
+        // prior subscription on this (user_id, platform) row would survive
+        // untouched and wrongly keep showing "canceling" forever after.
+        cancel_requested_at: null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id,platform" },
@@ -187,6 +204,27 @@ export const updateSubscriptionStatus = async (
     .update({
       status,
       ...(currentPeriodEnd ? { current_period_end: currentPeriodEnd } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("stripe_subscription_id", stripeSubscriptionId);
+  if (error) throw error;
+};
+
+/**
+ * Records (or clears) cancel intent for a STRIPE subscription, by Stripe
+ * subscription id. Deliberately separate from updateSubscriptionStatus —
+ * this never touches `status`, only the cancel-intent marker. See
+ * migrations/2026-08-28_subscriptions_cancel_requested_at.sql for why status
+ * must stay untouched here (resolvePlan() gates access on status alone).
+ */
+export const setCancelRequestedAt = async (
+  stripeSubscriptionId: string,
+  cancelRequestedAt: string | null,
+): Promise<void> => {
+  const { error } = await supabaseAdmin
+    .from("subscriptions")
+    .update({
+      cancel_requested_at: cancelRequestedAt,
       updated_at: new Date().toISOString(),
     })
     .eq("stripe_subscription_id", stripeSubscriptionId);

@@ -34,4 +34,13 @@ export interface BillingSubscription {
   trialEndsAt: string | null;
   currentPeriodEnd: string;
   createdAt: string;
+
+  // NEW: set the instant a cancellation is requested (Stripe:
+  // cancelSubscription; eventually Apple's RevenueCat CANCELLATION handler),
+  // cleared if the cancellation is undone before the period ends. NOT
+  // cleared at true expiration — see migrations/2026-08-28_subscriptions_cancel_requested_at.sql.
+  // status stays 'active'/'trialing' the whole time this is set; only
+  // presence/absence signals cancel intent. Never derive access from this —
+  // resolvePlan() keeps using status alone.
+  cancelRequestedAt: string | null;
 }
