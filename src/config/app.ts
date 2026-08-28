@@ -38,6 +38,8 @@ import feedbackAdminRoutes from "../routes/feedbackAdmin.routes";
 import adminSyncRoutes from "../routes/adminSync.routes";
 import regradeRoutes from "../routes/regrade.routes";
 import csvImportRoutes from "../routes/csvImport.routes";
+import productFeedbackRoutes from "../routes/productFeedback.routes";
+import productFeedbackAdminRoutes from "../routes/productFeedbackAdmin.routes";
 
 dotenv.config();
 
@@ -82,6 +84,7 @@ app.use("/api/v1/admin", outreachAdminRoutes);
 app.use("/api/v1/admin", notificationTestRoutes);
 app.use("/api/v1/admin", tcgPriceLookupTestRoutes);
 app.use("/api/v1/admin", feedbackAdminRoutes);
+app.use("/api/v1/admin", productFeedbackAdminRoutes);
 
 app.use("/api/v1/grading", gradingRoutes);
 app.use("/api/v1/grading", gradingLifecycleRoutes);
@@ -92,6 +95,7 @@ app.use("/api/v1/codes", vendorCodeRoutes);
 app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
+app.use("/api/v1/product-feedback", productFeedbackRoutes);
 
 app.post("/debug/token", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];

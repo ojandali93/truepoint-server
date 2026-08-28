@@ -140,14 +140,19 @@ export const upsertSubscription = async (
         status: payload.status,
         trial_ends_at: payload.trialEndsAt,
         current_period_end: payload.currentPeriodEnd,
-        // Always reset on upsert: the only caller is verifyCheckoutSession,
-        // i.e. a checkout that just completed. A subscription that was just
-        // created/reactivated through checkout cannot simultaneously be
-        // cancel-pending — without this, ON CONFLICT DO UPDATE only touches
-        // the columns listed here, so a stale cancel_requested_at from a
-        // prior subscription on this (user_id, platform) row would survive
-        // untouched and wrongly keep showing "canceling" forever after.
+        // Always reset the whole cancel-intent cluster on upsert: the only
+        // caller is verifyCheckoutSession, i.e. a checkout that just
+        // completed. A subscription that was just created/reactivated
+        // through checkout cannot simultaneously be cancel-pending —
+        // without this, ON CONFLICT DO UPDATE only touches the columns
+        // listed here, so stale values from a prior subscription on this
+        // (user_id, platform) row would survive untouched: cancel_requested_at
+        // would wrongly keep showing "canceling" forever, and a stale
+        // exit_feedback_prompted_at would silently suppress Flow B2 on the
+        // NEXT cancellation too.
         cancel_requested_at: null,
+        was_trial_at_cancel: null,
+        exit_feedback_prompted_at: null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id,platform" },
@@ -183,6 +188,14 @@ export const upsertAppleSubscription = async (payload: {
         status: payload.status,
         trial_ends_at: payload.trialEndsAt ?? null,
         current_period_end: payload.currentPeriodEnd,
+        // Same reset-the-whole-cluster reasoning as upsertSubscription
+        // above — INITIAL_PURCHASE/RENEWAL/UNCANCELLATION/PRODUCT_CHANGE all
+        // route through this function, and any of them can represent "this
+        // cancellation is over" (a fresh purchase, a renewal that means the
+        // prior cancel never took effect, or an explicit uncancel).
+        cancel_requested_at: null,
+        was_trial_at_cancel: null,
+        exit_feedback_prompted_at: null,
         updated_at: new Date().toISOString(),
       },
       { onConflict: "user_id,platform" },
@@ -211,25 +224,78 @@ export const updateSubscriptionStatus = async (
 };
 
 /**
- * Records (or clears) cancel intent for a STRIPE subscription, by Stripe
- * subscription id. Deliberately separate from updateSubscriptionStatus —
- * this never touches `status`, only the cancel-intent marker. See
+ * Records (or clears) cancel intent + Flow B2's staging fields, by whichever
+ * id column identifies the platform. Deliberately separate from
+ * updateSubscriptionStatus — this never touches `status`, only the
+ * cancel-intent marker. See
  * migrations/2026-08-28_subscriptions_cancel_requested_at.sql for why status
- * must stay untouched here (resolvePlan() gates access on status alone).
+ * must stay untouched here (resolvePlan() gates access on status alone), and
+ * migrations/2026-08-28_product_feedback.sql for was_trial_at_cancel /
+ * exit_feedback_prompted_at.
+ *
+ * Branches on whether cancel intent is being SET vs CLEARED:
+ *   - Clearing (cancelRequestedAt === null, i.e. reactivation/undo from the
+ *     Stripe dashboard or a RevenueCat UNCANCELLATION) resets the WHOLE
+ *     cancel-intent cluster — was_trial_at_cancel and
+ *     exit_feedback_prompted_at both go back to null too, so a future
+ *     cancellation asks again from a clean slate.
+ *   - Setting (non-null) writes was_trial_at_cancel (safe to re-write
+ *     idempotently) but DELIBERATELY leaves exit_feedback_prompted_at
+ *     untouched. This function gets called on every
+ *     customer.subscription.updated webhook while cancel_at_period_end
+ *     stays true, not just once — if it blindly nulled
+ *     exit_feedback_prompted_at on every one of those redundant
+ *     re-confirmations, it would un-resolve an already answered/dismissed
+ *     Flow B2 ask every time Stripe re-sends the same state.
  */
-export const setCancelRequestedAt = async (
-  stripeSubscriptionId: string,
+const applyCancelRequestedAt = async (
+  column: "stripe_subscription_id" | "provider_subscription_id",
+  value: string,
   cancelRequestedAt: string | null,
+  wasTrialAtCancel: boolean | null,
 ): Promise<void> => {
+  const updates: Record<string, unknown> = {
+    cancel_requested_at: cancelRequestedAt,
+    updated_at: new Date().toISOString(),
+  };
+  if (cancelRequestedAt === null) {
+    updates.was_trial_at_cancel = null;
+    updates.exit_feedback_prompted_at = null;
+  } else {
+    updates.was_trial_at_cancel = wasTrialAtCancel;
+  }
   const { error } = await supabaseAdmin
     .from("subscriptions")
-    .update({
-      cancel_requested_at: cancelRequestedAt,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("stripe_subscription_id", stripeSubscriptionId);
+    .update(updates)
+    .eq(column, value);
   if (error) throw error;
 };
+
+/** STRIPE path — by stripe_subscription_id. */
+export const setCancelRequestedAt = (
+  stripeSubscriptionId: string,
+  cancelRequestedAt: string | null,
+  wasTrialAtCancel: boolean | null = null,
+): Promise<void> =>
+  applyCancelRequestedAt(
+    "stripe_subscription_id",
+    stripeSubscriptionId,
+    cancelRequestedAt,
+    wasTrialAtCancel,
+  );
+
+/** APPLE path — by provider_subscription_id (RevenueCat's original_transaction_id). */
+export const setCancelRequestedAtByProviderId = (
+  providerSubscriptionId: string,
+  cancelRequestedAt: string | null,
+  wasTrialAtCancel: boolean | null = null,
+): Promise<void> =>
+  applyCancelRequestedAt(
+    "provider_subscription_id",
+    providerSubscriptionId,
+    cancelRequestedAt,
+    wasTrialAtCancel,
+  );
 
 /** Updates status by provider (Apple) subscription id (RevenueCat path). */
 export const updateAppleSubscriptionStatus = async (

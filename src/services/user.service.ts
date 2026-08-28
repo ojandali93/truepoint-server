@@ -1,6 +1,7 @@
 import { logError } from "../lib/Logger";
 import * as UserRepository from "../repositories/user.repository";
 import { Profile, NotificationSettings, UserDevice } from "../types/user.types";
+import * as ProductFeedbackRepo from "../repositories/productFeedback.repository";
 
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
@@ -8,6 +9,59 @@ export const getProfileById = async (id: string): Promise<Profile> => {
   const profile = await UserRepository.findProfileById(id);
   if (!profile) throw { status: 404, message: "Profile not found" };
   return profile;
+};
+
+// ─── Profile + feedback-gating state (GET /users/me only) ─────────────────
+//
+// A separate function rather than folding this into getProfileById: that
+// function's return type is shared by createProfile/updateProfile/
+// getPublicProfile/searchByUsername, none of which need this. Composed here,
+// not a new endpoint — mobile's launch bootstrap already calls GET /users/me
+// once per session; FEEDBACK_DESIGN.md Phase 3 requires zero new per-launch
+// network calls, so Flow A/B2's gating state rides this existing response
+// instead of a dedicated /eligibility round-trip.
+
+export interface FeedbackGateState {
+  flowA: {
+    lastAskedAt: string | null;
+    dismissedCount: number;
+    optedOut: boolean;
+  };
+  flowB2: {
+    pending: boolean;
+    cancelledAt: string | null;
+    wasTrial: boolean | null;
+  };
+}
+
+export interface MyProfileResponse extends Profile {
+  feedback: FeedbackGateState;
+}
+
+export const getMyProfileWithFeedbackState = async (
+  userId: string,
+): Promise<MyProfileResponse> => {
+  const [profile, promptState, b2State] = await Promise.all([
+    getProfileById(userId),
+    ProductFeedbackRepo.getFeedbackPromptState(userId),
+    ProductFeedbackRepo.getFlowB2GateState(userId),
+  ]);
+
+  return {
+    ...profile,
+    feedback: {
+      flowA: {
+        lastAskedAt: promptState.lastAskedAt,
+        dismissedCount: promptState.dismissedCount,
+        optedOut: promptState.optedOut,
+      },
+      flowB2: {
+        pending: b2State.pending,
+        cancelledAt: b2State.cancelledAt,
+        wasTrial: b2State.wasTrial,
+      },
+    },
+  };
 };
 
 export const getPublicProfile = async (id: string) => {
@@ -139,8 +193,9 @@ export const deleteAccount = async (userId: string): Promise<void> => {
   // 2. Delete the auth user. With ON DELETE CASCADE now in place, this atomically
   //    removes the profiles row and ALL user-data rows (collections, inventory,
   //    subscriptions, ai_grading_reports, centering_reports, grading_submissions,
-  //    feedback, notification_settings, master_set_*, portfolio_snapshots,
-  //    user_devices) in a single transaction. Telemetry/audit rows
+  //    feedback, product_feedback, feedback_prompt_state, notification_settings,
+  //    master_set_*, portfolio_snapshots, user_devices) in a single
+  //    transaction. Telemetry/audit rows
   //    (activity_logs, error_logs, user_activity_logs) are retained with the
   //    user pointer set to NULL.
   await UserRepository.deleteProfileById(userId); // -> supabaseAdmin.auth.admin.deleteUser(userId)

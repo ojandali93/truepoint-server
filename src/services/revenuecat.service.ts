@@ -15,6 +15,7 @@ import {
   upsertAppleSubscription,
   updateAppleSubscriptionStatus,
   findSubscriptionByProviderId,
+  setCancelRequestedAtByProviderId,
 } from "../repositories/billing.repository";
 import { logError } from "../lib/Logger";
 
@@ -131,19 +132,30 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
       break;
     }
 
-    case "CANCELLATION":
-    case "SUBSCRIPTION_PAUSED": {
-      // Cancellation: access continues until expiration. We mark canceled but
-      // resolvePlan still treats it as active until status flips on EXPIRATION.
-      // To keep access-until-period-end, we DON'T downgrade here — we only flip
-      // to 'canceled' on actual EXPIRATION. So record the intent without
-      // killing access:
+    case "CANCELLATION": {
+      // Access continues until expiration — status stays active/trialing
+      // until it flips on actual EXPIRATION below. NEVER set 'canceled' here;
+      // resolvePlan only counts active/trialing, so that would cut access
+      // early. This case ONLY records cancel intent for Flow B2 (in-app exit
+      // feedback) — a pending-feedback marker, not an access/status/
+      // entitlement change. See
+      // migrations/2026-08-28_product_feedback.sql and FEEDBACK_DESIGN.md §3.3.
       if (providerId) {
-        // Keep current_period_end; status stays active/trialing until expiry.
-        // If you prefer to immediately reflect "canceled" while keeping access,
-        // your resolvePlan only counts active/trialing, so do NOT set canceled
-        // here or the user loses access early.
+        await setCancelRequestedAtByProviderId(
+          providerId,
+          msToIso(Date.now()) as string,
+          isTrial,
+        );
       }
+      break;
+    }
+
+    case "SUBSCRIPTION_PAUSED": {
+      // Google Play-specific (subscription pause) — not wired to the Stripe
+      // cancel_at_period_end / Flow B2 marker model; a pause isn't
+      // necessarily a cancellation, and Google isn't integrated yet (see
+      // upsertAppleSubscription callers above — "Play Store later"). Stays a
+      // true no-op: access continues, nothing recorded.
       break;
     }
 

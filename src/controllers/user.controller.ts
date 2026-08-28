@@ -65,7 +65,9 @@ export const getMyProfile = async (
   res: Response,
 ) => {
   try {
-    const profile = await UserService.getProfileById(req.user.id);
+    const profile = await UserService.getMyProfileWithFeedbackState(
+      req.user.id,
+    );
     res.json({ data: profile });
   } catch (err: any) {
     await logError({

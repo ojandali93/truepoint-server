@@ -54,6 +54,15 @@ const deriveCancelRequestedAt = (sub: Stripe.Subscription): string | null => {
     : new Date().toISOString();
 };
 
+/**
+ * Was this subscription trialing (vs. actively paying) at the moment
+ * cancellation was requested? Captured here, right where the status is
+ * already available, per FEEDBACK_DESIGN.md Phase 3's addition — not
+ * reconstructed later from history.
+ */
+const deriveWasTrial = (sub: Stripe.Subscription): boolean =>
+  sub.status === "trialing";
+
 // ─── Checkout Session ─────────────────────────────────────────────────────────
 
 export const createCheckoutSession = async (
@@ -202,7 +211,11 @@ export const handleWebhookEvent = async (
       // every update — covers cancellation OR reactivation initiated
       // anywhere (this app, Stripe dashboard, a future billing portal), not
       // just the /billing/subscription DELETE path below.
-      await setCancelRequestedAt(sub.id, deriveCancelRequestedAt(sub));
+      await setCancelRequestedAt(
+        sub.id,
+        deriveCancelRequestedAt(sub),
+        deriveWasTrial(sub),
+      );
       break;
     }
 
@@ -284,5 +297,6 @@ export const cancelSubscription = async (userId: string): Promise<void> => {
   await setCancelRequestedAt(
     sub.stripeSubscriptionId,
     deriveCancelRequestedAt(updated),
+    deriveWasTrial(updated),
   );
 };
