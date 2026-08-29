@@ -510,6 +510,74 @@ export const updateUserPlan = async (
   });
 };
 
+// ─── Grandfather-comp lifecycle tie-in (Phase 1 gate 7) ─────────────────────
+//
+// UX_OVERHAUL_PLAN.md §7 pricing migration: the 2 real subscribers active at
+// migration time get a comp Pro row layered on top of their existing real
+// (Apple/Google/Stripe) subscription — same mechanism updateUserPlan()
+// already uses for admin/vendor-code comp grants, indefinite (no
+// trial_ends_at). Ruling (Omar, this gate): "tied to the real subscription's
+// lifecycle... comp-Pro deactivates when the underlying real subscription
+// hits canceled/expired. Grandfathering rewards CONTINUING subscribers at
+// their old price; it is not a permanent free grant that survives
+// cancellation." This is that tie-in — called from every place a real
+// subscription's status actually reaches a terminal state:
+//   - revenuecat.service.ts's EXPIRATION case (Apple/Google)
+//   - billing.service.ts's customer.subscription.deleted case (Stripe)
+//
+// Deliberately does NOT fire on CANCELLATION (Apple) or
+// customer.subscription.updated with cancel_at_period_end set (Stripe) —
+// those mean "will lapse at period end," and resolvePlan() correctly keeps
+// granting access (real or comp) until the period actually ends, same
+// reasoning revenuecat.service.ts's own CANCELLATION case comment gives for
+// why status doesn't flip early. Only the true terminal event should cut
+// the comp grant.
+//
+// Checks whether the user has any OTHER real (non-comp) subscription still
+// active/trialing before deactivating — someone subscribed on two platforms
+// at once (e.g. web then later mobile) shouldn't lose their comp grant just
+// because one of the two lapsed. Subscriptions is one row per
+// (user_id, platform) (upsertAppleSubscription/upsertSubscription's
+// onConflict), so "any remaining real row" is a complete check, not an
+// approximation.
+export const deactivateGrandfatherCompIfNoRealSubRemains = async (
+  userId: string,
+): Promise<void> => {
+  const { data: realRows, error: realErr } = await supabaseAdmin
+    .from("subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .neq("platform", "comp")
+    .in("status", ["active", "trialing"]);
+  if (realErr) throw realErr;
+  if (realRows && realRows.length > 0) return; // still has a real sub elsewhere
+
+  const { data: compRow, error: compErr } = await supabaseAdmin
+    .from("subscriptions")
+    .select("id, status")
+    .eq("user_id", userId)
+    .eq("platform", "comp")
+    .in("status", ["active", "trialing"])
+    .maybeSingle();
+  if (compErr) throw compErr;
+  if (!compRow) return; // no comp grant to deactivate
+
+  const { error: updateErr } = await supabaseAdmin
+    .from("subscriptions")
+    .update({ status: "canceled", updated_at: new Date().toISOString() })
+    .eq("id", compRow.id);
+  if (updateErr) throw updateErr;
+
+  await supabaseAdmin.from("activity_logs").insert({
+    action: "admin.user.grandfather_comp_deactivated",
+    resource_type: "user",
+    resource_id: userId,
+    metadata: {
+      reason: "underlying real subscription reached a terminal state",
+    },
+  });
+};
+
 export const getUserErrorLogs = async (userId: string, limit = 20) => {
   const { data, error } = await supabaseAdmin
     .from("error_logs")

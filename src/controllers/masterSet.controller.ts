@@ -12,6 +12,7 @@ import {
   updateCardQuantity,
 } from "../services/masterSet.service";
 import { logError } from "../lib/Logger";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 // GET /master-sets — all tracked sets with progress
 export const getTracked = async (req: AuthenticatedRequest, res: Response) => {
@@ -86,13 +87,30 @@ export const startTracking = async (
   res: Response,
 ) => {
   try {
-    const result = await trackSet(req.user.id, req.params.setId);
+    // req.user.role wasn't passed before — trackSet defaulted to null,
+    // meaning an admin hitting this endpoint didn't get resolvePlan's
+    // admin → effectivePlan 'pro' override and was incorrectly subject to
+    // the master-set limit. Found and fixed alongside the error-handling
+    // gap below (Phase 1 gate 5) since it's the same call.
+    const result = await trackSet(
+      req.user.id,
+      req.params.setId,
+      req.user.role,
+    );
     if (!result.success) {
       res.status(403).json({ error: result.error, upgradeRequired: true });
       return;
     }
     res.json({ data: { tracked: true } });
   } catch (e: any) {
+    // Phase 1 gate 5: trackSet's limit error (now code PLAN_LIMIT_REACHED,
+    // see masterSet.service.ts) was falling through to the bare 500 below
+    // — this endpoint had no handlePlanError call at all, unlike every
+    // other plan-gated write as of gate 4 (gradingLifecycle.controller.ts,
+    // watchlist.controller.ts, grading.controller.ts). The counters UI
+    // (gate 5) surfaces this error to real users now, so it needed to
+    // actually carry status/code/limit/current instead of a bare 500.
+    if (handlePlanError(res, e)) return;
     await logError({
       source: "start-tracking", // ← change per controller
       message: e?.message ?? "Unknown error",

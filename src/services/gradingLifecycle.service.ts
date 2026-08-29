@@ -6,7 +6,7 @@
 
 import { supabaseAdmin } from "../lib/supabase";
 import { GRADING_COSTS } from "./gradingArbitrage.service";
-import { checkMonthlyLimit, requireFeature } from "./plan.service";
+import { getStaticLimit, requireFeature, resolvePlan } from "./plan.service";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -338,6 +338,39 @@ export const getSubmission = async (
   return submission;
 };
 
+// ─── Active-submission limit (Phase 1 gate 4) ───────────────────────────────
+//
+// "5 active" (UX_OVERHAUL_PLAN.md §7) is a concurrent/pipeline cap, not a
+// per-month creation count — completing a submission (reaching "returned")
+// frees a slot. Same resource-local pattern as
+// masterSet.service.ts::canTrackMoreSets and collection.service.ts's static
+// limit check: the count lives here (this resource's own service), the
+// tier's limit number comes from plan.service.ts::getStaticLimit.
+//
+// "returned" is the sole terminal status (STATUS_ORDER above) — matches the
+// same active/returned split this file's own ROI-summary query already
+// uses (`all.filter(r => r.status !== "returned")`), not a new definition
+// invented for this.
+export const canCreateMoreSubmissions = async (
+  userId: string,
+  role: string | null = null,
+) => {
+  const limit = await getStaticLimit(userId, "submissions", role);
+  // null = unlimited
+
+  const { count } = await supabaseAdmin
+    .from("grading_submissions")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .neq("status", "returned");
+
+  const current = count ?? 0;
+  const allowed = limit === null || current < limit;
+  const { plan } = await resolvePlan(userId, role);
+
+  return { allowed, current, limit, plan };
+};
+
 // ─── Create submission with cards ───────────────────────────────────────────
 
 export const createSubmission = async (
@@ -353,7 +386,32 @@ export const createSubmission = async (
   role: string | null = null,
 ): Promise<GradingSubmission> => {
   await requireFeature(userId, "submission_tracking", role);
-  await checkMonthlyLimit(userId, "submissions", role);
+
+  const { allowed, current, limit, plan } = await canCreateMoreSubmissions(
+    userId,
+    role,
+  );
+  if (!allowed) {
+    // code: "PLAN_LIMIT_REACHED", not a bespoke SUBMISSION_LIMIT_REACHED —
+    // this is the code handlePlanError (plan.middleware.ts) actually
+    // recognizes; gradingLifecycle.controller.ts's handle() wrapper already
+    // calls it. A masterSet-style bespoke code would silently fall through
+    // to that same wrapper's generic 500, losing the 403 and the message
+    // (masterSet.controller.ts's own trackSet() throw has exactly this gap
+    // today — pre-existing, out of scope here, flagged separately).
+    throw Object.assign(
+      new Error(
+        `Your ${plan} plan allows ${limit} active submission${limit === 1 ? "" : "s"}. Complete or remove one to add another, or upgrade to Pro for unlimited.`,
+      ),
+      {
+        status: 403,
+        code: "PLAN_LIMIT_REACHED",
+        upgradeTo: "pro",
+        limit,
+        current,
+      },
+    );
+  }
 
   if (!input.company) throw new Error("Grading company is required");
   if (!input.company) throw new Error("Grading company is required");

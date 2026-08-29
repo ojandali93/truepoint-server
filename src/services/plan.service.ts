@@ -38,45 +38,79 @@ const FEATURE_MIN_PLAN: Record<FeatureKey, PlanKey> = {
   sealed_inventory: "starter",
   pack_opening: "collector",
   portfolio_dashboard: "starter",
-  regrade_arbitrage: "collector",
-  submission_tracking: "collector",
-  ai_grading: "collector",
+  // regrade_arbitrage / submission_tracking / ai_grading dropped to
+  // "starter" here (UX_OVERHAUL_PLAN.md §7, Phase 1 gate 4) — all three
+  // are Free-tier features now, metered separately (see MONTHLY_LIMITS /
+  // STATIC_LIMITS below), not plan-gated at all. This is a real behavior
+  // change for submission_tracking and ai_grading: both were previously
+  // hard-blocked below Collector via requireFeature() — starter users can
+  // now reach them and hit the numeric cap instead. regrade_arbitrage's
+  // requireFeature/hasFeature was never actually called anywhere (grep-
+  // verified), so this entry was already decorative; corrected anyway so
+  // features.regrade_arbitrage in /me/plan's response isn't misleading if
+  // a future client starts reading it.
+  regrade_arbitrage: "starter",
+  submission_tracking: "starter",
+  ai_grading: "starter",
 };
 
 // ─── Monthly limits ─────────────────────────────────────────────────────────
 // `null` = unlimited. `0` = blocked (use FEATURE_MIN_PLAN instead, but kept
 // here as a safety net).
 
-export type MonthlyLimitKey =
-  | "ai_grading_reports"
-  | "submissions"
-  | "regrade_arbitrage_views";
+// submissions moved OUT of monthly limits (Phase 1 gate 4) — "5 active" in
+// the new split is a concurrent/pipeline cap (how many are open right now,
+// freed up when one reaches its terminal status), not a per-month creation
+// count. See StaticLimitKey/STATIC_LIMITS below, and
+// gradingLifecycle.service.ts::canCreateMoreSubmissions for the enforcement
+// (same resource-local pattern masterSet.service.ts::canTrackMoreSets and
+// collection.service.ts already use for static limits).
+export type MonthlyLimitKey = "ai_grading_reports" | "regrade_arbitrage_views";
 
+// starter/collector values below are both effectively "Free" tier numbers
+// now (UX_OVERHAUL_PLAN.md §7) — the codebase's PlanKey is still 3-way
+// pending the actual pricing-product migration (Phase 1 gates 6/7), so
+// both existing paid-but-legacy tiers get the same Free-tier numbers here
+// until that migration grandfathers real subscribers onto Pro. Flagged to
+// Omar: this does reduce the one real Collector subscriber's limits
+// (100/mo AI reports, 4/mo submissions, previously-decorative "50/mo"
+// arbitrage) down to the new Free numbers until gate 7 ships — sequence
+// gate 7 promptly behind this one.
 const MONTHLY_LIMITS: Record<
   MonthlyLimitKey,
   Record<PlanKey, number | null>
 > = {
   ai_grading_reports: {
-    starter: 0,
-    collector: 100,
-    pro: null,
-  },
-  submissions: {
-    starter: 0,
-    collector: 4,
+    starter: 5,
+    collector: 5,
     pro: null,
   },
   regrade_arbitrage_views: {
-    starter: 0,
-    collector: 50,
+    starter: 15,
+    collector: 15,
     pro: null,
   },
 };
 
 // ─── Persistent (non-monthly) limits ────────────────────────────────────────
 
-export type StaticLimitKey = "collections" | "master_sets" | "price_alerts";
+// price_alerts renamed watchlist_items (Phase 1 gate 4) — the limit was
+// never actually the count of *alerts*; buyBelowPrice/sellAbovePrice are
+// optional columns on a watchlist_items row, not a separate resource (see
+// watchlist.service.ts), so "watchlist + price alerts: 5 cards" (§7) is
+// one combined cap on watchlist row count. The old name collided in
+// meaning (not in code — just confusingly) with the unrelated
+// notify_price_alerts notification-preference boolean elsewhere in this
+// codebase. submissions added here (see the MonthlyLimitKey comment above
+// for why it moved from monthly to static).
+export type StaticLimitKey =
+  | "collections"
+  | "master_sets"
+  | "watchlist_items"
+  | "submissions";
 
+// Same Free-tier-numbers-for-both-legacy-paid-tiers caveat as
+// MONTHLY_LIMITS above applies to master_sets/watchlist_items/submissions.
 const STATIC_LIMITS: Record<StaticLimitKey, Record<PlanKey, number | null>> = {
   collections: {
     starter: 1,
@@ -84,13 +118,18 @@ const STATIC_LIMITS: Record<StaticLimitKey, Record<PlanKey, number | null>> = {
     pro: 3,
   },
   master_sets: {
-    starter: 3,
-    collector: null,
+    starter: 5,
+    collector: 5,
     pro: null,
   },
-  price_alerts: {
-    starter: 0,
-    collector: 10,
+  watchlist_items: {
+    starter: 5,
+    collector: 5,
+    pro: null,
+  },
+  submissions: {
+    starter: 5,
+    collector: 5,
     pro: null,
   },
 };
@@ -108,14 +147,16 @@ const MONTHLY_SOURCES: Record<
     userColumn: "user_id",
     dateColumn: "created_at",
   },
-  submissions: {
-    table: "grading_submissions",
+  // Real source as of Phase 1 gate 4 (migrations/2026-08-29_regrade_arbitrage_checks.sql)
+  // — was null ("cap is informational") before this; the cap is now
+  // actually enforced. Rows are written server-side, synchronously, inside
+  // GET /grading/arbitrage's controller for non-Pro requests only — see
+  // gradingArbitrage.service.ts.
+  regrade_arbitrage_views: {
+    table: "regrade_arbitrage_checks",
     userColumn: "user_id",
     dateColumn: "created_at",
   },
-  // No source table yet for arbitrage views — would need a usage table.
-  // Returning null means count = 0 always, so the cap is informational.
-  regrade_arbitrage_views: null,
 };
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
@@ -350,9 +391,67 @@ export const getPlanSnapshot = async (
   // whole app would fall back to DEFAULT_FEATURES (everything locked, for
   // everyone). Degrade to "no flags" instead: dark features stay dark, the
   // app keeps working.
-  const [aiGrading, submissions, flags] = await Promise.all([
+  //
+  // Phase 1 gate 5: regrade_arbitrage_views joins ai_grading_reports here
+  // (both monthly, both go through getMonthlyLimitInfo — no gate-4-vs-5
+  // distinction left, arbitrage's enforcement AND its counter ship
+  // together now). masterSets/watchlistItems/submissions current-counts
+  // are plain COUNT queries run directly here rather than importing
+  // masterSet.service.ts::canTrackMoreSets / watchlist.service.ts::
+  // canAddMoreToWatchlist / gradingLifecycle.service.ts::
+  // canCreateMoreSubmissions — all three of those already import FROM this
+  // file (getStaticLimit, resolvePlan), so importing them back in here
+  // would be circular. Three extra short queries, not a shared helper —
+  // same "no drift, but not DRY" trade-off this file's own
+  // getMonthlyUsage() comment already accepts for the monthly side.
+  const [
+    aiGrading,
+    arbitrage,
+    masterSetsCount,
+    watchlistCount,
+    submissionsCount,
+    hasIndefiniteCompGrant,
+    flags,
+  ] = await Promise.all([
     getMonthlyLimitInfo(userId, "ai_grading_reports", role),
-    getMonthlyLimitInfo(userId, "submissions", role),
+    getMonthlyLimitInfo(userId, "regrade_arbitrage_views", role),
+    supabaseAdmin
+      .from("master_set_tracking")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then((r) => r.count ?? 0),
+    supabaseAdmin
+      .from("watchlist_items")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then((r) => r.count ?? 0),
+    supabaseAdmin
+      .from("grading_submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .neq("status", "returned")
+      .then((r) => r.count ?? 0),
+    // Phase 1 gate 7 — "you've been upgraded to Pro" message trigger.
+    // platform='comp' + status='active' + trial_ends_at IS NULL uniquely
+    // identifies an INDEFINITE admin-granted comp-Pro row — vendor-code
+    // redemptions (vendorCode.service.ts) always set a real trial_ends_at
+    // (time-boxed), so they're excluded here by construction, not a
+    // separate reason column. Doesn't distinguish WHY the indefinite grant
+    // exists (grandfathering vs. a support-motivated admin grant), but
+    // "you've been upgraded to Pro" reads true either way — not worth a
+    // migration + new column for a message this narrow. The client shows
+    // it once, gated by a local AsyncStorage flag, same pattern as
+    // welcomeState.ts — this field staying true forever is expected, not a
+    // bug to chase.
+    supabaseAdmin
+      .from("subscriptions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("platform", "comp")
+      .eq("status", "active")
+      .is("trial_ends_at", null)
+      .maybeSingle()
+      .then((r) => r.data != null),
     resolveFlagsForUser(userId, role).catch((err) => {
       console.error("[PlanService] flag resolution failed:", err);
       return {} as Record<string, boolean>;
@@ -372,16 +471,30 @@ export const getPlanSnapshot = async (
     effectivePlan: resolved.effectivePlan,
     isAdmin: resolved.isAdmin,
     subscriptionPlatform: resolved.platform,
+    hasIndefiniteCompGrant, // gate 7's "upgraded to Pro" message trigger
     features, // entitlement — what your PLAN includes
     flags, // rollout — what has SHIPPED to you (booleans only)
     usage: {
       aiGradingReports: aiGrading,
-      submissions,
+      regradeArbitrageViews: arbitrage,
     },
+    // collections stays a bare number (unchanged, not one of gate 5's 5
+    // countered surfaces) — the other three carry `current` now so the
+    // client can render "N of Y" without a second request.
     staticLimits: {
       collections: STATIC_LIMITS.collections[resolved.effectivePlan],
-      masterSets: STATIC_LIMITS.master_sets[resolved.effectivePlan],
-      priceAlerts: STATIC_LIMITS.price_alerts[resolved.effectivePlan],
+      masterSets: {
+        current: masterSetsCount,
+        limit: STATIC_LIMITS.master_sets[resolved.effectivePlan],
+      },
+      watchlistItems: {
+        current: watchlistCount,
+        limit: STATIC_LIMITS.watchlist_items[resolved.effectivePlan],
+      },
+      submissions: {
+        current: submissionsCount,
+        limit: STATIC_LIMITS.submissions[resolved.effectivePlan],
+      },
     },
   };
 };
@@ -394,8 +507,6 @@ const friendlyName = (key: MonthlyLimitKey): string => {
   switch (key) {
     case "ai_grading_reports":
       return "AI grading reports";
-    case "submissions":
-      return "grading submissions";
     case "regrade_arbitrage_views":
       return "regrade arbitrage views";
   }

@@ -1,7 +1,12 @@
 // src/services/masterSet.service.ts
 // Master Set Tracking — 100% separate from inventory.
 // Users manually check off cards they own in their physical binders.
-// Plan limits: Free=1, Collector=3, Pro=unlimited (testing=unlimited)
+// Plan limits: Free=5, Collector=5, Pro=unlimited (UX_OVERHAUL_PLAN.md §7,
+// Phase 1 gate 4) — this comment previously said "Free=1, Collector=3,
+// Pro=unlimited", which didn't match STATIC_LIMITS.master_sets's actual
+// values even before this change (those were starter:3, collector:null —
+// i.e. unlimited for Collector, not 3). Stale comment, corrected here
+// alongside the real number update.
 
 import { supabaseAdmin } from "../lib/supabase";
 import { getStaticLimit, resolvePlan } from "./plan.service";
@@ -328,13 +333,28 @@ export const trackSet = async (
   setId: string,
   role: string | null = null,
 ) => {
-  const { canTrack, limit, plan } = await canTrackMoreSets(userId, role);
+  const { canTrack, current, limit, plan } = await canTrackMoreSets(
+    userId,
+    role,
+  );
   if (!canTrack) {
+    // Phase 1 gate 5: code changed from the bespoke MASTER_SET_LIMIT_REACHED
+    // to PLAN_LIMIT_REACHED — the code handlePlanError (plan.middleware.ts)
+    // actually recognizes. The old code meant this error fell through to
+    // masterSet.controller.ts's generic catch and shipped as a bare 500;
+    // fixed at the controller too (see that file). Same fix already
+    // applied to submissions/watchlist in gate 4.
     throw Object.assign(
       new Error(
         `Your ${plan} plan allows ${limit} set${limit === 1 ? "" : "s"}. Upgrade to Pro to add more.`,
       ),
-      { status: 403, code: "MASTER_SET_LIMIT_REACHED" },
+      {
+        status: 403,
+        code: "PLAN_LIMIT_REACHED",
+        upgradeTo: "pro",
+        limit,
+        current,
+      },
     );
   }
 

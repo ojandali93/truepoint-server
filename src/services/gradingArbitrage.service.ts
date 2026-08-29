@@ -15,6 +15,7 @@
 import { supabaseAdmin } from "../lib/supabase";
 import { fetchAllByIn } from "../lib/pgFetchAll";
 import { parseGradeString, sourceAllowedAtTier } from "../lib/gradedPricePrecedence";
+import { checkMonthlyLimit, resolvePlan } from "./plan.service";
 
 // ─── Grading costs (USD) ──────────────────────────────────────────────────────
 // Standard tier pricing as of 2025. These are approximate — user can override.
@@ -149,7 +150,25 @@ export const getGradingArbitrage = async (
   gradingTier: string = "value",
   targetGrade: string = "10",
   useNewPrecedence: boolean = false,
+  role: string | null = null,
 ): Promise<ArbitrageSummary> => {
+  // Phase 1 gate 4 metering (UX_OVERHAUL_PLAN.md §7: 15/month, Free tier).
+  // Throws (403) if already at the monthly cap — no-ops for Pro, whose
+  // limit resolves to null. Logged server-side, synchronously, only for
+  // the metered case: Pro requests never write to
+  // regrade_arbitrage_checks, matching that migration's own "why log what
+  // we'll never cap" note. This is the ONE call site for this table —
+  // deliberately not client-batched (see events.ts's header comment on why
+  // billing enforcement never depends on that path).
+  const { effectivePlan } = await resolvePlan(userId, role);
+  await checkMonthlyLimit(userId, "regrade_arbitrage_views", role);
+  if (effectivePlan !== "pro") {
+    const { error: logErr } = await supabaseAdmin
+      .from("regrade_arbitrage_checks")
+      .insert({ user_id: userId });
+    if (logErr) throw logErr;
+  }
+
   const gradingCost = GRADING_COSTS[gradingService]?.[gradingTier] ?? 25;
 
   // Get all raw cards from user's inventory
