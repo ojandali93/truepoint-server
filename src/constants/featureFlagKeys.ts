@@ -35,6 +35,7 @@ export const FLAG_KEYS = {
   NOTIFY_WATCHLIST_TRIGGERS: "notify_watchlist_triggers",
   NOTIFY_PRICE_MOVERS: "notify_price_movers",
   PRICECHARTING_PRICING: "pricecharting_pricing",
+  PRO_PRICING_V2: "pro_pricing_v2",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -97,5 +98,20 @@ export const KNOWN_FLAGS: KnownFlag[] = [
       "(PokeTrace excluded entirely, no fallback — see fetchCardPrices / " +
       "getGradedPricesForCard). Off = today's behavior unchanged. " +
       "Off → allowlist (Omar) → everyone.",
+  },
+  {
+    key: FLAG_KEYS.PRO_PRICING_V2,
+    label: "Pro Pricing v2 ($14.99/mo · $129.99/yr)",
+    description:
+      "UX_OVERHAUL_PLAN.md §7 Phase 1 gate 6 — new paywall display (Pro " +
+      "monthly + annual, legacy Collector/Starter tiers retired from " +
+      "DISPLAY only, never from the server's product mapping or anyone's " +
+      "existing entitlement). MUST stay off until the ASC review for " +
+      "pro_monthly_1499/pro_annual_12999 clears (status: Waiting for " +
+      "Review as of this flag's creation — ships with the next app binary " +
+      "submission). Flipping this on before that approves shows real " +
+      "production users a Buy button for a product Apple hasn't approved " +
+      "yet — the purchase will fail. Off → allowlist (Omar, sandbox-test " +
+      "once ASC approves) → everyone.",
   },
 ];

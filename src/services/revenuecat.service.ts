@@ -18,12 +18,39 @@ import {
   setCancelRequestedAtByProviderId,
 } from "../repositories/billing.repository";
 import { logError } from "../lib/Logger";
+import { deactivateGrandfatherCompIfNoRealSubRemains } from "./adminPlatform.service";
 
-// Map your App Store product identifiers → plan tiers.
-// These must match the product IDs you create in App Store Connect (7.4).
+// Map store product identifiers → plan tiers.
+// These must match the product IDs created in App Store Connect / Google
+// Play Console.
+//
+// Phase 1 gate 6 (UX_OVERHAUL_PLAN.md §7 pricing) — new Pro monthly/yearly
+// products added below, legacy collector/pro left in place and NEVER
+// removed (§3 decided: "Grandfather the 2 real subscribers on legacy
+// products... never delete products" — a legacy subscriber's renewal
+// webhook still needs to resolve to a plan).
+//
+// iOS: event.product_id is the bare ASC product ID (pro_monthly_1499,
+// pro_annual_12999) — status "Waiting for Review" as of this writing;
+// sandbox purchases resolve correctly today, but these won't be
+// purchasable in PRODUCTION until Apple approves them alongside the next
+// app binary submission. See paywall.tsx's PRO_PRICING_V2 flag gate —
+// this map being ready doesn't mean the paywall should show these yet.
+//
+// Android: event.product_id for a Play subscription with a base plan is
+// "<productId>:<basePlanId>" per RevenueCat's convention. The monthly
+// base-plan id is "pro-montly" — that's not a typo introduced here, it's
+// AS-CREATED on Google Play Console (missing the 'h'). Copy verbatim.
+// Google Play base-plan/product IDs are immutable once created, so
+// "fixing" the spelling here would just make this map stop matching the
+// real product Play actually sends — the typo is load-bearing now.
 const PRODUCT_TO_PLAN: Record<string, "collector" | "pro"> = {
   collector: "collector",
   pro: "pro",
+  pro_monthly_1499: "pro",
+  pro_annual_12999: "pro",
+  "pro_monthly_1499:pro-montly": "pro", // verbatim Play base-plan id — see comment above
+  "pro_annual_12999:pro-annual": "pro",
 };
 
 // RevenueCat event types we act on.
@@ -162,6 +189,14 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
     case "EXPIRATION": {
       if (providerId) {
         await updateAppleSubscriptionStatus(providerId, "canceled", periodEnd);
+        // Phase 1 gate 7: the true terminal event for this real
+        // subscription — this is where a grandfathered comp-Pro grant (if
+        // any) gets checked and deactivated, per the "tied to the real
+        // subscription's lifecycle" ruling. See
+        // adminPlatform.service.ts::deactivateGrandfatherCompIfNoRealSubRemains
+        // for the full reasoning (won't fire if the user still has another
+        // real subscription active elsewhere).
+        await deactivateGrandfatherCompIfNoRealSubRemains(userId);
       }
       break;
     }
