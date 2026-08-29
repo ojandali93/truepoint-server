@@ -391,18 +391,44 @@ export const getPlanSnapshot = async (
   // whole app would fall back to DEFAULT_FEATURES (everything locked, for
   // everyone). Degrade to "no flags" instead: dark features stay dark, the
   // app keeps working.
-  // Only ai_grading_reports here — regrade_arbitrage_views is now real
-  // too, but exposing its live usage number to the client (the honest
-  // "N of 15 left" counter) is Phase 1 gate 5's job, not this one.
-  // submissions is no longer a monthly resource at all (see
-  // MonthlyLimitKey's comment above).
-  const [aiGrading, flags] = await Promise.all([
-    getMonthlyLimitInfo(userId, "ai_grading_reports", role),
-    resolveFlagsForUser(userId, role).catch((err) => {
-      console.error("[PlanService] flag resolution failed:", err);
-      return {} as Record<string, boolean>;
-    }),
-  ]);
+  //
+  // Phase 1 gate 5: regrade_arbitrage_views joins ai_grading_reports here
+  // (both monthly, both go through getMonthlyLimitInfo — no gate-4-vs-5
+  // distinction left, arbitrage's enforcement AND its counter ship
+  // together now). masterSets/watchlistItems/submissions current-counts
+  // are plain COUNT queries run directly here rather than importing
+  // masterSet.service.ts::canTrackMoreSets / watchlist.service.ts::
+  // canAddMoreToWatchlist / gradingLifecycle.service.ts::
+  // canCreateMoreSubmissions — all three of those already import FROM this
+  // file (getStaticLimit, resolvePlan), so importing them back in here
+  // would be circular. Three extra short queries, not a shared helper —
+  // same "no drift, but not DRY" trade-off this file's own
+  // getMonthlyUsage() comment already accepts for the monthly side.
+  const [aiGrading, arbitrage, masterSetsCount, watchlistCount, submissionsCount, flags] =
+    await Promise.all([
+      getMonthlyLimitInfo(userId, "ai_grading_reports", role),
+      getMonthlyLimitInfo(userId, "regrade_arbitrage_views", role),
+      supabaseAdmin
+        .from("master_set_tracking")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .then((r) => r.count ?? 0),
+      supabaseAdmin
+        .from("watchlist_items")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .then((r) => r.count ?? 0),
+      supabaseAdmin
+        .from("grading_submissions")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .neq("status", "returned")
+        .then((r) => r.count ?? 0),
+      resolveFlagsForUser(userId, role).catch((err) => {
+        console.error("[PlanService] flag resolution failed:", err);
+        return {} as Record<string, boolean>;
+      }),
+    ]);
 
   // Build a features map the frontend can use as `features.portfolio_dashboard`
   const features: Record<FeatureKey, boolean> = Object.fromEntries(
@@ -421,12 +447,25 @@ export const getPlanSnapshot = async (
     flags, // rollout — what has SHIPPED to you (booleans only)
     usage: {
       aiGradingReports: aiGrading,
+      regradeArbitrageViews: arbitrage,
     },
+    // collections stays a bare number (unchanged, not one of gate 5's 5
+    // countered surfaces) — the other three carry `current` now so the
+    // client can render "N of Y" without a second request.
     staticLimits: {
       collections: STATIC_LIMITS.collections[resolved.effectivePlan],
-      masterSets: STATIC_LIMITS.master_sets[resolved.effectivePlan],
-      watchlistItems: STATIC_LIMITS.watchlist_items[resolved.effectivePlan],
-      submissions: STATIC_LIMITS.submissions[resolved.effectivePlan],
+      masterSets: {
+        current: masterSetsCount,
+        limit: STATIC_LIMITS.master_sets[resolved.effectivePlan],
+      },
+      watchlistItems: {
+        current: watchlistCount,
+        limit: STATIC_LIMITS.watchlist_items[resolved.effectivePlan],
+      },
+      submissions: {
+        current: submissionsCount,
+        limit: STATIC_LIMITS.submissions[resolved.effectivePlan],
+      },
     },
   };
 };

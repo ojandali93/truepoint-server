@@ -333,13 +333,28 @@ export const trackSet = async (
   setId: string,
   role: string | null = null,
 ) => {
-  const { canTrack, limit, plan } = await canTrackMoreSets(userId, role);
+  const { canTrack, current, limit, plan } = await canTrackMoreSets(
+    userId,
+    role,
+  );
   if (!canTrack) {
+    // Phase 1 gate 5: code changed from the bespoke MASTER_SET_LIMIT_REACHED
+    // to PLAN_LIMIT_REACHED — the code handlePlanError (plan.middleware.ts)
+    // actually recognizes. The old code meant this error fell through to
+    // masterSet.controller.ts's generic catch and shipped as a bare 500;
+    // fixed at the controller too (see that file). Same fix already
+    // applied to submissions/watchlist in gate 4.
     throw Object.assign(
       new Error(
         `Your ${plan} plan allows ${limit} set${limit === 1 ? "" : "s"}. Upgrade to Pro to add more.`,
       ),
-      { status: 403, code: "MASTER_SET_LIMIT_REACHED" },
+      {
+        status: 403,
+        code: "PLAN_LIMIT_REACHED",
+        upgradeTo: "pro",
+        limit,
+        current,
+      },
     );
   }
 
