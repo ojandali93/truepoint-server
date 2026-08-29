@@ -1,7 +1,12 @@
 // src/services/masterSet.service.ts
 // Master Set Tracking — 100% separate from inventory.
 // Users manually check off cards they own in their physical binders.
-// Plan limits: Free=1, Collector=3, Pro=unlimited (testing=unlimited)
+// Plan limits: Free=5, Collector=5, Pro=unlimited (UX_OVERHAUL_PLAN.md §7,
+// Phase 1 gate 4) — this comment previously said "Free=1, Collector=3,
+// Pro=unlimited", which didn't match STATIC_LIMITS.master_sets's actual
+// values even before this change (those were starter:3, collector:null —
+// i.e. unlimited for Collector, not 3). Stale comment, corrected here
+// alongside the real number update.
 
 import { supabaseAdmin } from "../lib/supabase";
 import { getStaticLimit, resolvePlan } from "./plan.service";

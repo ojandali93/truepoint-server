@@ -9,6 +9,7 @@ import {
 import { logError } from "../lib/Logger";
 import { isFlagEnabled } from "../services/featureFlag.service";
 import { FLAG_KEYS } from "../constants/featureFlagKeys";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 // GET /api/v1/grading/arbitrage
 export const getArbitrage = async (
@@ -33,9 +34,15 @@ export const getArbitrage = async (
       tier,
       grade,
       useNewGradedPrecedence,
+      req.user.role,
     );
     res.json({ data: result });
   } catch (err: any) {
+    // Phase 1 gate 4: without this, checkMonthlyLimit's PlanError (403,
+    // PLAN_LIMIT_REACHED, carrying limit/current/upgradeTo) fell through
+    // to the generic 500 below and lost all of that — same handlePlanError
+    // helper aiGrading.controller.ts already uses for its own limit throw.
+    if (handlePlanError(res, err)) return;
     await logError({
       source: "get-arbitrage", // ← change per controller
       message: err?.message ?? "Unknown error",

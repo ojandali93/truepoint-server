@@ -5,8 +5,15 @@ import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import { logError } from "../lib/Logger";
 import * as WatchlistService from "../services/watchlist.service";
+import { handlePlanError } from "../middleware/plan.middleware";
 
 const handle = (res: Response, err: unknown, source: string) => {
+  // Phase 1 gate 4: checked first so addToWatchlist's PLAN_LIMIT_REACHED
+  // throw (canAddMoreToWatchlist, watchlist.service.ts) surfaces with
+  // limit/current/upgradeTo, not just {error, status} — same structured
+  // shape gradingLifecycle's and getGradingArbitrage's limit errors now
+  // carry.
+  if (handlePlanError(res, err)) return;
   if (err && typeof err === "object" && "status" in err) {
     const e = err as { status: number; message?: string };
     res.status(e.status).json({ error: e.message ?? "Error" });
@@ -37,21 +44,25 @@ export const addToWatchlist = async (
 ): Promise<void> => {
   try {
     const body = req.body ?? {};
-    const created = await WatchlistService.addToWatchlist(req.user.id, {
-      cardId: body.cardId ?? null,
-      productId: body.productId ?? null,
-      targetCompany: body.targetCompany ?? null,
-      targetGrade: body.targetGrade ?? null,
-      buyBelowPrice:
-        body.buyBelowPrice !== undefined && body.buyBelowPrice !== null
-          ? Number(body.buyBelowPrice)
-          : null,
-      sellAbovePrice:
-        body.sellAbovePrice !== undefined && body.sellAbovePrice !== null
-          ? Number(body.sellAbovePrice)
-          : null,
-      notes: body.notes ?? null,
-    });
+    const created = await WatchlistService.addToWatchlist(
+      req.user.id,
+      {
+        cardId: body.cardId ?? null,
+        productId: body.productId ?? null,
+        targetCompany: body.targetCompany ?? null,
+        targetGrade: body.targetGrade ?? null,
+        buyBelowPrice:
+          body.buyBelowPrice !== undefined && body.buyBelowPrice !== null
+            ? Number(body.buyBelowPrice)
+            : null,
+        sellAbovePrice:
+          body.sellAbovePrice !== undefined && body.sellAbovePrice !== null
+            ? Number(body.sellAbovePrice)
+            : null,
+        notes: body.notes ?? null,
+      },
+      req.user.role,
+    );
     res.status(201).json({ data: created });
   } catch (err) {
     handle(res, err, "watchlist-add");

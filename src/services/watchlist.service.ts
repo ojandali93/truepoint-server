@@ -16,6 +16,7 @@ import {
   getCardPriceHistory,
   getProductPriceHistory,
 } from "./historicPrices.service";
+import { getStaticLimit, resolvePlan } from "./plan.service";
 
 const TABLE = "watchlist_items";
 const GRADING_COMPANIES = ["PSA", "BGS", "CGC", "SGC", "TAG"] as const;
@@ -341,13 +342,62 @@ function computeSevenDayChange(
   };
 }
 
+// ─── Watchlist + price-alert limit (Phase 1 gate 4) ─────────────────────────
+//
+// "Watchlist + price alerts: 5 cards" (UX_OVERHAUL_PLAN.md §7) is ONE
+// combined cap — buyBelowPrice/sellAbovePrice are optional columns on a
+// watchlist_items row (see WatchlistItemInput above), not a separate
+// resource, so the limit is simply this table's row count. Was completely
+// unenforced before this (STATIC_LIMITS.price_alerts existed but nothing
+// ever called it here). Same resource-local pattern as
+// masterSet.service.ts::canTrackMoreSets / gradingLifecycle.service.ts::
+// canCreateMoreSubmissions.
+export const canAddMoreToWatchlist = async (
+  userId: string,
+  role: string | null = null,
+) => {
+  const limit = await getStaticLimit(userId, "watchlist_items", role);
+  // null = unlimited
+
+  const { count } = await supabaseAdmin
+    .from(TABLE)
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId);
+
+  const current = count ?? 0;
+  const allowed = limit === null || current < limit;
+  const { plan } = await resolvePlan(userId, role);
+
+  return { allowed, current, limit, plan };
+};
+
 // ─── Create ─────────────────────────────────────────────────────────────────
 
 export const addToWatchlist = async (
   userId: string,
   input: WatchlistItemInput,
+  role: string | null = null,
 ) => {
   validateInput(input, true);
+
+  const { allowed, current, limit, plan } = await canAddMoreToWatchlist(
+    userId,
+    role,
+  );
+  if (!allowed) {
+    throw Object.assign(
+      new Error(
+        `Your ${plan} plan allows ${limit} watchlist card${limit === 1 ? "" : "s"}. Remove one to add another, or upgrade to Pro for unlimited.`,
+      ),
+      {
+        status: 403,
+        code: "PLAN_LIMIT_REACHED",
+        upgradeTo: "pro",
+        limit,
+        current,
+      },
+    );
+  }
 
   if (input.cardId) {
     const { data: card, error: cardErr } = await supabaseAdmin
