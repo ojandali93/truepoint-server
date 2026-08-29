@@ -40,6 +40,7 @@ import regradeRoutes from "../routes/regrade.routes";
 import csvImportRoutes from "../routes/csvImport.routes";
 import productFeedbackRoutes from "../routes/productFeedback.routes";
 import productFeedbackAdminRoutes from "../routes/productFeedbackAdmin.routes";
+import eventsRoutes from "../routes/events.routes";
 
 dotenv.config();
 
@@ -96,6 +97,9 @@ app.use("/api/v1/master-sets", masterSetRoutes);
 app.use("/api/v1/collections", collectionRoutes);
 app.use("/api/v1/feedback", feedbackRoutes);
 app.use("/api/v1/product-feedback", productFeedbackRoutes);
+// Own prefix + per-route auth (not router.use) — /events/anonymous is
+// deliberately public, see events.routes.ts's header comment.
+app.use("/api/v1/events", eventsRoutes);
 
 app.post("/debug/token", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
