@@ -1,6 +1,6 @@
 // @ts-nocheck
 import Stripe from "stripe";
-import { stripe, STRIPE_PRICE_IDS } from "../lib/stripe";
+import { stripe, STRIPE_PRICE_IDS, STRIPE_PRO_V2_PRICE_IDS } from "../lib/stripe";
 import {
   findSubscriptionByUserId,
   findSubscriptionByStripeId,
@@ -70,11 +70,22 @@ export const createCheckoutSession = async (
   userId: string,
   userEmail: string,
   plan: "collector" | "pro",
+  // Phase 1 gate 6 — only "pro" has a v2 monthly/annual split; omitted or
+  // "collector" falls straight through to the legacy single-price path
+  // below, unchanged. No web caller passes this yet (the pricing-page
+  // toggle is a separate, not-yet-built change) — this just makes the
+  // server capable of it once one does.
+  billingPeriod?: "monthly" | "annual",
 ): Promise<{ clientSecret: string; sessionId: string }> => {
-  if (!STRIPE_PRICE_IDS[plan]) {
+  const priceId =
+    plan === "pro" && billingPeriod
+      ? STRIPE_PRO_V2_PRICE_IDS[billingPeriod]
+      : STRIPE_PRICE_IDS[plan];
+
+  if (!priceId) {
     throw {
       status: 400,
-      message: `No Stripe price configured for plan: ${plan}`,
+      message: `No Stripe price configured for plan: ${plan}${billingPeriod ? ` (${billingPeriod})` : ""}`,
     };
   }
 
@@ -102,7 +113,7 @@ export const createCheckoutSession = async (
     return_url: `${process.env.FRONTEND_URL}/onboarding?session_id={CHECKOUT_SESSION_ID}&plan=${plan}`,
     line_items: [
       {
-        price: STRIPE_PRICE_IDS[plan],
+        price: priceId,
         quantity: 1,
       },
     ],
@@ -111,11 +122,13 @@ export const createCheckoutSession = async (
       metadata: {
         supabase_user_id: userId,
         plan,
+        ...(billingPeriod ? { billingPeriod } : {}),
       },
     },
     metadata: {
       supabase_user_id: userId,
       plan,
+      ...(billingPeriod ? { billingPeriod } : {}),
     },
   });
 

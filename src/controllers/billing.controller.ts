@@ -17,11 +17,15 @@ export const createCheckoutSession = async (
   res: Response,
 ) => {
   try {
-    const { plan } = req.body;
+    // billingPeriod: Phase 1 gate 6 — optional, only meaningful for
+    // plan "pro". No current web caller sends it; passed through so the
+    // route is ready once the new-pricing checkout UI is built.
+    const { plan, billingPeriod } = req.body;
     const result = await BillingService.createCheckoutSession(
       req.user.id,
       req.user.email,
       plan,
+      billingPeriod,
     );
     res.json({ data: result });
   } catch (err: any) {
