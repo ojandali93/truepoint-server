@@ -1,5 +1,16 @@
-// One-off: grandfather the 2 real active subscribers onto Pro at the moment
+// One-off: grandfather the real active subscribers onto Pro at the moment
 // of the §7 pricing migration (UX_OVERHAUL_PLAN.md, Phase 1 gate 7).
+//
+// Count corrected 2026-08-29: the plan doc's "2 real active subscribers"
+// was stale planning-time memory. Omar's own live query of `subscriptions`
+// returned FIVE active/trialing rows at grandfathering time — table wins
+// over doc. Of those five, ONE (ca47801f-661e-44c6-9d15-342a3c15d400) is
+// deliberately EXCLUDED here: a Stripe trial stuck at status='trialing'
+// with current_period_end 2026-08-16, thirteen days past at the time this
+// was found — a stale lifecycle row, not a real still-trialing subscriber.
+// Root cause identified and BACKLOG'd (see BACKLOG.md, "Stripe webhook
+// signature verification broken since 2026-06-29") — not fixed here, and
+// deliberately not grandfathered while its true status is unknown.
 //
 // Mechanism: a separate platform='comp' row layered on top of each user's
 // existing real subscription, via the same updateUserPlan() function the
@@ -23,33 +34,39 @@
 // ruling: "grandfathering rewards CONTINUING subscribers at their old
 // price; it is not a permanent free grant that survives cancellation."
 //
-// User IDs verified by Omar directly from the admin panel (2026-08-29) —
-// NOT derived or guessed here, per this repo's own verify-don't-assume
-// discipline (CLAUDE.md §6's pricecharting_pricing flag lesson is the
-// canonical example of why).
+// User IDs verified by Omar directly from a live query of `subscriptions`
+// (2026-08-29) — NOT derived or guessed here, per this repo's own
+// verify-don't-assume discipline (CLAUDE.md §6's pricecharting_pricing
+// flag lesson is the canonical example of why).
 //
 // Run once: npx ts-node scripts/grandfatherLegacySubscribers.ts
 // Idempotent: updateUserPlan() upserts by (user_id, platform) — safe to
 // re-run if it fails partway through.
 //
-// BLOCKED as written: [uuid1]/[uuid2] below are placeholders, not the real
-// IDs — Omar's message named them exactly that way (matching the same
-// bracket-placeholder pattern the gate 6 Stripe price IDs used), so this
-// script deliberately refuses to run until they're filled in for real (see
-// the guard right after this array) rather than silently no-op'ing or,
-// worse, erroring confusingly mid-way through a partial run.
+// RESOLVED 2026-08-29: an earlier version of this file held [uuid1]/[uuid2]
+// placeholders (Omar's own message named them exactly that way) and
+// refused to run — see the guard below, kept as a standing safeguard, not
+// just for that one incident.
 
 import "dotenv/config";
 import { updateUserPlan } from "../src/services/adminPlatform.service";
 
 const SUBSCRIBERS: { userId: string; note: string }[] = [
   {
-    userId: "[uuid1]",
-    note: "Phase 1 §7 grandfather — paying subscriber at migration time",
+    userId: "2bee0d3f-b179-4bad-b58b-1f7d38e0789e",
+    note: "Phase 1 §7 grandfather — paying subscriber (apple, plan already pro) at migration time; comp grant applied anyway for policy uniformity across all four",
   },
   {
-    userId: "[uuid2]",
-    note: "Phase 1 §7 grandfather — trialing subscriber at migration time",
+    userId: "a912179a-0701-44b5-aa7d-c758758a3fa8",
+    note: "Phase 1 §7 grandfather — trialing subscriber (apple, collector, trial ends 2026-08-31) at migration time",
+  },
+  {
+    userId: "e30c28bf-af1c-487b-8b62-ac963259b1cf",
+    note: "Phase 1 §7 grandfather — trialing subscriber (apple, collector, trial ends 2026-09-03) at migration time",
+  },
+  {
+    userId: "c857df72-8e3d-4cfa-b512-366c77fddcdc",
+    note: "Phase 1 §7 grandfather — trialing subscriber (apple, collector, trial ends 2026-09-05) at migration time",
   },
 ];
 
