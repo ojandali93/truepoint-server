@@ -9,6 +9,7 @@ import {
   setCancelRequestedAt,
 } from "../repositories/billing.repository";
 import { BillingSubscription } from "../types/billing.types";
+import { deactivateGrandfatherCompIfNoRealSubRemains } from "./adminPlatform.service";
 
 const TRIAL_DAYS = 14;
 
@@ -228,6 +229,12 @@ export const handleWebhookEvent = async (
       const saved = await findSubscriptionByStripeId(sub.id);
       if (saved) {
         await updateSubscriptionStatus(sub.id, "canceled");
+        // Phase 1 gate 7: same tie-in as revenuecat.service.ts's EXPIRATION
+        // case — this is the true terminal event for a Stripe subscription,
+        // where a grandfathered comp-Pro grant (if any) gets checked and
+        // deactivated. See
+        // adminPlatform.service.ts::deactivateGrandfatherCompIfNoRealSubRemains.
+        await deactivateGrandfatherCompIfNoRealSubRemains(saved.userId);
       }
       break;
     }

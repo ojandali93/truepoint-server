@@ -404,31 +404,59 @@ export const getPlanSnapshot = async (
   // would be circular. Three extra short queries, not a shared helper —
   // same "no drift, but not DRY" trade-off this file's own
   // getMonthlyUsage() comment already accepts for the monthly side.
-  const [aiGrading, arbitrage, masterSetsCount, watchlistCount, submissionsCount, flags] =
-    await Promise.all([
-      getMonthlyLimitInfo(userId, "ai_grading_reports", role),
-      getMonthlyLimitInfo(userId, "regrade_arbitrage_views", role),
-      supabaseAdmin
-        .from("master_set_tracking")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .then((r) => r.count ?? 0),
-      supabaseAdmin
-        .from("watchlist_items")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .then((r) => r.count ?? 0),
-      supabaseAdmin
-        .from("grading_submissions")
-        .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .neq("status", "returned")
-        .then((r) => r.count ?? 0),
-      resolveFlagsForUser(userId, role).catch((err) => {
-        console.error("[PlanService] flag resolution failed:", err);
-        return {} as Record<string, boolean>;
-      }),
-    ]);
+  const [
+    aiGrading,
+    arbitrage,
+    masterSetsCount,
+    watchlistCount,
+    submissionsCount,
+    hasIndefiniteCompGrant,
+    flags,
+  ] = await Promise.all([
+    getMonthlyLimitInfo(userId, "ai_grading_reports", role),
+    getMonthlyLimitInfo(userId, "regrade_arbitrage_views", role),
+    supabaseAdmin
+      .from("master_set_tracking")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then((r) => r.count ?? 0),
+    supabaseAdmin
+      .from("watchlist_items")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .then((r) => r.count ?? 0),
+    supabaseAdmin
+      .from("grading_submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .neq("status", "returned")
+      .then((r) => r.count ?? 0),
+    // Phase 1 gate 7 — "you've been upgraded to Pro" message trigger.
+    // platform='comp' + status='active' + trial_ends_at IS NULL uniquely
+    // identifies an INDEFINITE admin-granted comp-Pro row — vendor-code
+    // redemptions (vendorCode.service.ts) always set a real trial_ends_at
+    // (time-boxed), so they're excluded here by construction, not a
+    // separate reason column. Doesn't distinguish WHY the indefinite grant
+    // exists (grandfathering vs. a support-motivated admin grant), but
+    // "you've been upgraded to Pro" reads true either way — not worth a
+    // migration + new column for a message this narrow. The client shows
+    // it once, gated by a local AsyncStorage flag, same pattern as
+    // welcomeState.ts — this field staying true forever is expected, not a
+    // bug to chase.
+    supabaseAdmin
+      .from("subscriptions")
+      .select("id")
+      .eq("user_id", userId)
+      .eq("platform", "comp")
+      .eq("status", "active")
+      .is("trial_ends_at", null)
+      .maybeSingle()
+      .then((r) => r.data != null),
+    resolveFlagsForUser(userId, role).catch((err) => {
+      console.error("[PlanService] flag resolution failed:", err);
+      return {} as Record<string, boolean>;
+    }),
+  ]);
 
   // Build a features map the frontend can use as `features.portfolio_dashboard`
   const features: Record<FeatureKey, boolean> = Object.fromEntries(
@@ -443,6 +471,7 @@ export const getPlanSnapshot = async (
     effectivePlan: resolved.effectivePlan,
     isAdmin: resolved.isAdmin,
     subscriptionPlatform: resolved.platform,
+    hasIndefiniteCompGrant, // gate 7's "upgraded to Pro" message trigger
     features, // entitlement — what your PLAN includes
     flags, // rollout — what has SHIPPED to you (booleans only)
     usage: {
