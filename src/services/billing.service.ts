@@ -1,4 +1,18 @@
 // @ts-nocheck
+//
+// EMERGENCY FIX 2026-08-30 attempted removing @ts-nocheck (per instruction:
+// "if feasible... if removal surfaces more errors, report them, don't
+// fix-all silently") — 16 pre-existing errors surfaced, unrelated to the
+// logError bug this fix actually targets (Stripe.Subscription/.Event/
+// .Invoice namespace-member errors, likely a Stripe SDK type-resolution
+// issue given `stripe` the client and `Stripe` the type import share this
+// file; several `string | null` vs `string`/`undefined` mismatches on
+// existing call sites). Full list in this commit's message. Fixing all of
+// them is real, separate scope under time pressure on an emergency
+// branch — left @ts-nocheck in place rather than fix-all-silently, and
+// rather than ship this branch with a red tsc gate. The actual bug (the
+// missing import below) is fixed either way — that fix doesn't depend on
+// @ts-nocheck's presence.
 import Stripe from "stripe";
 import { stripe, STRIPE_PRICE_IDS, STRIPE_PRO_V2_PRICE_IDS } from "../lib/stripe";
 import {
@@ -10,6 +24,13 @@ import {
 } from "../repositories/billing.repository";
 import { BillingSubscription } from "../types/billing.types";
 import { deactivateGrandfatherCompIfNoRealSubRemains } from "./adminPlatform.service";
+// This was never imported despite being called in two places below
+// (handleWebhookEvent's catch, and its default-case branch) — the
+// missing import threw ReferenceError: logError is not defined at
+// runtime, masking the real "Invalid webhook signature" error for two
+// months (see BACKLOG.md). @ts-nocheck above is exactly why tsc never
+// caught this — a plain missing-import error, not a real type puzzle.
+import { logError } from "../lib/Logger";
 
 const TRIAL_DAYS = 14;
 

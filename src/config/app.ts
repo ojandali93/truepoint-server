@@ -41,6 +41,7 @@ import csvImportRoutes from "../routes/csvImport.routes";
 import productFeedbackRoutes from "../routes/productFeedback.routes";
 import productFeedbackAdminRoutes from "../routes/productFeedbackAdmin.routes";
 import eventsRoutes from "../routes/events.routes";
+import * as BillingController from "../controllers/billing.controller";
 
 dotenv.config();
 
@@ -49,6 +50,27 @@ app.set("trust proxy", 1);
 
 app.use(helmet());
 app.use(cors({ origin: process.env.ALLOWED_ORIGINS?.split(",") ?? "*" }));
+
+// EMERGENCY FIX 2026-08-30 (see BACKLOG.md "Stripe webhook signature
+// verification broken since 2026-06-29"): the Stripe webhook needs the
+// RAW, unparsed request body to compute/verify its HMAC signature
+// (stripe.webhooks.constructEvent, called from billing.service.ts). It
+// MUST be mounted here — using its own express.raw() — BEFORE the global
+// express.json() below. Once that global parser runs, the body stream is
+// already consumed; a later express.raw() (billing.routes.ts used to
+// define one on this same path) gets nothing to read and body-parser
+// silently leaves req.body as the already-parsed object instead of a
+// Buffer, so constructEvent's signature check fails on every delivery.
+// This is exactly what happened for two months before being caught — do
+// not move this mount below express.json(), and do not reintroduce a
+// competing /webhook route in billing.routes.ts (removed from there for
+// this reason; this is now the only place it's mounted).
+app.post(
+  "/api/v1/billing/webhook",
+  express.raw({ type: "application/json" }),
+  BillingController.handleWebhook as any,
+);
+
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true, limit: "20mb" }));
 app.use(morgan("combined"));

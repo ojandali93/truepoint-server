@@ -15,12 +15,13 @@ import * as RevenueCatController from "../controllers/revenuecat.controller";
 
 const router = Router();
 
-// ─── Webhook — raw body, no auth (Stripe signs it) ───────────────────────────
-router.post(
-  "/webhook",
-  express.raw({ type: "application/json" }),
-  BillingController.handleWebhook as any,
-);
+// POST /webhook (Stripe) is NOT defined here — moved to app.ts, mounted
+// standalone before the global express.json() middleware, because it
+// needs the raw body for signature verification and this router is
+// itself mounted after that global parser. See app.ts's EMERGENCY FIX
+// 2026-08-30 comment for why a router-local express.raw() here doesn't
+// work: by the time a request reaches this file, express.json() has
+// already consumed the body stream. Do not re-add a /webhook route here.
 
 router.post(
   "/revenuecat-webhook",
