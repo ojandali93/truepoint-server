@@ -315,7 +315,10 @@ export const getPortfolioMovers = async (
   collectionId: string | null = null,
   role: string | null = null,
 ): Promise<PortfolioMoversResult> => {
-  // Same gate as getPortfolio() — portfolio_dashboard is starter-tier.
+  // Same gate as getPortfolio() — portfolio_dashboard is Pro-tier (see
+  // plan.service.ts's FEATURE_MIN_PLAN comment; this comment previously
+  // said "starter-tier", correct as of 2026-08-25 but superseded by
+  // UX_OVERHAUL_PLAN.md §7's 2026-08-29 final lock).
   await requireFeature(userId, "portfolio_dashboard", role);
 
   const now = new Date();

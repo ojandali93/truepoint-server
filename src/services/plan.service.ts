@@ -37,7 +37,20 @@ const FEATURE_MIN_PLAN: Record<FeatureKey, PlanKey> = {
   inventory_tracking: "starter",
   sealed_inventory: "starter",
   pack_opening: "collector",
-  portfolio_dashboard: "starter",
+  // Corrected from "starter" to "pro" (build 27 batch, portfolio_dashboard
+  // gating bug). Was "starter" since this key's introduction (2026-08-25,
+  // commit fbb9475, portfolioMovers.service.ts's own comment asserted it
+  // deliberately at the time: "portfolio_dashboard is starter-tier") — but
+  // UX_OVERHAUL_PLAN.md §7, locked FINAL 2026-08-29, lists "Full portfolio
+  // dashboard (movers, attribution, history)" as Pro-exclusive. The
+  // 2026-08-25 comment predates §7's final lock by four days; §7 is the
+  // decided source of truth now. Effect: getPortfolio()/portfolioMovers's
+  // requireFeature(userId, "portfolio_dashboard") gate — previously
+  // always-passing for every user — now actually enforces. Companion fix
+  // required in mobile (DashboardSummaryCards.tsx's canSeeArbitrage was
+  // separately mis-keyed to this same feature; decoupled in that commit
+  // so this change doesn't also wrongly Pro-gate free arbitrage access).
+  portfolio_dashboard: "pro",
   // regrade_arbitrage / submission_tracking / ai_grading dropped to
   // "starter" here (UX_OVERHAUL_PLAN.md §7, Phase 1 gate 4) — all three
   // are Free-tier features now, metered separately (see MONTHLY_LIMITS /
