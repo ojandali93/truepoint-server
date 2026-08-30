@@ -47,10 +47,20 @@
 import "dotenv/config";
 import { stripe } from "../src/lib/stripe";
 import { supabaseAdmin } from "../src/lib/supabase";
-import type Stripe from "stripe";
+// Deliberately not importing the `Stripe` namespace for typing here — this
+// file lives under scripts/, outside tsconfig.json's `include` (src/**/*
+// only), and ts-node's standalone compile of files outside that graph fails
+// to resolve Stripe.Subscription/.Event/.Invoice as real members of the
+// StripeConstructor namespace (same symptom as the 16 pre-existing errors
+// found removing billing.service.ts's @ts-nocheck). `tsc --noEmit` alone
+// doesn't catch this either, since it never type-checks anything outside
+// `include` — confirmed by running it and seeing no error here, then
+// discovering scripts/ isn't compiled at all. Every other script in this
+// directory avoids typed Stripe references for the same reason; matching
+// that convention with plain `any` rather than fighting the resolution.
 
 // Mirrors billing.service.ts's non-exported extractPeriodEnd exactly.
-const extractPeriodEnd = (sub: Stripe.Subscription | any): string | null => {
+const extractPeriodEnd = (sub: any): string | null => {
   if (typeof sub?.current_period_end === "number") {
     return new Date(sub.current_period_end * 1000).toISOString();
   }
@@ -128,7 +138,7 @@ async function main() {
       continue;
     }
 
-    let liveSub: Stripe.Subscription;
+    let liveSub: any;
     try {
       liveSub = await stripe.subscriptions.retrieve(row.stripe_subscription_id);
     } catch (err: any) {
