@@ -154,7 +154,36 @@ export const getVerificationStatus = async (
 
   if (error) throw error;
   if (!data) {
-    return { emailVerified: false, sentAt: null, canResend: true };
+    // No profile row yet — the state a brand-new OAuth account sits in
+    // for however long it takes to submit oauth-username.tsx (POST
+    // /users/me is what actually creates the row). This branch used to
+    // unconditionally return emailVerified: false here, which is exactly
+    // backwards for OAuth: Apple/Google already verified the email before
+    // handing us a session, but we had no way to know that without a
+    // profile row to read our own custom email_verified column off of.
+    // Found chasing a silent AuthGate hang (build 27, OAuth) — a
+    // profile-less account reporting unverified sent AuthGate down the
+    // isVerified===false branch instead of the oauth-username one.
+    //
+    // Fix: fall back to Supabase's own email_confirmed_at for this one
+    // case. Deliberately NOT switching to email_confirmed_at as the
+    // general signal — this app runs Supabase's native "Confirm email"
+    // OFF for password signups in favor of its own token flow (see this
+    // file's header comment), so email_confirmed_at is never set via
+    // that path at all; using it once a profile row exists would silently
+    // break password-flow verification. It's authoritative only in this
+    // specific gap, before our own row exists to have an opinion — which
+    // in practice is an OAuth-only window, since password signup creates
+    // its profile row synchronously during registerUser().
+    const { data: authData, error: authError } =
+      await supabaseAdmin.auth.admin.getUserById(userId);
+    if (authError) throw authError;
+    const providerVerified = Boolean(authData.user?.email_confirmed_at);
+    return {
+      emailVerified: providerVerified,
+      sentAt: null,
+      canResend: !providerVerified,
+    };
   }
 
   let canResend = true;
