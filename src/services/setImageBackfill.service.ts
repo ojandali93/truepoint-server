@@ -1,13 +1,17 @@
 // src/services/setImageBackfill.service.ts
 //
 // ONE-TIME (or occasional) backfill: fills sets.logo_url / sets.symbol_url from
-// pokemontcg.io by matching on normalized set name (+ release year as a
-// tiebreaker). TCGAPIs doesn't provide set logos (its /expansions payload is
-// groupId/name/abbreviation/publishedOn only — no images field, confirmed
-// against the typed response in tcgapisSync.service.ts), but pokemontcg.io
-// hosts the real transparent-PNG logos. This ONLY writes the two image
-// columns and ONLY when they're currently null — it never touches names,
-// ids, series, cards, prices, or the sync pipeline.
+// pokemontcg.io (English Pokémon) and TCGdex (Japanese Pokémon, see
+// backfillJapaneseSetImagesFromTcgdex below) by matching on set name/code,
+// then MIRRORING the matched art into our own "set-logos" Supabase bucket
+// (Phase 2, 2026-09-01 — see src/lib/setLogoStorage.ts) rather than
+// hotlinking the source directly. TCGAPIs itself doesn't provide set logos
+// (its /expansions payload is groupId/name/abbreviation/publishedOn only —
+// no images field, confirmed against the typed response in
+// tcgapisSync.service.ts), which is why an external art source is needed at
+// all. This ONLY writes the two image columns and ONLY when they're
+// currently null — it never touches names, ids, series, cards, prices, or
+// the sync pipeline.
 //
 // SCOPE (2026-08-31 fix): pokemontcg.io is an English-only Pokémon source.
 // It has zero One Piece coverage and its handful of Japanese-set overlaps
@@ -39,6 +43,7 @@
 import axios from "axios";
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
+import { mirrorUrlToBucket } from "../lib/setLogoStorage";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -175,6 +180,22 @@ const SET_NAME_ALIASES: Record<string, string> = {
 // before aliasing:
 //   Generations: Radiant Collection
 //   Legendary Treasures: Radiant Collection
+//
+// ─── Japanese Pokémon backlog (TCGdex adapter, as of 2026-09-01) ──────────
+// backfillJapaneseSetImagesFromTcgdex() ran against all 456 game='pokemon'/
+// language='Japanese' sets missing images: matched 0, filled 0. Not a bug —
+// see the adapter's own header comment for the confirmed reason (TCGdex has
+// no logo and almost no symbol art for Japanese sets yet). Breakdown of the
+// 456:
+//   194 no-code-prefix   — free-form name, nothing to join on at all
+//   143 not-in-tcgdex    — has a code, but no matching TCGdex id (spot-
+//                          checked several: genuinely absent, not a casing/
+//                          alias issue — see session report)
+//   119 no-art-in-source — TCGdex has the exact set, just no image for it
+// All 456 stay on the manual-upload path (adminSetLogo.controller.ts) for
+// now. Re-run the adapter periodically — TCGdex is actively crowd-sourced
+// and its JP coverage may fill in over time; the join logic itself is
+// already correct and needs no further work, only TCGdex's own data does.
 
 interface PtcgSet {
   id: string;
@@ -340,9 +361,39 @@ export const backfillSetImages = async (): Promise<{
 
     matched++;
 
+    // Mirror into our own bucket instead of hotlinking pokemontcg.io
+    // directly (Phase 2, 2026-09-01) — see setLogoStorage.ts header.
     const update: Record<string, string> = {};
-    if (!set.logo_url && logo) update.logo_url = logo;
-    if (!set.symbol_url && symbol) update.symbol_url = symbol;
+    if (!set.logo_url && logo) {
+      try {
+        update.logo_url = await mirrorUrlToBucket(set.id, "logo", logo);
+      } catch (err: any) {
+        await logError({
+          source: "set-image-backfill",
+          message: `mirror logo failed: ${err?.message}`,
+          error: err,
+          userId: null,
+          requestPath: logo,
+          requestMethod: "GET",
+          metadata: { setId: set.id, name: set.name },
+        });
+      }
+    }
+    if (!set.symbol_url && symbol) {
+      try {
+        update.symbol_url = await mirrorUrlToBucket(set.id, "symbol", symbol);
+      } catch (err: any) {
+        await logError({
+          source: "set-image-backfill",
+          message: `mirror symbol failed: ${err?.message}`,
+          error: err,
+          userId: null,
+          requestPath: symbol,
+          requestMethod: "GET",
+          metadata: { setId: set.id, name: set.name },
+        });
+      }
+    }
     if (Object.keys(update).length === 0) continue;
 
     const { error } = await supabaseAdmin
@@ -374,5 +425,201 @@ export const backfillSetImages = async (): Promise<{
     unmatched: unmatchedDetail.map((u) => u.name),
     unmatchedDetail,
     skippedNoSource,
+  };
+};
+
+// ─── TCGdex adapter (Japanese Pokémon sets) ────────────────────────────────
+//
+// backfillSetImages() above deliberately never attempts language='Japanese'
+// rows — pokemontcg.io has no real JP coverage (see its file-header note).
+// TCGdex (https://api.tcgdex.net, no auth) is a real, actively-maintained
+// alternative that DOES track Japanese sets — but joins on a different
+// axis: not name (their names are native Japanese script — 拡張パック etc.
+// — vs our TCGAPIs-sourced English/romanized names, so string-matching
+// doesn't apply at all here), but on TCGdex's own per-set `id`, which turns
+// out to reuse the same set-code convention our names already carry as a
+// prefix (our "SM1M: Collection Moon" ↔ TCGdex id "SM1M", name "コレクショ
+// ンムーン" — same set, same code, different script). So this is a
+// code-extraction + case-insensitive ID join, not a name join.
+//
+// HONEST LIMIT, confirmed live 2026-09-01 against all 184 JP sets TCGdex
+// currently has: 0 carry a `logo` field and only 4 carry `symbol` (the four
+// oldest Neo-series sets) — checked the list endpoint, a set-detail
+// endpoint, and the series endpoint. Contrast: TCGdex's English catalog has
+// logo on 157/218 sets. TCGdex just hasn't digitized Japanese box art yet.
+// So this adapter is correct, reusable, idempotent infrastructure that will
+// pick up real coverage for free as TCGdex's JP catalog fills in over
+// time — but today it will match only a handful of sets, not meaningfully
+// close the ~450-set Japanese gap. That gap is the manual-upload path
+// (adminSetLogo.controller.ts) by design, not a bug here.
+
+interface TcgdexSet {
+  id: string;
+  name: string;
+  logo?: string;
+  symbol?: string;
+}
+
+const loadTcgdexJapaneseSets = async (retries = 3): Promise<TcgdexSet[]> => {
+  let lastErr: any = null;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await axios.get<TcgdexSet[]>(
+        "https://api.tcgdex.net/v2/ja/sets",
+        { timeout: 30000 },
+      );
+      return res.data ?? [];
+    } catch (err: any) {
+      lastErr = err;
+      const status = err?.response?.status;
+      if (status === 429) {
+        await sleep(30000);
+        continue;
+      }
+      if (i < retries - 1) {
+        await sleep(2000 * (i + 1));
+        continue;
+      }
+    }
+  }
+  throw lastErr;
+};
+
+// Extracts the set-code prefix from a name like "SM1M: Collection Moon" ->
+// "SM1M". Returns null when there's no colon-delimited code to extract
+// (free-form names like "Elementary School Competition" have no TCGAPIs
+// code at all and can never be joined this way).
+const extractSetCode = (raw: string): string | null => {
+  const m = raw.match(/^([^\s:]+):/);
+  return m ? m[1] : null;
+};
+
+// Manual aliases for our code -> TCGdex id, for the rare case our TCGAPIs
+// code doesn't literally match TCGdex's id even case-insensitively. Empty
+// until a real run surfaces a genuine case — don't pre-guess entries.
+const TCGDEX_CODE_ALIASES: Record<string, string> = {};
+
+type JpUnmatchedReason = "no-code-prefix" | "not-in-tcgdex" | "no-art-in-source";
+
+interface JpUnmatchedEntry {
+  name: string;
+  reason: JpUnmatchedReason;
+}
+
+export const backfillJapaneseSetImagesFromTcgdex = async (): Promise<{
+  total: number;
+  matched: number;
+  filled: number;
+  unmatched: string[];
+  unmatchedDetail: JpUnmatchedEntry[];
+}> => {
+  const tcgdexSets = await loadTcgdexJapaneseSets();
+  const byId = new Map<string, TcgdexSet>();
+  for (const s of tcgdexSets) byId.set(s.id.toUpperCase(), s);
+
+  const { data: allSets } = await supabaseAdmin
+    .from("sets")
+    .select("id, name, logo_url, symbol_url, game, language")
+    .eq("game", "pokemon")
+    .eq("language", "Japanese");
+
+  const targets = (allSets ?? []).filter(
+    (s) => !s.logo_url || !s.symbol_url,
+  );
+
+  let matched = 0;
+  let filled = 0;
+  const unmatchedDetail: JpUnmatchedEntry[] = [];
+
+  for (const set of targets) {
+    const code = extractSetCode(set.name);
+    if (!code) {
+      unmatchedDetail.push({ name: set.name, reason: "no-code-prefix" });
+      continue;
+    }
+
+    const aliasedCode = TCGDEX_CODE_ALIASES[code] ?? code;
+    const tcgdexSet = byId.get(aliasedCode.toUpperCase());
+    if (!tcgdexSet) {
+      unmatchedDetail.push({ name: set.name, reason: "not-in-tcgdex" });
+      continue;
+    }
+
+    if (!tcgdexSet.logo && !tcgdexSet.symbol) {
+      unmatchedDetail.push({ name: set.name, reason: "no-art-in-source" });
+      continue;
+    }
+
+    matched++;
+
+    const update: Record<string, string> = {};
+    if (!set.logo_url && tcgdexSet.logo) {
+      try {
+        update.logo_url = await mirrorUrlToBucket(
+          set.id,
+          "logo",
+          `${tcgdexSet.logo}.png`,
+        );
+      } catch (err: any) {
+        await logError({
+          source: "set-image-backfill-tcgdex",
+          message: `mirror logo failed: ${err?.message}`,
+          error: err,
+          userId: null,
+          requestPath: `${tcgdexSet.logo}.png`,
+          requestMethod: "GET",
+          metadata: { setId: set.id, name: set.name },
+        });
+      }
+    }
+    if (!set.symbol_url && tcgdexSet.symbol) {
+      try {
+        update.symbol_url = await mirrorUrlToBucket(
+          set.id,
+          "symbol",
+          `${tcgdexSet.symbol}.png`,
+        );
+      } catch (err: any) {
+        await logError({
+          source: "set-image-backfill-tcgdex",
+          message: `mirror symbol failed: ${err?.message}`,
+          error: err,
+          userId: null,
+          requestPath: `${tcgdexSet.symbol}.png`,
+          requestMethod: "GET",
+          metadata: { setId: set.id, name: set.name },
+        });
+      }
+    }
+    if (Object.keys(update).length === 0) continue;
+
+    const { error } = await supabaseAdmin
+      .from("sets")
+      .update(update)
+      .eq("id", set.id);
+
+    if (error) {
+      await logError({
+        source: "set-image-backfill-tcgdex",
+        message: error.message,
+        error,
+        userId: null,
+        requestPath: "",
+        requestMethod: "",
+        metadata: { setId: set.id, name: set.name },
+      });
+    } else {
+      filled++;
+    }
+
+    await sleep(20);
+  }
+
+  return {
+    total: targets.length,
+    matched,
+    filled,
+    unmatched: unmatchedDetail.map((u) => u.name),
+    unmatchedDetail,
   };
 };

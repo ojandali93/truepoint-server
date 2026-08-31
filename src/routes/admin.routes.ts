@@ -48,6 +48,13 @@ import {
   resendUserVerification,
 } from "../controllers/adminPlatform.controller";
 
+// ─── Set logo manual-upload controller ───────────────────────────────────────
+import {
+  setLogoUpload,
+  uploadSetLogo,
+  listSetsNeedingLogo,
+} from "../controllers/adminSetLogo.controller";
+
 const router = Router();
 
 // Auth + admin check on every admin route
@@ -107,5 +114,9 @@ router.post(
   "/users/:userId/resend-verification",
   resendUserVerification as any,
 );
+
+// ─── Set logos (manual hand-harvest path, Phase 2 2026-09-01) ────────────────
+router.get("/sets/needs-logo", listSetsNeedingLogo as any);
+router.post("/sets/:setId/logo", setLogoUpload, uploadSetLogo as any);
 
 export default router;
