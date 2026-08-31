@@ -164,11 +164,19 @@ export const upsertSubscription = async (
 };
 
 /**
- * Upserts an APPLE subscription (from the RevenueCat webhook). Keyed on
- * (user_id, platform) so a user's single Apple row is created or updated.
+ * Upserts an Apple OR Google subscription (from the RevenueCat webhook —
+ * both stores flow through the same RevenueCat event shape). Keyed on
+ * (user_id, platform) so a user's single row per store is created or
+ * updated. Renamed from upsertAppleSubscription (Android webhook wiring,
+ * launch precondition) — platform is now caller-supplied, derived from
+ * the RevenueCat event's own `store` field, not hardcoded. Zero other call
+ * sites existed at rename time (grep-verified: only revenuecat.service.ts
+ * calls this; adminPlatform.service.ts's one match was a comment
+ * reference, not a call).
  */
-export const upsertAppleSubscription = async (payload: {
+export const upsertRevenueCatSubscription = async (payload: {
   userId: string;
+  platform: "apple" | "google";
   rcAppUserId: string;
   providerSubscriptionId: string;
   plan: "starter" | "collector" | "pro";
@@ -181,7 +189,7 @@ export const upsertAppleSubscription = async (payload: {
     .upsert(
       {
         user_id: payload.userId,
-        platform: "apple",
+        platform: payload.platform,
         rc_app_user_id: payload.rcAppUserId,
         provider_subscription_id: payload.providerSubscriptionId,
         plan: payload.plan,
@@ -297,8 +305,15 @@ export const setCancelRequestedAtByProviderId = (
     wasTrialAtCancel,
   );
 
-/** Updates status by provider (Apple) subscription id (RevenueCat path). */
-export const updateAppleSubscriptionStatus = async (
+/**
+ * Updates status by provider subscription id (RevenueCat path — Apple or
+ * Google, both keyed the same way by original_transaction_id). Already
+ * platform-agnostic (matches by provider_subscription_id alone, never
+ * touches the platform column) — renamed alongside
+ * upsertRevenueCatSubscription for naming accuracy, not because the
+ * logic needed to change (Android webhook wiring).
+ */
+export const updateRevenueCatSubscriptionStatus = async (
   providerSubscriptionId: string,
   status: BillingSubscription["status"],
   currentPeriodEnd?: string | null,
