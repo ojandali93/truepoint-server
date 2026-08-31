@@ -94,6 +94,88 @@ const SET_NAME_ALIASES: Record<string, string> = {
   "EX Trainer Kit 2: Plusle & Minun": "EX Trainer Kit 2 Plusle",
 };
 
+// ─── needs-alias backlog (as of 2026-08-31) ────────────────────────────────
+// The 50 game='pokemon'/language='English' sets `backfillSetImages()` could
+// not resolve on that date, i.e. every set that came back tagged
+// `reason: "needs-alias"`. None of these have a real pokemontcg.io
+// counterpart today — they're not a matching bug, they're either products
+// too new to be indexed yet, or retailer/promo groupings TCGplayer tracks
+// as pseudo-sets that pokemontcg.io doesn't track as sets at all. Kept here
+// (not just in a session report) so a future pass adding an alias — or a
+// second source for the ones that stay genuinely gapped — has the backlog
+// next to the code that would consume it, instead of re-deriving this list
+// from scratch. Re-run `backfillSetImages()` and diff its `unmatchedDetail`
+// against this list before trusting it — pokemontcg.io adds sets over time
+// and some of these will resolve on their own as it catches up.
+//
+// Too-new / not yet indexed by pokemontcg.io:
+//   ME06: Delta Reign
+//   ME: 30th Celebration Classic Collection
+//   ME: 30th Celebration
+//   ME: Mega Evolution Promo
+//   MEE: Mega Evolution Energies
+//   First Partner Collection 2026
+//   McDonald's Promos 2023
+//   McDonald's Promos 2024
+//   Trick or Trade BOOster Bundle 2023
+//   Trick or Trade BOOster Bundle 2024
+//
+// Retailer-exclusive / promo groupings TCGplayer tracks as pseudo-sets,
+// with no pokemontcg.io set of their own:
+//   Alternate Art Promos
+//   Best of Promos
+//   Burger King Promos
+//   Countdown Calendar Promos
+//   Kids WB Promos
+//   McDonald's 25th Anniversary Promos
+//   Pikachu World Collection Promos
+//   Player Placement Trainer Promos
+//   Professor Program Promos
+//   WoTC Promo
+//   League & Championship Cards
+//   Prize Pack Series Cards
+//   World Championship Decks
+//   Deck Exclusives
+//   Blister Exclusives
+//   Jumbo Cards
+//   e-Reader Sample Cards
+//   Miscellaneous Cards & Products
+//   Ash vs Team Rocket Deck Kit (JP Exclusive)
+//   First Partner Pack
+//
+// Per-half-deck trainer kits pokemontcg.io never split out beyond the EX
+// era (see the EX Trainer Kit aliases above — those two are the only pair
+// that resolves):
+//   BW Trainer Kit: Excadrill & Zoroark
+//   DP Trainer Kit: Manaphy & Lucario
+//   DP Training Kit 1 Blue
+//   DP Training Kit 1 Gold
+//   HGSS Trainer Kit: Gyarados & Raichu
+//   SM Trainer Kit: Alolan Sandslash & Alolan Ninetales
+//   SM Trainer Kit: Lycanroc & Alolan Raichu
+//   XY Trainer Kit: Bisharp & Wigglytuff
+//   XY Trainer Kit: Latias & Latios
+//   XY Trainer Kit: Pikachu Libre & Suicune
+//   XY Trainer Kit: Sylveon & Noivern
+//
+// Boxed reprint/exhibition products pokemontcg.io doesn't track as sets
+// (no unique cards of their own):
+//   Battle Academy
+//   Battle Academy 2022
+//   Battle Academy 2024
+//   My First Battle
+//   Trading Card Game Classic
+//   Trick or Trade BOOster Bundle
+//   EX Battle Stadium
+//
+// Sub-collections within a parent set pokemontcg.io does track — declined
+// to alias onto the parent's logo since the sub-collection likely has its
+// own distinct box art and force-matching to the wrong art is the exact
+// failure this file exists to avoid; needs a human to confirm the art
+// before aliasing:
+//   Generations: Radiant Collection
+//   Legendary Treasures: Radiant Collection
+
 interface PtcgSet {
   id: string;
   name: string;
