@@ -183,20 +183,49 @@ interface PtcgSet {
   images?: { symbol?: string; logo?: string };
 }
 
-const loadPtcgSets = async (): Promise<PtcgSet[]> => {
-  const res = await axios.get("https://api.pokemontcg.io/v2/sets", {
-    params: { pageSize: 250 },
-    headers: process.env.POKEMON_TCG_API_KEY
-      ? { "X-Api-Key": process.env.POKEMON_TCG_API_KEY }
-      : {},
-    timeout: 60000,
-  });
-  return (res.data?.data ?? []).map((s: any) => ({
-    id: s.id,
-    name: s.name,
-    releaseDate: s.releaseDate,
-    images: s.images,
-  }));
+// pokemontcg.io is flaky — a bare, empty-body Cloudflare 500 on /v2/sets
+// happened twice in a row during this file's 2026-08-31 testing session and
+// once for real on Render the same day (see error_logs, source
+// 'set-image-backfill', 2026-08-31T21:53Z — request_path
+// https://api.pokemontcg.io/v2/sets, status 500, empty responseBody). That
+// run aborted here, before any matching or DB write — clean failure, no
+// partial writes — but it aborted the whole backfill over one transient
+// upstream hiccup with no retry at all. Retry/backoff here follows the same
+// house convention as tcgapisGet() (src/lib/tcgapisClient.ts): 429 waits a
+// fixed cooldown without burning an attempt, other failures get increasing
+// backoff, only the final attempt's error propagates.
+const loadPtcgSets = async (retries = 3): Promise<PtcgSet[]> => {
+  let lastErr: any = null;
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await axios.get("https://api.pokemontcg.io/v2/sets", {
+        params: { pageSize: 250 },
+        headers: process.env.POKEMON_TCG_API_KEY
+          ? { "X-Api-Key": process.env.POKEMON_TCG_API_KEY }
+          : {},
+        timeout: 60000,
+      });
+      return (res.data?.data ?? []).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        releaseDate: s.releaseDate,
+        images: s.images,
+      }));
+    } catch (err: any) {
+      lastErr = err;
+      const status = err?.response?.status;
+
+      if (status === 429) {
+        await sleep(30000); // rate limited — wait, don't burn a retry
+        continue;
+      }
+      if (i < retries - 1) {
+        await sleep(2000 * (i + 1)); // transient — backoff and retry
+        continue;
+      }
+    }
+  }
+  throw lastErr;
 };
 
 const year = (d?: string | null): string => (d ?? "").slice(0, 4);
