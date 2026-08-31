@@ -1,0 +1,31 @@
+{
+  "id": "mew-gold-star-back-whitening",
+  "kind": "anchor",
+  "card": "Mew (Gold Star), EX Dragon Frontiers 101/101",
+  "sourceReportId": "a8008bac-02da-4934-b073-9572fd6ef958",
+  "sourceNote": "Real miscall, hand-verified by the founder against the physical card (2026-08-30). The OLD prompt's own stored findings for this report were vague and split defects across both faces ('minor whitening, top edge... bottom edge' on front AND back; corners split front bottom-right / back top-left) — under the new prompt this is expected to enumerate the back specifically and heavily.",
+  "expectedGradeRange": [4, 5],
+  "expectedGradeBasis": "PSA-equivalent (overall grade after worst-face cap)",
+  "handVerifiedFindings": [
+    "Whitening along ALL FOUR back edges — heaviest on the left edge and the bottom edge",
+    "Fuzzed/soft corners on the back — bottom-left worst"
+  ],
+  "oldPromptResult": {
+    "predictions": {
+      "psa": 8,
+      "bgs": 8.5,
+      "cgc": 8.5,
+      "tag": 8.5
+    },
+    "issues": [
+      "Slight whitening on the top edge of the front, impacting edges score.",
+      "Minor whitening on the bottom edge of the front, impacting edges score.",
+      "Minor whitening on the top edge of the back, impacting edges score.",
+      "Minor whitening on the bottom edge of the back, impacting edges score.",
+      "Slight fraying/softness on the bottom-right corner of the front, impacting corners score.",
+      "Slight fraying/softness on the top-left corner of the back, impacting corners score.",
+      "A few very light surface scratches visible on the holographic area of the front, impacting surface score.",
+      "A small, faint indentation near the bottom-right of the holographic area on the front, impacting surface score."
+    ]
+  }
+}
