@@ -554,7 +554,39 @@ router.post("/set-images", requireSyncKey, async (_req, res) => {
       const r = await backfillSetImages();
       console.log("[SetImages] backfill done:", r);
     } catch (err: any) {
+      // Diagnosability fix (2026-08-31): this used to log only err.message —
+      // a bare "Request failed with status code 500" with no URL, no
+      // response body, no headers, and nowhere queryable (console-only, not
+      // error_logs). That's the exact blind-catch pattern the OAuth flow
+      // was fixed for elsewhere (auth-actions.ts: never show/log a raw SDK
+      // message without the context needed to actually diagnose it). Same
+      // fix here: capture the failing request's URL + params (this call
+      // carries its key in a header, never the URL/params, so there's
+      // nothing to redact there today — redact defensively anyway in case
+      // that ever changes) plus the upstream's response status/body/headers,
+      // and persist it to error_logs (not just console) so a recurrence is
+      // queryable rather than lost to Render's log retention window.
+      const url: string | undefined = err?.config?.url;
+      const redactedUrl = url
+        ? url.replace(/([?&](?:api[_-]?key|key|token)=)[^&]+/gi, "$1[redacted]")
+        : undefined;
       console.error("[SetImages] failed:", err?.message);
+      await logError({
+        source: "set-image-backfill",
+        message: err?.message ?? "Unknown error",
+        error: err,
+        userId: null,
+        requestPath: redactedUrl ?? "",
+        requestMethod: "GET",
+        metadata: {
+          url: redactedUrl,
+          params: err?.config?.params ?? null,
+          status: err?.response?.status ?? null,
+          statusText: err?.response?.statusText ?? null,
+          responseBody: err?.response?.data ?? null,
+          responseHeaders: err?.response?.headers ?? null,
+        },
+      });
     }
   });
 });
