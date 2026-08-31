@@ -2,13 +2,39 @@
 //
 // ONE-TIME (or occasional) backfill: fills sets.logo_url / sets.symbol_url from
 // pokemontcg.io by matching on normalized set name (+ release year as a
-// tiebreaker). TCGAPIs doesn't provide set logos, but pokemontcg.io hosts the
-// real transparent-PNG logos. This ONLY writes the two image columns and ONLY
-// when they're currently null — it never touches names, ids, series, cards,
-// prices, or the sync pipeline.
+// tiebreaker). TCGAPIs doesn't provide set logos (its /expansions payload is
+// groupId/name/abbreviation/publishedOn only — no images field, confirmed
+// against the typed response in tcgapisSync.service.ts), but pokemontcg.io
+// hosts the real transparent-PNG logos. This ONLY writes the two image
+// columns and ONLY when they're currently null — it never touches names,
+// ids, series, cards, prices, or the sync pipeline.
 //
-// Safe to run anytime. Sets that don't match (e.g. brand-new Mega Evolution
-// sets not yet in pokemontcg) are simply left blank.
+// SCOPE (2026-08-31 fix): pokemontcg.io is an English-only Pokémon source.
+// It has zero One Piece coverage and its handful of Japanese-set overlaps
+// are coincidental, not real — a prior run matched our Japanese "SM6:
+// Forbidden Light" onto pokemontcg.io's *English* "Forbidden Light" logo via
+// prefix-stripping alone, no language check. That's exactly the
+// wrong-art-via-force-match failure mode this backfill needs to avoid. So
+// this only ever attempts game='pokemon' + language='English' rows.
+// Everything else (One Piece entirely, Japanese Pokémon sets) is a known,
+// permanent gap for this source — reported separately as `skippedNoSource`,
+// never fed through the matcher.
+//
+// Root cause of the original 1/619 match rate: normalize() collapsed
+// accented characters and "&" to nothing instead of folding them, so
+// "Pokémon GO" vs "Pokemon GO" and "Diamond & Pearl" vs "Diamond and Pearl"
+// missed each other on otherwise-identical names. Fixed below. The
+// remainder were genuine renames between the two catalogs (our "Base Set"
+// is pokemontcg.io's "Base", our "Expedition" is their "Expedition Base
+// Set", era promo sets use "X Black Star Promos" there vs "X Promos" here,
+// etc.) — those go through SET_NAME_ALIASES, verified 2026-08-31 against a
+// live pull of all 174 pokemontcg.io sets. Sets with no real pokemontcg.io
+// counterpart at all (brand-new products, retailer-exclusive promo
+// groupings TCGplayer tracks as pseudo-sets, per-half-deck trainer kits for
+// eras pokemontcg.io never split out) are left unmatched by design — see
+// the "reason" on each entry in `unmatched`.
+//
+// Safe to run anytime.
 
 import axios from "axios";
 import { supabaseAdmin } from "../lib/supabase";
@@ -16,12 +42,139 @@ import { logError } from "../lib/Logger";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Strip diacritics (Pokémon -> Pokemon) and fold "&" to "and" before the
+// existing alnum strip, so accent/ampersand variance between the two
+// catalogs stops hiding otherwise-identical names from each other.
 const normalize = (s: string) =>
   (s ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "") // strip diacritics, e.g. accented e -> e
     .toLowerCase()
+    .replace(/&/g, " and ")
     .replace(/[^a-z0-9\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+
+// Manual aliases for our <-> pokemontcg.io set-name pairs that name the same
+// physical product/art but don't converge under normalize() + prefix
+// stripping. Verified 2026-08-31 against a live /v2/sets pull (174 sets) —
+// every right-hand value below was confirmed present at that time. Keyed by
+// our exact `sets.name`; checked before normalized/variant matching.
+const SET_NAME_ALIASES: Record<string, string> = {
+  "Base Set": "Base",
+  "Base Set (Shadowless)": "Base", // same box art; differs only in card border
+  Expedition: "Expedition Base Set",
+  "SM Base Set": "Sun & Moon",
+  "XY Base Set": "XY",
+  "SWSH01: Sword & Shield Base Set": "Sword & Shield",
+  "SWSH: Sword & Shield Promo Cards": "SWSH Black Star Promos",
+  "SV: Scarlet & Violet Promo Cards": "Scarlet & Violet Black Star Promos",
+  "SM Promos": "SM Black Star Promos",
+  "XY Promos": "XY Black Star Promos",
+  "HGSS Promos": "HGSS Black Star Promos",
+  "Nintendo Promos": "Nintendo Black Star Promos",
+  "Black and White Promos": "BW Black Star Promos",
+  "Diamond and Pearl Promos": "DP Black Star Promos",
+  "EX Ruby and Sapphire": "Ruby & Sapphire",
+  Rumble: "Pokémon Rumble",
+  "McDonald's Promos 2011": "McDonald's Collection 2011",
+  "McDonald's Promos 2012": "McDonald's Collection 2012",
+  "McDonald's Promos 2014": "McDonald's Collection 2014",
+  "McDonald's Promos 2015": "McDonald's Collection 2015",
+  "McDonald's Promos 2016": "McDonald's Collection 2016",
+  "McDonald's Promos 2017": "McDonald's Collection 2017",
+  "McDonald's Promos 2018": "McDonald's Collection 2018",
+  "McDonald's Promos 2019": "McDonald's Collection 2019",
+  "McDonald's Promos 2022": "McDonald's Collection 2022",
+  // Trainer kits ship one box covering two half-decks; pokemontcg.io tracks
+  // each half-deck as its own set, both sharing one box logo. Only the EX
+  // era has that pair there at all — BW/DP/HGSS/SM/XY trainer kits have no
+  // pokemontcg.io counterpart and stay a genuine gap (see unmatched below).
+  "EX Trainer Kit 1: Latias & Latios": "EX Trainer Kit Latias",
+  "EX Trainer Kit 2: Plusle & Minun": "EX Trainer Kit 2 Plusle",
+};
+
+// ─── needs-alias backlog (as of 2026-08-31) ────────────────────────────────
+// The 50 game='pokemon'/language='English' sets `backfillSetImages()` could
+// not resolve on that date, i.e. every set that came back tagged
+// `reason: "needs-alias"`. None of these have a real pokemontcg.io
+// counterpart today — they're not a matching bug, they're either products
+// too new to be indexed yet, or retailer/promo groupings TCGplayer tracks
+// as pseudo-sets that pokemontcg.io doesn't track as sets at all. Kept here
+// (not just in a session report) so a future pass adding an alias — or a
+// second source for the ones that stay genuinely gapped — has the backlog
+// next to the code that would consume it, instead of re-deriving this list
+// from scratch. Re-run `backfillSetImages()` and diff its `unmatchedDetail`
+// against this list before trusting it — pokemontcg.io adds sets over time
+// and some of these will resolve on their own as it catches up.
+//
+// Too-new / not yet indexed by pokemontcg.io:
+//   ME06: Delta Reign
+//   ME: 30th Celebration Classic Collection
+//   ME: 30th Celebration
+//   ME: Mega Evolution Promo
+//   MEE: Mega Evolution Energies
+//   First Partner Collection 2026
+//   McDonald's Promos 2023
+//   McDonald's Promos 2024
+//   Trick or Trade BOOster Bundle 2023
+//   Trick or Trade BOOster Bundle 2024
+//
+// Retailer-exclusive / promo groupings TCGplayer tracks as pseudo-sets,
+// with no pokemontcg.io set of their own:
+//   Alternate Art Promos
+//   Best of Promos
+//   Burger King Promos
+//   Countdown Calendar Promos
+//   Kids WB Promos
+//   McDonald's 25th Anniversary Promos
+//   Pikachu World Collection Promos
+//   Player Placement Trainer Promos
+//   Professor Program Promos
+//   WoTC Promo
+//   League & Championship Cards
+//   Prize Pack Series Cards
+//   World Championship Decks
+//   Deck Exclusives
+//   Blister Exclusives
+//   Jumbo Cards
+//   e-Reader Sample Cards
+//   Miscellaneous Cards & Products
+//   Ash vs Team Rocket Deck Kit (JP Exclusive)
+//   First Partner Pack
+//
+// Per-half-deck trainer kits pokemontcg.io never split out beyond the EX
+// era (see the EX Trainer Kit aliases above — those two are the only pair
+// that resolves):
+//   BW Trainer Kit: Excadrill & Zoroark
+//   DP Trainer Kit: Manaphy & Lucario
+//   DP Training Kit 1 Blue
+//   DP Training Kit 1 Gold
+//   HGSS Trainer Kit: Gyarados & Raichu
+//   SM Trainer Kit: Alolan Sandslash & Alolan Ninetales
+//   SM Trainer Kit: Lycanroc & Alolan Raichu
+//   XY Trainer Kit: Bisharp & Wigglytuff
+//   XY Trainer Kit: Latias & Latios
+//   XY Trainer Kit: Pikachu Libre & Suicune
+//   XY Trainer Kit: Sylveon & Noivern
+//
+// Boxed reprint/exhibition products pokemontcg.io doesn't track as sets
+// (no unique cards of their own):
+//   Battle Academy
+//   Battle Academy 2022
+//   Battle Academy 2024
+//   My First Battle
+//   Trading Card Game Classic
+//   Trick or Trade BOOster Bundle
+//   EX Battle Stadium
+//
+// Sub-collections within a parent set pokemontcg.io does track — declined
+// to alias onto the parent's logo since the sub-collection likely has its
+// own distinct box art and force-matching to the wrong art is the exact
+// failure this file exists to avoid; needs a human to confirm the art
+// before aliasing:
+//   Generations: Radiant Collection
+//   Legendary Treasures: Radiant Collection
 
 interface PtcgSet {
   id: string;
@@ -71,35 +224,72 @@ const nameVariants = (raw: string): string[] => {
   return Array.from(new Set([base, stripped])).filter(Boolean);
 };
 
+interface UnmatchedEntry {
+  name: string;
+  reason: "needs-alias";
+}
+
+interface SkippedEntry {
+  name: string;
+  game: string | null;
+  language: string | null;
+  reason: "no-source";
+}
+
 export const backfillSetImages = async (): Promise<{
   total: number;
   matched: number;
   filled: number;
   unmatched: string[];
+  unmatchedDetail: UnmatchedEntry[];
+  skippedNoSource: SkippedEntry[];
 }> => {
   const ptcg = await loadPtcgSets();
   const byName = indexByName(ptcg);
 
-  // Only sets currently missing images
-  const { data: ourSets } = await supabaseAdmin
+  const { data: allSets } = await supabaseAdmin
     .from("sets")
-    .select("id, name, release_date, logo_url, symbol_url");
+    .select("id, name, release_date, logo_url, symbol_url, game, language");
 
-  const targets = (ourSets ?? []).filter((s) => !s.logo_url || !s.symbol_url);
+  const missingImages = (allSets ?? []).filter(
+    (s) => !s.logo_url || !s.symbol_url,
+  );
+
+  // pokemontcg.io can never legitimately fill One Piece or Japanese-Pokémon
+  // rows — don't run them through the matcher at all (see file header).
+  const targets = missingImages.filter(
+    (s) => s.game === "pokemon" && s.language === "English",
+  );
+  const skippedNoSource: SkippedEntry[] = missingImages
+    .filter((s) => !(s.game === "pokemon" && s.language === "English"))
+    .map((s) => ({
+      name: s.name,
+      game: s.game,
+      language: s.language,
+      reason: "no-source",
+    }));
 
   let matched = 0;
   let filled = 0;
-  const unmatched: string[] = [];
+  const unmatchedDetail: UnmatchedEntry[] = [];
 
   for (const set of targets) {
     let candidates: PtcgSet[] = [];
-    for (const variant of nameVariants(set.name)) {
-      candidates = byName.get(variant) ?? [];
-      if (candidates.length) break;
+
+    const alias = SET_NAME_ALIASES[set.name];
+    if (alias) {
+      candidates = byName.get(normalize(alias)) ?? [];
     }
 
     if (!candidates.length) {
-      unmatched.push(set.name);
+      for (const variant of nameVariants(set.name)) {
+        candidates = byName.get(variant) ?? [];
+        if (candidates.length) break;
+      }
+    }
+
+    if (!candidates.length) {
+      unmatchedDetail.push({ name: set.name, reason: "needs-alias" });
       continue;
     }
 
@@ -115,7 +305,7 @@ export const backfillSetImages = async (): Promise<{
     const logo = chosen.images?.logo ?? null;
     const symbol = chosen.images?.symbol ?? null;
     if (!logo && !symbol) {
-      unmatched.push(set.name);
+      unmatchedDetail.push({ name: set.name, reason: "needs-alias" });
       continue;
     }
 
@@ -148,5 +338,12 @@ export const backfillSetImages = async (): Promise<{
     await sleep(20);
   }
 
-  return { total: targets.length, matched, filled, unmatched };
+  return {
+    total: targets.length,
+    matched,
+    filled,
+    unmatched: unmatchedDetail.map((u) => u.name),
+    unmatchedDetail,
+    skippedNoSource,
+  };
 };

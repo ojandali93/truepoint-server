@@ -157,7 +157,20 @@ export const syncVariantPricesForSet = async (
       cardsProcessed++;
     } catch (err: any) {
       failed++;
-      console.error(
+      // Severity fix (2026-08-31): tcgapisGet() already logs this to
+      // error_logs via Logger.ts, which auto-downgrades 404/429/403 to
+      // "warn" (house convention — third-party HTTP noise, not an app
+      // fault: a 404 here just means TCGAPIs has since delisted/deprecated
+      // that product_id, which happens routinely for a live catalog). But
+      // this console line is a SEPARATE, unstructured log path that never
+      // got that downgrade — it printed via console.error regardless of
+      // status, which is exactly why plain 404 noise reads as "errors" to
+      // anyone watching Render's raw log stream instead of error_logs.
+      // Match the same convention here.
+      const status = err?.response?.status;
+      const isThirdPartyNoise = status === 404 || status === 429 || status === 403;
+      const log = isThirdPartyNoise ? console.warn : console.error;
+      log(
         `[VariantPrice] product ${card.tcgapis_product_id} failed:`,
         err?.message,
       );
