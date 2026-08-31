@@ -537,9 +537,11 @@ export const updateUserPlan = async (
 // active/trialing before deactivating — someone subscribed on two platforms
 // at once (e.g. web then later mobile) shouldn't lose their comp grant just
 // because one of the two lapsed. Subscriptions is one row per
-// (user_id, platform) (upsertAppleSubscription/upsertSubscription's
+// (user_id, platform) (upsertRevenueCatSubscription/upsertSubscription's
 // onConflict), so "any remaining real row" is a complete check, not an
-// approximation.
+// approximation. Platform-agnostic by construction — the .neq("platform",
+// "comp") check below counts stripe/apple/google rows identically, so
+// this needed no change for Android webhook wiring.
 export const deactivateGrandfatherCompIfNoRealSubRemains = async (
   userId: string,
 ): Promise<void> => {

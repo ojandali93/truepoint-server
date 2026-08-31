@@ -1,9 +1,12 @@
 // src/services/revenuecat.service.ts
 //
-// Handles RevenueCat webhook events for Apple (and later Google) subscriptions.
-// Mirrors the Stripe webhook pattern: maps provider events to subscription-row
-// writes with platform='apple'. The subscriptions table + resolvePlan remain
-// the single source of truth — RevenueCat just reliably tells us when to write.
+// Handles RevenueCat webhook events for Apple AND Google subscriptions
+// (Android webhook wiring, launch precondition — Google was previously
+// dropped entirely, see platformFromStore's header comment below). Mirrors
+// the Stripe webhook pattern: maps provider events to subscription-row
+// writes, platform derived from the event's own `store` field rather than
+// hardcoded. The subscriptions table + resolvePlan remain the single
+// source of truth — RevenueCat just reliably tells us when to write.
 //
 // RevenueCat webhook docs: the POST body is { event: {...} }. We authenticate
 // it with a shared Authorization header (set in the RevenueCat dashboard).
@@ -12,8 +15,8 @@
 // user_id as the RevenueCat app user id, so event.app_user_id IS the user_id.
 
 import {
-  upsertAppleSubscription,
-  updateAppleSubscriptionStatus,
+  upsertRevenueCatSubscription,
+  updateRevenueCatSubscriptionStatus,
   findSubscriptionByProviderId,
   setCancelRequestedAtByProviderId,
 } from "../repositories/billing.repository";
@@ -83,6 +86,20 @@ const planFromProduct = (productId?: string): "collector" | "pro" | null => {
   return PRODUCT_TO_PLAN[productId] ?? null;
 };
 
+/**
+ * Maps RevenueCat's `event.store` to our platform column. Explicit
+ * allowlist, not a blanket pass-through — RevenueCat can also relay
+ * STRIPE/PROMOTIONAL/AMAZON/ROKU events, and a RevenueCat-relayed STRIPE
+ * event in particular would double-write against this app's OWN direct
+ * Stripe webhook if it were accepted here. Only APP_STORE and PLAY_STORE
+ * are handled; anything else is logged and skipped (see the caller).
+ */
+const platformFromStore = (store?: string): "apple" | "google" | null => {
+  if (store === "APP_STORE") return "apple";
+  if (store === "PLAY_STORE") return "google";
+  return null;
+};
+
 const msToIso = (ms?: number | null): string | null =>
   typeof ms === "number" ? new Date(ms).toISOString() : null;
 
@@ -112,8 +129,23 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
     return;
   }
 
-  // We only handle App Store events here. (Play Store later.)
-  if (event.store && event.store !== "APP_STORE") {
+  // Android webhook wiring (launch precondition): platform is derived from
+  // the event's own store, not hardcoded/assumed. A missing or unrecognized
+  // store is logged and skipped rather than silently defaulted to Apple —
+  // no store, no write. (Previously this dropped every non-APP_STORE event
+  // outright, which is the bug this fixes: Play subscriptions were never
+  // recorded server-side at all.)
+  const platform = platformFromStore(event.store);
+  if (!platform) {
+    await logError({
+      source: "revenuecat-webhook",
+      message: `Unrecognized or missing store for RevenueCat event: ${event.store}`,
+      error: null,
+      userId: event.app_user_id ?? null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: { store: event.store, type: event.type },
+    });
     return;
   }
 
@@ -140,8 +172,9 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
         });
         return;
       }
-      await upsertAppleSubscription({
+      await upsertRevenueCatSubscription({
         userId,
+        platform,
         rcAppUserId: userId,
         providerSubscriptionId: providerId,
         plan,
@@ -154,7 +187,11 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
 
     case "BILLING_ISSUE": {
       if (providerId) {
-        await updateAppleSubscriptionStatus(providerId, "past_due", periodEnd);
+        await updateRevenueCatSubscriptionStatus(
+          providerId,
+          "past_due",
+          periodEnd,
+        );
       }
       break;
     }
@@ -178,17 +215,24 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
     }
 
     case "SUBSCRIPTION_PAUSED": {
-      // Google Play-specific (subscription pause) — not wired to the Stripe
-      // cancel_at_period_end / Flow B2 marker model; a pause isn't
-      // necessarily a cancellation, and Google isn't integrated yet (see
-      // upsertAppleSubscription callers above — "Play Store later"). Stays a
-      // true no-op: access continues, nothing recorded.
+      // Google Play-specific (subscription pause) — deliberately still a
+      // no-op even now that Google is integrated (Android webhook wiring).
+      // Not one of the 4 lifecycle paths this pass wires (initial purchase,
+      // renewal, cancellation-marker, expiration): a pause isn't
+      // necessarily a cancellation and isn't wired to the Stripe
+      // cancel_at_period_end / Flow B2 marker model either. Access
+      // continues, nothing recorded — flagged as a real gap, not fixed
+      // here; revisit if Play pause behavior needs its own status.
       break;
     }
 
     case "EXPIRATION": {
       if (providerId) {
-        await updateAppleSubscriptionStatus(providerId, "canceled", periodEnd);
+        await updateRevenueCatSubscriptionStatus(
+          providerId,
+          "canceled",
+          periodEnd,
+        );
         // Phase 1 gate 7: the true terminal event for this real
         // subscription — this is where a grandfathered comp-Pro grant (if
         // any) gets checked and deactivated, per the "tied to the real
@@ -210,8 +254,9 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
           // Re-create under the new user id (the unique key is user_id+platform).
           // Simplest: upsert under new user, leave old to expire.
           const plan = planFromProduct(event.product_id) ?? existing.plan;
-          await upsertAppleSubscription({
+          await upsertRevenueCatSubscription({
             userId,
+            platform,
             rcAppUserId: userId,
             providerSubscriptionId: providerId,
             plan: plan as "collector" | "pro",
