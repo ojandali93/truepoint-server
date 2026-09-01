@@ -29,7 +29,8 @@ export type FeatureKey =
   | "portfolio_dashboard" // full portfolio incl. snapshots + cost basis
   | "regrade_arbitrage" // arbitrage tab
   | "submission_tracking" // create grading submissions
-  | "ai_grading"; // AI grading reports
+  | "ai_grading" // AI grading reports
+  | "counterfeit_screening"; // counterfeit screening reports
 
 const FEATURE_MIN_PLAN: Record<FeatureKey, PlanKey> = {
   // Starter: raw + graded singles are core, free-tier functionality —
@@ -65,6 +66,14 @@ const FEATURE_MIN_PLAN: Record<FeatureKey, PlanKey> = {
   regrade_arbitrage: "starter",
   submission_tracking: "starter",
   ai_grading: "starter",
+  // Free-tier, metered separately (counterfeit_screening_reports below) —
+  // same shape as ai_grading: this requireFeature() call inside the
+  // controller's upload step always passes at "starter", the real
+  // enforcement is the monthly cap. Deliberately not Pro-gated: per
+  // AUDITS/counterfeit-screening-plan.md §4, this is an acquisition/growth
+  // feature (share-friendly by design) — gating it Pro-only would
+  // undercut the reason it exists.
+  counterfeit_screening: "starter",
 };
 
 // ─── Monthly limits ─────────────────────────────────────────────────────────
@@ -78,7 +87,10 @@ const FEATURE_MIN_PLAN: Record<FeatureKey, PlanKey> = {
 // gradingLifecycle.service.ts::canCreateMoreSubmissions for the enforcement
 // (same resource-local pattern masterSet.service.ts::canTrackMoreSets and
 // collection.service.ts already use for static limits).
-export type MonthlyLimitKey = "ai_grading_reports" | "regrade_arbitrage_views";
+export type MonthlyLimitKey =
+  | "ai_grading_reports"
+  | "regrade_arbitrage_views"
+  | "counterfeit_screening_reports";
 
 // starter/collector values below are both effectively "Free" tier numbers
 // now (UX_OVERHAUL_PLAN.md §7) — the codebase's PlanKey is still 3-way
@@ -101,6 +113,16 @@ const MONTHLY_LIMITS: Record<
   regrade_arbitrage_views: {
     starter: 15,
     collector: 15,
+    pro: null,
+  },
+  // Starting at parity with ai_grading_reports per the design doc's
+  // proposal — revisit once real Gemini cost per screen (3 images +
+  // identification call, vs. ai_grading's 2) is measured (same
+  // verify-COGS-before-committing caveat UX_OVERHAUL_PLAN.md already
+  // applies to ai_grading's own quota).
+  counterfeit_screening_reports: {
+    starter: 5,
+    collector: 5,
     pro: null,
   },
 };
@@ -167,6 +189,16 @@ const MONTHLY_SOURCES: Record<
   // gradingArbitrage.service.ts.
   regrade_arbitrage_views: {
     table: "regrade_arbitrage_checks",
+    userColumn: "user_id",
+    dateColumn: "created_at",
+  },
+  // migrations/2026-09-01_counterfeit_screening_reports.sql — requires
+  // that migration applied before this key's usage checks will resolve
+  // real counts (returns 0/unlimited-looking on a missing table, same
+  // fail-open-to-empty behavior getMonthlyUsage already has for any
+  // MONTHLY_SOURCES miss, not a new failure mode).
+  counterfeit_screening_reports: {
+    table: "counterfeit_screening_reports",
     userColumn: "user_id",
     dateColumn: "created_at",
   },
@@ -420,6 +452,7 @@ export const getPlanSnapshot = async (
   const [
     aiGrading,
     arbitrage,
+    counterfeitScreening,
     masterSetsCount,
     watchlistCount,
     submissionsCount,
@@ -428,6 +461,7 @@ export const getPlanSnapshot = async (
   ] = await Promise.all([
     getMonthlyLimitInfo(userId, "ai_grading_reports", role),
     getMonthlyLimitInfo(userId, "regrade_arbitrage_views", role),
+    getMonthlyLimitInfo(userId, "counterfeit_screening_reports", role),
     supabaseAdmin
       .from("master_set_tracking")
       .select("id", { count: "exact", head: true })
@@ -490,6 +524,7 @@ export const getPlanSnapshot = async (
     usage: {
       aiGradingReports: aiGrading,
       regradeArbitrageViews: arbitrage,
+      counterfeitScreeningReports: counterfeitScreening,
     },
     // collections stays a bare number (unchanged, not one of gate 5's 5
     // countered surfaces) — the other three carry `current` now so the
@@ -522,6 +557,8 @@ const friendlyName = (key: MonthlyLimitKey): string => {
       return "AI grading reports";
     case "regrade_arbitrage_views":
       return "regrade arbitrage views";
+    case "counterfeit_screening_reports":
+      return "counterfeit screening reports";
   }
 };
 
