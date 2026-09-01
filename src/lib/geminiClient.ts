@@ -557,3 +557,234 @@ export const analyzeCardForGrading = async (
     notes: parsed.notes ?? "",
   };
 };
+
+// ─── Counterfeit Screening ─────────────────────────────────────────────────────
+//
+// SCREENING tool, not an authentication verdict — see
+// AUDITS/counterfeit-screening-plan.md for the full doctrine this
+// implements. The one-sentence version: this function must never let the
+// model produce a bare "looks genuine" — every property is either an
+// enumerated concern, an enumerated "checked, found nothing," or an
+// enumerated abstention (photo quality / no reference / legitimate-variant
+// ambiguity). The top-line result the caller derives from `findings` is
+// COUNTED from what's actually in the array, never asserted independently
+// by the model — same discipline as GRADING_PROMPT deriving its score from
+// enumerated corner/edge findings rather than a gut number.
+//
+// Model config mirrors the recalibrated grading prompt's own findings
+// (worktree-grading-prompt-recalibration, not yet merged to main as of
+// this writing, but the config choices are independently justified here,
+// not borrowed on faith): temperature 0 for determinism (a counterfeit
+// verdict flip-flopping run-to-run on the same photos is the same failure
+// class the grading recalibration fixed at this exact setting), thinking
+// budget 1024 so enumerated findings actually get used rather than
+// enumerated-then-ignored.
+
+export type CounterfeitSeverity = "none" | "minor" | "concerning" | "strong";
+
+export const COUNTERFEIT_CHECK_PROPERTIES = [
+  "font_letter_spacing",
+  "color_saturation",
+  "print_quality",
+  "energy_symbol",
+  "copyright_line",
+  "holo_pattern",
+  "back_side_hue",
+  "border_alignment",
+  "edge_core_appearance",
+  "backlight_result",
+] as const;
+
+export type CounterfeitCheckProperty =
+  (typeof COUNTERFEIT_CHECK_PROPERTIES)[number];
+
+export interface CounterfeitFinding {
+  property: CounterfeitCheckProperty;
+  findingText: string;
+  severity: CounterfeitSeverity;
+  confidence: number; // 0–100, evidentiary quality for THIS property, not verdict certainty
+  referenceUsed: boolean;
+}
+
+export interface CounterfeitScreeningAnalysis {
+  findings: CounterfeitFinding[];
+  overallConfidence: number; // 0–100, capped when backlit photo or reference is missing
+  notes: string;
+  rawResponse: string;
+}
+
+const COUNTERFEIT_SCREENING_PROMPT = (opts: {
+  cardContext: string;
+  hasReference: boolean;
+  hasBacklit: boolean;
+}) => `You are screening photos of a trading card for signs of counterfeiting. This is NOT an authentication — you are not a grading company, you cannot hold the physical card, and your output will never claim the card IS genuine. Your job is to enumerate what you can and cannot check from these photos, and flag anything that looks wrong. ${opts.cardContext}
+
+HARD RULE, before anything else: you may never conclude that a card IS genuine or authentic. "Nothing concerning found" is a valid, common, and expected result for a property — it is NOT the same as "this card is real," and your output must never phrase it that way. Every property below gets one of three outcomes: (1) a specific concern, (2) "checked, nothing concerning found" — a real, specific, evidence-based finding in its own right, not silence, or (3) an explicit abstention naming exactly why you can't check it (poor image quality for that property, no catalog reference available, or the pattern is also consistent with a known legitimate variant — see below). There is no fourth outcome where you simply assert the card looks fine overall.
+
+ANTI-ANCHOR: "checked, nothing concerning found" across every property is a specific claim — that you actually examined each one against what a genuine card of this type looks like and found no discrepancy. It is not a safe default for when you're unsure; if you're unsure, the honest finding is abstention (outcome 3 above), not a clean bill of health. Equally, do not manufacture a concern to seem thorough — a genuinely well-printed counterfeit-free-looking card should produce mostly "nothing concerning found" findings, and that is a normal, correct result, not a suspicious gap in your analysis. Accuracy in both directions matters: false concerns can wreck a legitimate seller's sale, a false clean bill of health on a real counterfeit is the worse failure mode by far — when genuinely uncertain between the two, lean toward flagging the concern with appropriately modest confidence rather than suppressing it, but do not invent detail you can't see to justify a flag.
+
+LEGITIMATE-VARIANT CARVE-OUT: some real, authentic cards look unusual by design — official test prints, known misprints/error cards, foreign-language legitimate releases, and pre-release promos can trigger the same visual signals as counterfeits (off-register printing, unusual color, a non-standard back). If a finding pattern is also plausibly explained by a known legitimate variant, say so explicitly in that property's finding_text and use abstention or "minor" severity rather than "concerning"/"strong" — name the alternative explanation, don't just soften the language.
+
+${opts.hasReference ? "A CATALOG REFERENCE IMAGE of this exact card is provided — use it directly for font/spacing, color saturation, and holo-pattern comparisons. Findings for those properties should cite specific differences from the reference, not general impressions." : "NO catalog reference image is available for this card (identification failed or wasn't confident enough to trust). For font_letter_spacing, color_saturation, and holo_pattern, you MUST abstain — set severity to \"none\", set referenceUsed to false, and say plainly in finding_text that this property needs a confirmed reference to check. Do not compare against your general knowledge of what this card 'should' look like as a substitute for a real reference — that is exactly the kind of unfounded claim this tool must not make."}
+
+${opts.hasBacklit ? "A BACKLIT photo is provided — the card was photographed against a light source. Genuine trading cards have an opaque core layer and block most light; a counterfeit printed on thinner or different stock often glows through visibly. Assess this directly and specifically: does light pass through, and how much?" : "NO backlit photo was provided (the user skipped this step). Set the backlight_result finding's severity to \"none\" and confidence to 0, and say explicitly in finding_text that this check was skipped, not that it passed. This is one of the strongest available checks — its absence should be treated as a real gap in the screen, not a neutral non-issue."}
+
+Check each of these 10 properties independently. For EACH, write finding_text FIRST — the specific thing you observed or the specific reason you can't check it — before deciding severity. Never assign a severity you can't point to a specific observation for.
+
+1. font_letter_spacing — font weight, letter spacing, and kerning on the card name/attack text vs. what's expected for this card
+2. color_saturation — color accuracy and saturation vs. reference or general print-quality expectations
+3. print_quality — halftone dot pattern, blurriness, or softness inconsistent with authentic offset/lithographic printing (genuine Pokémon cards do not show visible halftone dots at normal viewing distance; visible dot patterns are a strong counterfeit indicator)
+4. energy_symbol — energy symbol shape, color, and placement correctness
+5. copyright_line — presence and exact format of the copyright line (year, ©, the Nintendo/Creatures/GAME FREAK stack appropriate to this card's era)
+6. holo_pattern — holo foil pattern type match vs. reference, where the card has holo treatment (severity "none" with finding_text "not a holo card" if it doesn't)
+7. back_side_hue — back-of-card color plausibility (Pokémon-card-blue, or reference-backed exact match when a reference is available)
+8. border_alignment — print registration/alignment relative to the card's cut edge — this is about the PRINT position, distinct from physical centering
+9. edge_core_appearance — visible card-stock edge color and texture in the front/back photos
+10. backlight_result — see instructions above
+
+Return ONLY valid JSON, no markdown, no code blocks:
+{
+  "findings": [
+    {
+      "property": "<one of the 10 property names above, exactly as written>",
+      "finding_text": "<specific observation, or specific reason for abstention>",
+      "severity": "none" | "minor" | "concerning" | "strong",
+      "confidence": <0-100, how much you trust the EVIDENCE for this specific property — image quality, reference availability — not how sure you feel about the overall card>,
+      "reference_used": <true if this finding directly compared against the provided catalog reference image, false otherwise>
+    }
+    // exactly 10 objects, one per property, in the order listed above
+  ],
+  "overall_confidence": <0-100, factoring in image quality across all photos, whether a reference was available, and whether the backlit photo was included — cap this well below 70 whenever the backlit photo was skipped>,
+  "notes": "<2-3 sentences: what you'd tell the person who submitted these photos, naming the single most significant concern if any, and reiterating this is a screen, not authentication>"
+}`;
+
+export const analyzeCardForCounterfeits = async (
+  images: {
+    frontBase64: string;
+    frontMime: "image/jpeg" | "image/png" | "image/webp";
+    backBase64: string;
+    backMime: "image/jpeg" | "image/png" | "image/webp";
+    backlitBase64?: string;
+    backlitMime?: "image/jpeg" | "image/png" | "image/webp";
+  },
+  reference: { base64: string; mime: "image/jpeg" | "image/png" | "image/webp" } | null,
+  cardName?: string,
+  setName?: string,
+): Promise<CounterfeitScreeningAnalysis> => {
+  if (!process.env.GEMINI_API_KEY) {
+    throw { status: 503, message: "Gemini Vision API not configured" };
+  }
+
+  const cardContext = cardName
+    ? `The submitter identifies this as: ${cardName}${setName ? `, from ${setName}` : ""}. Treat this as a hint, not a confirmed fact — your own visual checks are what matter.`
+    : "The card could not be confidently identified from the photos — treat every reference-dependent check as unavailable regardless of what you might guess this card to be.";
+
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash",
+    safetySettings: [
+      {
+        category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+      {
+        category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+        threshold: HarmBlockThreshold.BLOCK_NONE,
+      },
+    ],
+  });
+
+  const parts: Part[] = [
+    { text: "FRONT OF CARD:" },
+    fileToGenerativePart(images.frontBase64, images.frontMime),
+    { text: "BACK OF CARD:" },
+    fileToGenerativePart(images.backBase64, images.backMime),
+  ];
+  if (images.backlitBase64 && images.backlitMime) {
+    parts.push(
+      { text: "BACKLIT PHOTO (card held against a light source):" },
+      fileToGenerativePart(images.backlitBase64, images.backlitMime),
+    );
+  }
+  if (reference) {
+    parts.push(
+      { text: "CATALOG REFERENCE IMAGE (known-genuine printing of this exact card, for comparison):" },
+      fileToGenerativePart(reference.base64, reference.mime),
+    );
+  }
+  parts.push({
+    text: COUNTERFEIT_SCREENING_PROMPT({
+      cardContext,
+      hasReference: !!reference,
+      hasBacklit: !!images.backlitBase64,
+    }),
+  });
+
+  const result = await model.generateContent({
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      temperature: 0,
+      maxOutputTokens: 2048,
+      responseMimeType: "application/json",
+      // @ts-ignore — thinkingConfig is valid for gemini-2.5-flash
+      thinkingConfig: { thinkingBudget: 1024 },
+    },
+  });
+
+  const raw = result.response.text().trim();
+
+  let parsed: any;
+  try {
+    const stripped = raw.replace(/```json\n?|```\n?/g, "").trim();
+    const start = stripped.indexOf("{");
+    const end = stripped.lastIndexOf("}");
+    if (start === -1 || end === -1) {
+      throw new Error(
+        `No JSON object found in response. Raw: ${raw.substring(0, 200)}`,
+      );
+    }
+    parsed = JSON.parse(stripped.substring(start, end + 1));
+  } catch (err: any) {
+    await logError({
+      source: "counterfeit-screening",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    throw new Error(
+      `Failed to parse Gemini counterfeit-screening response: ${err?.message}`,
+    );
+  }
+
+  const validProperties = new Set(COUNTERFEIT_CHECK_PROPERTIES);
+  const validSeverities = new Set<CounterfeitSeverity>([
+    "none",
+    "minor",
+    "concerning",
+    "strong",
+  ]);
+
+  const findings: CounterfeitFinding[] = (
+    Array.isArray(parsed.findings) ? parsed.findings : []
+  )
+    .filter((f: any) => validProperties.has(f?.property))
+    .map((f: any) => ({
+      property: f.property as CounterfeitCheckProperty,
+      findingText: typeof f.finding_text === "string" ? f.finding_text : "",
+      severity: validSeverities.has(f?.severity) ? f.severity : "none",
+      confidence: Math.max(0, Math.min(100, Number(f?.confidence) || 0)),
+      referenceUsed: f?.reference_used === true,
+    }));
+
+  return {
+    findings,
+    overallConfidence: Math.max(
+      0,
+      Math.min(100, Number(parsed.overall_confidence) || 0),
+    ),
+    notes: typeof parsed.notes === "string" ? parsed.notes : "",
+    rawResponse: raw,
+  };
+};

@@ -1,0 +1,13 @@
+{
+  "id": "known-genuine-2",
+  "kind": "known-genuine",
+  "card": "unknown (founder's dev account) — same physical card as grading-calibration's control-clean-2",
+  "source": "founder-collection",
+  "sourceNote": "Reused from fixtures/grading-calibration/control-clean-2 — same reuse rationale as known-genuine-1. No backlit photo.",
+  "groundTruth": "genuine",
+  "expectedFindings": [
+    "backlight_result: severity none, confidence 0, explicitly noting the check was skipped"
+  ],
+  "expectedTopLineDirection": "no red flags",
+  "notes": "Second independent known-genuine sample — a single clean-card pass isn't enough to trust the prompt isn't accidentally tuned to one specific image's lighting/framing."
+}

@@ -1,0 +1,14 @@
+{
+  "id": "known-genuine-worn-not-fake",
+  "kind": "known-genuine",
+  "card": "Mew (Gold Star), EX Dragon Frontiers 101/101",
+  "source": "founder-collection",
+  "sourceNote": "Reused from fixtures/grading-calibration/mew-gold-star-back-whitening — the grading recalibration's own hand-verified anchor case (founder confirmed against the physical card, 2026-08-30). That case exists because this card has REAL, heavy, hand-confirmed physical wear: whitening along all four back edges and fuzzed/soft back corners, graded PSA 4-5. Genuine and heavily worn are not the same thing as counterfeit — this case exists specifically to check the screening prompt doesn't conflate the two. No backlit photo (grading capture is front+back only).",
+  "groundTruth": "genuine",
+  "expectedFindings": [
+    "edge_core_appearance and/or other wear-adjacent properties may reasonably note visible wear, but severity should stay at most 'minor' for ordinary handling wear — 'concerning'/'strong' would indicate the prompt is conflating physical damage with a counterfeit signal, which is the specific failure this case is designed to catch",
+    "backlight_result: severity none, confidence 0, skipped"
+  ],
+  "expectedTopLineDirection": "no red flags",
+  "notes": "The highest-value case in this initial set: a real, damaged, unambiguously-genuine card. If this comes back with 'concerns found', the prompt is failing the exact distinction the design doc's risk register calls out (legitimate-variant / condition-vs-authenticity conflation) and needs rework before any known-fake cases are even worth testing against."
+}
