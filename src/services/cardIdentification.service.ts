@@ -15,10 +15,22 @@ export interface CardScanResult {
   searchQuery: string | null;
 }
 
+// Bug fix (counterfeit-screening Phase 0, 2026-09-01): this used to emit a
+// field:"value" query DSL ('name:"Lugia V" number:169') that searchCards'
+// actual implementation (applyCardNameNumberSearch, src/lib/cardSearch.ts)
+// has no concept of — it just ILIKE-matches whatever whitespace-separated
+// tokens it's given against name/number columns directly, so a literal
+// 'name:"Lugia' token never matched anything in the name column. This
+// silently broke EVERY identification-to-catalog match (matchConfidence
+// was always "failed", verified live pre-fix) — including this feature's
+// existing production consumer, browse/scan.tsx's card-scan-to-identify
+// flow, which this same service already backs. Plain space-separated
+// tokens are what applyCardNameNumberSearch actually parses (see its own
+// header comment) — verified live post-fix that real matches come back.
 const buildSearchQuery = (id: CardIdentificationResult): string | null => {
   const parts: string[] = [];
-  if (id.cardName) parts.push(`name:"${id.cardName}"`);
-  if (id.cardNumber) parts.push(`number:${id.cardNumber}`);
+  if (id.cardName) parts.push(id.cardName);
+  if (id.cardNumber) parts.push(id.cardNumber);
   return parts.length > 0 ? parts.join(" ") : null;
 };
 

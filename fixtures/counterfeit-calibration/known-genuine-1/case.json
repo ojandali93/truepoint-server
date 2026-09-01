@@ -1,0 +1,13 @@
+{
+  "id": "known-genuine-1",
+  "kind": "known-genuine",
+  "card": "unknown (founder's dev account) — same physical card as grading-calibration's control-clean-1",
+  "source": "founder-collection",
+  "sourceNote": "Reused from fixtures/grading-calibration/control-clean-1 (front.jpg/back.jpg identical) rather than re-photographed — that case's own note establishes this card as genuinely clean, hand-confirmed via the founder's dev account. No backlit photo exists for this card (grading capture is front+back only) — this case exercises the skip-backlit path deliberately, not as a gap.",
+  "groundTruth": "genuine",
+  "expectedFindings": [
+    "backlight_result: severity none, confidence 0, explicitly noting the check was skipped — must NOT read as a pass"
+  ],
+  "expectedTopLineDirection": "no red flags",
+  "notes": "Primary purpose: confirm the screening prompt doesn't false-flag a real, clean card, and that a skipped backlit photo is reported as a stated gap (capped overall_confidence, explicit finding_text) rather than silently ignored."
+}
