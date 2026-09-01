@@ -36,6 +36,7 @@ export const FLAG_KEYS = {
   NOTIFY_PRICE_MOVERS: "notify_price_movers",
   PRICECHARTING_PRICING: "pricecharting_pricing",
   PRO_PRICING_V2: "pro_pricing_v2",
+  COUNTERFEIT_SCREENING: "counterfeit_screening",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -113,5 +114,17 @@ export const KNOWN_FLAGS: KnownFlag[] = [
       "production users a Buy button for a product Apple hasn't approved " +
       "yet — the purchase will fail. Off → allowlist (Omar, sandbox-test " +
       "once ASC approves) → everyone.",
+  },
+  {
+    key: FLAG_KEYS.COUNTERFEIT_SCREENING,
+    label: "Counterfeit Screening",
+    description:
+      "AUDITS/counterfeit-screening-plan.md — Analyze tab sub-tab " +
+      "visibility only; server-side entitlement/metering (free-tier, " +
+      "5 screens/mo, unlimited Pro) is unconditional on this flag. Row " +
+      "created + verified live 2026-09-01 (allowlist: Omar). Off → " +
+      "allowlist → percentage → everyone — do not widen past allowlist " +
+      "until the disclaimer/liability copy has real legal review " +
+      "(flagged, unresolved as of this flag's creation).",
   },
 ];
