@@ -2,6 +2,7 @@ import { logError } from "../lib/Logger";
 import * as UserRepository from "../repositories/user.repository";
 import { Profile, NotificationSettings, UserDevice } from "../types/user.types";
 import * as ProductFeedbackRepo from "../repositories/productFeedback.repository";
+import { findAttributionByUserId } from "../repositories/referral.repository";
 
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
@@ -36,19 +37,29 @@ export interface FeedbackGateState {
 
 export interface MyProfileResponse extends Profile {
   feedback: FeedbackGateState;
+  // Code-entry consolidation (2026-09-02): does this user already have a
+  // referral_attributions row (of any resolved type)? Drives the first-run
+  // dashboard's 4th door (FirstRunHero) — shown only when this is false, so
+  // an email user who already entered a code never sees it, and anyone who
+  // skipped it (OAuth or email) does. Reuses the exact same lookup
+  // resolveAttribution's own already_attributed check already runs —
+  // nothing new to keep in sync.
+  hasAttribution: boolean;
 }
 
 export const getMyProfileWithFeedbackState = async (
   userId: string,
 ): Promise<MyProfileResponse> => {
-  const [profile, promptState, b2State] = await Promise.all([
+  const [profile, promptState, b2State, attribution] = await Promise.all([
     getProfileById(userId),
     ProductFeedbackRepo.getFeedbackPromptState(userId),
     ProductFeedbackRepo.getFlowB2GateState(userId),
+    findAttributionByUserId(userId),
   ]);
 
   return {
     ...profile,
+    hasAttribution: attribution !== null,
     feedback: {
       flowA: {
         lastAskedAt: promptState.lastAskedAt,

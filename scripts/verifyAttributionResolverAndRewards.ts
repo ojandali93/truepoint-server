@@ -66,6 +66,27 @@ async function main() {
   const flagSnapshots: FlagSnapshot[] = [];
 
   try {
+    // ── Shared throwaway vendor code, used by BOTH parts below ─────────────
+    // Created up front since Part 1 needs it too now (see the flags-OFF
+    // vendor test just below — this is the exact bug caught and fixed
+    // 2026-09-02: vendor-code resolution was briefly gated behind
+    // referral_program, which would have silently broken every card-show
+    // code the moment the login screen's dedicated event-code button was
+    // removed, for every non-allowlisted user).
+    const { data: vendorCodeRow, error: vendorCodeErr } = await supabaseAdmin
+      .from("vendor_codes")
+      .insert({
+        code: `VERIFYVENDOR${Date.now()}`,
+        description: "Resolver Verify throwaway",
+        benefit_type: "comp_trial",
+        plan: "pro",
+        duration_months: 1,
+        active: true,
+      })
+      .select("code")
+      .single();
+    if (vendorCodeErr || !vendorCodeRow) throw vendorCodeErr ?? new Error("vendor code insert failed");
+
     // ── Part 1: a brand-new, never-allowlisted user ────────────────────────
     console.log("=== Part 1: flags OFF for a fresh user — behavior, not just UI ===");
     const offUser = await createThrowawayUser("flags-off");
@@ -77,6 +98,20 @@ async function main() {
       .in("key", ["affiliate_program", "referral_program"]);
     console.log(
       `  current flag state: ${(existingFlags ?? []).map((f) => `${f.key}=${f.audience}(${(f.allowed_user_ids ?? []).length} allowed)`).join(", ") || "no rows yet"}`,
+    );
+
+    // Vendor codes must resolve for a completely non-allowlisted user —
+    // never flag-gated, unlike everything else the resolver does.
+    const offVendorResult = await resolveAttribution({
+      userId: offUser,
+      rawCode: vendorCodeRow.code,
+      source: "mobile_manual",
+      role: null,
+    });
+    assertTrue(
+      "vendor code resolves even for a NEVER-allowlisted user (not flag-gated)",
+      offVendorResult.outcome === "resolved_vendor",
+      offVendorResult,
     );
 
     const offResult = await resolveAttribution({
@@ -115,9 +150,13 @@ async function main() {
     createdUserIds.push(referredFriend);
     const affiliateSignup = await createThrowawayUser("affiliate-signup");
     createdUserIds.push(affiliateSignup);
+    const vendorCodeUser = await createThrowawayUser("vendor-code-user");
+    createdUserIds.push(vendorCodeUser);
+    const slotTestUser = await createThrowawayUser("slot-test-user");
+    createdUserIds.push(slotTestUser);
     const selfReferralUser = referrer; // reuses their own code on themselves
 
-    const testUsers = [referrer, referredFriend, affiliateSignup, offUser];
+    const testUsers = [referrer, referredFriend, affiliateSignup, vendorCodeUser, slotTestUser, offUser];
 
     for (const key of ["affiliate_program", "referral_program"] as const) {
       const existing = (existingFlags ?? []).find((f) => f.key === key);
@@ -167,6 +206,85 @@ async function main() {
       role: null,
     });
     assertTrue("affiliate slug resolves as resolved_affiliate", affResult.outcome === "resolved_affiliate", affResult);
+
+    // ── Code-entry consolidation (2026-09-02): vendor codes resolve
+    // through the SAME unified path, checked first, never touching
+    // referral_attributions at all. This user is on the allowlist (unlike
+    // offUser above, who already proved the vendor path works WITHOUT it)
+    // — reuses the same throwaway vendor_codes row; a code can be redeemed
+    // once per user, so the same row works for both. ──────────────────────
+    const vendorResult = await resolveAttribution({
+      userId: vendorCodeUser,
+      rawCode: vendorCodeRow.code,
+      source: "mobile_manual",
+      role: null,
+    });
+    assertTrue(
+      "vendor code resolves as resolved_vendor with the right benefit",
+      vendorResult.outcome === "resolved_vendor" &&
+        (vendorResult as any).plan === "pro" &&
+        (vendorResult as any).durationMonths === 1,
+      vendorResult,
+    );
+
+    const { data: vendorAttrRows } = await supabaseAdmin
+      .from("referral_attributions")
+      .select("id")
+      .eq("user_id", vendorCodeUser);
+    assertTrue(
+      "vendor code redemption writes ZERO referral_attributions rows (orthogonal)",
+      (vendorAttrRows?.length ?? 0) === 0,
+      vendorAttrRows,
+    );
+
+    const { data: vendorSub } = await supabaseAdmin
+      .from("subscriptions")
+      .select("plan, status, comp_reason")
+      .eq("user_id", vendorCodeUser)
+      .eq("platform", "comp")
+      .maybeSingle();
+    assertTrue(
+      "vendor code actually granted a comp trial subscription",
+      !!vendorSub && vendorSub.plan === "pro" && vendorSub.comp_reason === "vendor_trial",
+      vendorSub,
+    );
+
+    // ── "Never burn the slot" (invariant added 2026-09-02): an
+    // unrecognized code must not write ANY referral_attributions row —
+    // the OLD behavior stored an `unresolved` row here, which (since
+    // referral_attributions.user_id is UNIQUE) permanently blocked this
+    // exact user from ever applying a REAL code afterward. ──────────────
+    const garbageResult = await resolveAttribution({
+      userId: slotTestUser,
+      rawCode: "TOTALLYFAKECODE999",
+      source: "mobile_manual",
+      role: null,
+    });
+    assertTrue("unrecognized code resolves as unresolved", garbageResult.outcome === "unresolved", garbageResult);
+
+    const { data: slotAttrRowsAfterGarbage } = await supabaseAdmin
+      .from("referral_attributions")
+      .select("id")
+      .eq("user_id", slotTestUser);
+    assertTrue(
+      "unrecognized code writes ZERO referral_attributions rows — the slot stays free",
+      (slotAttrRowsAfterGarbage?.length ?? 0) === 0,
+      slotAttrRowsAfterGarbage,
+    );
+
+    // Same user, real affiliate code, right after the garbage attempt —
+    // proves the slot was never burned.
+    const slotRecoveryResult = await resolveAttribution({
+      userId: slotTestUser,
+      rawCode: aff.slug,
+      source: "mobile_manual",
+      role: null,
+    });
+    assertTrue(
+      "the SAME user's real code afterward still resolves (slot was never burned)",
+      slotRecoveryResult.outcome === "resolved_affiliate",
+      slotRecoveryResult,
+    );
 
     // Referrer generates their own code (going through the real lazy-gen
     // path a client would call).
@@ -331,6 +449,8 @@ async function main() {
       // threw before its own explicit cleanup above ran.
       await supabaseAdmin.from("ai_grading_reports").delete().eq("user_id", userId);
       await supabaseAdmin.from("inventory").delete().eq("user_id", userId);
+      // Must run before the vendor_codes delete below (FK: code_id).
+      await supabaseAdmin.from("vendor_code_redemptions").delete().eq("user_id", userId);
       await supabaseAdmin.from("referral_rewards").delete().eq("referrer_user_id", userId);
       await supabaseAdmin.from("referral_rewards").delete().eq("referred_user_id", userId);
       await supabaseAdmin.from("subscriptions").delete().eq("user_id", userId);
@@ -341,6 +461,8 @@ async function main() {
     console.log(`  deleted ${createdUserIds.length} throwaway user(s) and their rows`);
     await supabaseAdmin.from("affiliates").delete().ilike("name", "Resolver Verify%");
     console.log("  deleted the throwaway affiliate row");
+    await supabaseAdmin.from("vendor_codes").delete().ilike("code", "VERIFYVENDOR%");
+    console.log("  deleted the throwaway vendor_codes row");
   }
 
   if (fail > 0) process.exit(1);

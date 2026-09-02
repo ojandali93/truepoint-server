@@ -28,6 +28,7 @@ import {
   findProfileCreatedAt,
   markTrialUsed,
 } from "../repositories/referral.repository";
+import { redeemVendorCode, VendorCodeError } from "./vendorCode.service";
 import { isFlagEnabled } from "./featureFlag.service";
 import { FLAG_KEYS } from "../constants/featureFlagKeys";
 import { logError } from "../lib/Logger";
@@ -41,7 +42,22 @@ export type AttributionSource =
 export type ResolveOutcome =
   | { outcome: "resolved_affiliate"; attributionId: string }
   | { outcome: "resolved_referral"; attributionId: string }
-  | { outcome: "unresolved"; attributionId: string }
+  // Code-entry consolidation (ruled 2026-09-02): a vendor/event code is a
+  // direct benefit redemption, not an attribution relationship — carries
+  // redeemVendorCode's own RedeemResult shape so the client can show the
+  // same confirmation event-code.tsx always has.
+  | {
+      outcome: "resolved_vendor";
+      plan: string;
+      durationMonths: number;
+      description: string | null;
+    }
+  // The code matched a real vendor code but couldn't be redeemed for a
+  // specific reason (expired/exhausted/already redeemed/unsupported type)
+  // — message is VendorCodeError's own user-facing text, unchanged from
+  // what event-code.tsx/profile/redeem.tsx already show today.
+  | { outcome: "vendor_code_error"; message: string }
+  | { outcome: "unresolved" }
   | { outcome: "already_attributed" }
   | { outcome: "self_referral_blocked" }
   | { outcome: "no_code" }
@@ -96,6 +112,49 @@ export async function resolveAttribution(
 
   const code = (rawCode ?? "").trim();
   if (!code) return { outcome: "no_code" };
+
+  // Vendor/event codes (code-entry consolidation, ruled 2026-09-02) —
+  // checked FIRST and entirely independent of everything below: a vendor
+  // code is a direct benefit redemption, not "who referred you," so it
+  // must work regardless of whether this user already has a referral/
+  // affiliate attribution (never touches referral_attributions at all —
+  // vendor_code_redemptions' own per-user-per-code check is the only guard
+  // it needs), and isn't subject to the referral grace-period window below
+  // (that window is a referral/affiliate business rule, not a vendor-code
+  // one — a card-show code isn't "retroactive" in any sense that applies).
+  //
+  // DELIBERATELY NOT gated behind referral_program, unlike the rest of
+  // this consolidation — vendor-code redemption has NEVER been flag-gated
+  // (event-code.tsx and profile/redeem.tsx both worked unconditionally for
+  // every user), and the login screen's "Event code" button was removed
+  // outright, not flag-gated, leaving THIS the only pre-signup path left
+  // for a vendor code. Gating it here would silently break vendor-code
+  // redemption for every non-allowlisted user the moment that button was
+  // gone — exactly the "breaks silently at a card show" risk this whole
+  // consolidation was reviewed against. Only affiliate/referral resolution
+  // below stays flag-gated, unchanged from before this branch existed.
+  try {
+    const result = await redeemVendorCode(userId, code);
+    return {
+      outcome: "resolved_vendor",
+      plan: result.plan,
+      durationMonths: result.durationMonths,
+      description: result.description,
+    };
+  } catch (err) {
+    if (err instanceof VendorCodeError) {
+      if (err.code !== "NOT_FOUND") {
+        // A real vendor code that matched but couldn't be redeemed
+        // (expired/exhausted/already redeemed/unsupported) — report
+        // that specifically rather than falling through to "that code
+        // doesn't look right" for an obviously-real code.
+        return { outcome: "vendor_code_error", message: err.message };
+      }
+      // NOT_FOUND — not a vendor code at all, fall through below.
+    } else {
+      throw err;
+    }
+  }
 
   // "First one wins" — a pre-existing row (of either type) means this call
   // does nothing further, regardless of what code is now being offered.
@@ -206,19 +265,17 @@ export async function resolveAttribution(
     }
   }
 
-  // Unresolved — stored regardless (affiliate doc §0.3/§2.3: never
-  // silently drop a typo'd or made-up code). Only reached when at least
-  // one flag is on for this user, so this still respects "flags_off means
-  // zero rows" above.
-  const row = await insertAttribution({
-    user_id: userId,
-    affiliate_id: null,
-    referrer_user_id: null,
-    attribution_type: null,
-    raw_code_entered: code,
-    resolved: false,
-    source,
-  });
-  if (!row) return { outcome: "already_attributed" };
-  return { outcome: "unresolved", attributionId: row.id };
+  // Unrecognized — NEVER write a row (invariant added 2026-09-02: "never
+  // burn the slot"). This used to store an `unresolved` row so a later real
+  // match ("REDDIT" turning out to be real) would stay queryable (affiliate
+  // doc §0.3/§2.3) — but referral_attributions.user_id is UNIQUE, and
+  // findAttributionByUserId's already_attributed check above doesn't
+  // distinguish resolved from unresolved, so that row permanently locked
+  // this user out of ever entering a REAL code afterward. Harmless while
+  // "unresolved" only ever meant a rare human typo; unacceptable once code-
+  // entry consolidation made "doesn't match anything" a routine event (a
+  // stale/mistyped/wrong-show vendor code, not just a referral typo) —
+  // losing the queryable-typo data is the smaller cost. The slot stays
+  // free: this user can immediately try a real code next.
+  return { outcome: "unresolved" };
 }
