@@ -16,6 +16,7 @@
  */
 
 import { ensureDefaultCollection } from "./collection.service";
+import { recordReferralInventoryQualificationSafe } from "./referralReward.service";
 import {
   deleteInventoryItem,
   findInventoryItemById,
@@ -153,6 +154,13 @@ export const recordTrade = async (
         notes: "Acquired via trade",
       });
       createdIds.push(created.id);
+    }
+
+    // Referral qualification hook — see inventory.service.ts's
+    // addInventoryItem for the pattern. Once per trade, not once per
+    // received card; no-op when the trade received nothing (all give side).
+    if (createdIds.length > 0) {
+      await recordReferralInventoryQualificationSafe(userId);
     }
 
     // 5. Write the journal entry.

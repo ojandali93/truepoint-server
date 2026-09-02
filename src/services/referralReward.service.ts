@@ -10,6 +10,8 @@ import {
   markRewardQualified,
   markRewardGranted,
   countCompletedAiGradingReports,
+  findFirstCompletedAiGradingReportId,
+  countInventoryCards,
   countGrantedRewardsInTrailingYear,
   findActiveCompRowByReason,
   insertCompGrant,
@@ -25,6 +27,16 @@ import { logError } from "../lib/Logger";
 const ANNUAL_CAP = 12;
 const QUALIFIED_EXPIRY_DAYS = 60;
 
+// Ruled 2026-09-02: qualification now requires BOTH conditions, not just
+// the grading one — grading shows a referred user the magic, inventory is
+// what brings them back. This is the ONLY place the card-count number
+// lives; tune it here, no migration, nothing else to keep in sync — the
+// referral-summary API reads this same constant into its response
+// (cardsRequired) so the app's copy and per-referral "cards N of M"
+// progress can never drift from what actually gates the reward, the same
+// class of bug the trial-day copy fix (2026-09-02) closed for good.
+export const REFERRAL_INVENTORY_THRESHOLD = 3;
+
 const addMonthsIso = (fromIso: string, months: number): string => {
   const d = new Date(fromIso);
   d.setUTCMonth(d.getUTCMonth() + months);
@@ -33,9 +45,66 @@ const addMonthsIso = (fromIso: string, months: number): string => {
 
 export type QualificationOutcome =
   | { outcome: "no_pending_referral" }
-  | { outcome: "not_first_grading" }
+  | {
+      outcome: "not_yet_qualified";
+      graded: boolean;
+      cardsAdded: number;
+      cardsRequired: number;
+    } // one or both conditions still outstanding
   | { outcome: "qualified_capped"; rewardId: string } // qualified, waiting on cap room
   | { outcome: "qualified_and_granted"; rewardId: string; compSubscriptionId: string };
+
+/**
+ * Shared by both trigger points (grading completion, every inventory-add
+ * write path) — whichever of the two conditions completes SECOND is what
+ * actually qualifies the reward, so both call sites run this exact same
+ * check rather than each owning half of it. Idempotent: markRewardQualified
+ * only ever fires on a 'pending' row (its own set-once guard), so calling
+ * this after qualification has already happened is a harmless no-op.
+ *
+ * qualifyingReportId is the report to link on the reward row once both
+ * conditions are met. The grading call site already has it in hand; an
+ * inventory-triggered call doesn't (grading may have completed well
+ * before this specific inventory add), so it's looked up here instead —
+ * by construction, if `graded` is true, one exists.
+ */
+async function checkAndQualify(
+  referredUserId: string,
+  qualifyingReportId: string | null,
+): Promise<QualificationOutcome> {
+  const pending = await findPendingRewardByReferredUserId(referredUserId);
+  if (!pending) return { outcome: "no_pending_referral" };
+
+  const [gradedCount, cardsAdded] = await Promise.all([
+    countCompletedAiGradingReports(referredUserId),
+    countInventoryCards(referredUserId),
+  ]);
+  const graded = gradedCount >= 1;
+  const cardsQualified = cardsAdded >= REFERRAL_INVENTORY_THRESHOLD;
+
+  if (!graded || !cardsQualified) {
+    return {
+      outcome: "not_yet_qualified",
+      graded,
+      cardsAdded,
+      cardsRequired: REFERRAL_INVENTORY_THRESHOLD,
+    };
+  }
+
+  const reportId =
+    qualifyingReportId ?? (await findFirstCompletedAiGradingReportId(referredUserId));
+  if (!reportId) {
+    // Defensive only — graded=true (gradedCount >= 1) makes this
+    // unreachable in practice; markRewardQualified requires a non-null id.
+    throw new Error(
+      `Referral qualification: graded but no completed report found for user ${referredUserId}`,
+    );
+  }
+
+  await markRewardQualified(pending.id, reportId);
+
+  return attemptGrant(pending.referrer_user_id, pending.id);
+}
 
 /**
  * Called from the AI grading completion write path. Cheap no-op for the
@@ -45,19 +114,44 @@ export async function recordReferralQualification(
   referredUserId: string,
   qualifyingReportId: string,
 ): Promise<QualificationOutcome> {
-  const pending = await findPendingRewardByReferredUserId(referredUserId);
-  if (!pending) return { outcome: "no_pending_referral" };
+  return checkAndQualify(referredUserId, qualifyingReportId);
+}
 
-  // Re-check this is genuinely their FIRST completed report — a race
-  // guard, not the primary check (the primary check is "a pending reward
-  // exists at all," which by construction only exists for a user who was
-  // just attributed and hasn't graded before).
-  const completedCount = await countCompletedAiGradingReports(referredUserId);
-  if (completedCount !== 1) return { outcome: "not_first_grading" };
+/**
+ * Same cheap-no-op shape as the grading path. Real write paths (single
+ * add, sealed-pull batch, CSV import batch, trade acceptance) all call the
+ * Safe wrapper below, not this directly — exported for composability and
+ * so a caller that wants the actual outcome (verification scripts) can get
+ * one, same as recordReferralQualification.
+ */
+export async function recordReferralInventoryQualification(
+  referredUserId: string,
+): Promise<QualificationOutcome> {
+  return checkAndQualify(referredUserId, null);
+}
 
-  await markRewardQualified(pending.id, qualifyingReportId);
-
-  return attemptGrant(pending.referrer_user_id, pending.id);
+/**
+ * Four separate write paths call this (vs. the grading path's one), so the
+ * "never fail the caller" guarantee — aiGrading.controller.ts wraps its own
+ * call to recordReferralQualification the same way — is centralized here
+ * once instead of copy-pasted four times.
+ */
+export async function recordReferralInventoryQualificationSafe(
+  referredUserId: string,
+): Promise<void> {
+  try {
+    await recordReferralInventoryQualification(referredUserId);
+  } catch (err) {
+    await logError({
+      source: "referral-inventory-qualification",
+      message: "Failed to process referral inventory qualification",
+      error: err,
+      userId: referredUserId,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+  }
 }
 
 async function attemptGrant(
@@ -120,6 +214,17 @@ export async function getOrCreateReferralCode(userId: string): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const row = await insertReferralCode(userId, randomCode());
     if (row) return row.code;
+
+    // A 23505 here has two different causes now that getReferralSummary
+    // (2026-09-02 fix) calls this on every summary fetch until a code
+    // exists: a genuine code collision (retry with a new draw is right),
+    // or a concurrent request for the SAME user winning the user_id-UNIQUE
+    // race (e.g. two overlapping pull-to-refreshes) — retrying blindly in
+    // that case wastes attempts and can still throw for a user who already
+    // has a code. Check before the next draw so a lost race returns the
+    // winner's code instead of erroring.
+    const raced = await findReferralCodeByUserId(userId);
+    if (raced) return raced.code;
   }
   throw Object.assign(new Error("Failed to generate a unique referral code"), {
     status: 500,
@@ -129,10 +234,11 @@ export async function getOrCreateReferralCode(userId: string): Promise<string> {
 // ─── /me/referral-summary ───────────────────────────────────────────────────
 
 export interface ReferralSummary {
-  code: string | null;
+  code: string;
   referredCount: number;
   qualifiedCount: number; // includes granted (granted implies qualified)
   grantedMonthsThisYear: number;
+  cardsRequired: number; // REFERRAL_INVENTORY_THRESHOLD — so the app never hardcodes it
   rewards: Array<{
     id: string;
     referredUserId: string;
@@ -142,12 +248,25 @@ export interface ReferralSummary {
     grantedAt: string | null;
     grantedPeriodStart: string | null;
     grantedPeriodEnd: string | null;
+    // Live per-referral progress toward BOTH conditions — only computed
+    // for 'pending' rows (design doc §2.4 UX ruling, 2026-09-02: the
+    // referrer must be able to see WHY a referral hasn't qualified, not
+    // just an opaque count). null for qualified/granted (both conditions
+    // were already met) and revoked/expired (nothing left to show).
+    progress: { graded: boolean; cardsAdded: number } | null;
   }>;
 }
 
 export async function getReferralSummary(userId: string): Promise<ReferralSummary> {
-  const [codeRow, rewards] = await Promise.all([
-    findReferralCodeByUserId(userId),
+  // 2026-09-02 bug fix: this used to read findReferralCodeByUserId directly
+  // — a personal code was designed to generate lazily on first view (§2.1),
+  // but this, the screen's one call, never actually triggered that
+  // generation (only GET /me/referral-code did, and nothing ever called
+  // it). getOrCreateReferralCode makes this endpoint itself the "first
+  // view" trigger, so every existing code-less user gets one the moment
+  // they next load this screen — the fix IS the backfill, no migration.
+  const [code, rewards] = await Promise.all([
+    getOrCreateReferralCode(userId),
     listRewardsForReferrer(userId),
   ]);
 
@@ -157,11 +276,24 @@ export async function getReferralSummary(userId: string): Promise<ReferralSummar
   ).length;
   const grantedMonthsThisYear = await countGrantedRewardsInTrailingYear(userId);
 
+  const progressByRewardId = new Map<string, { graded: boolean; cardsAdded: number }>();
+  const pendingRows = primaryRows.filter((r) => r.status === "pending");
+  await Promise.all(
+    pendingRows.map(async (r) => {
+      const [gradedCount, cardsAdded] = await Promise.all([
+        countCompletedAiGradingReports(r.referred_user_id),
+        countInventoryCards(r.referred_user_id),
+      ]);
+      progressByRewardId.set(r.id, { graded: gradedCount >= 1, cardsAdded });
+    }),
+  );
+
   return {
-    code: codeRow?.code ?? null,
+    code,
     referredCount: primaryRows.length,
     qualifiedCount,
     grantedMonthsThisYear,
+    cardsRequired: REFERRAL_INVENTORY_THRESHOLD,
     rewards: primaryRows.map((r) => ({
       id: r.id,
       referredUserId: r.referred_user_id,
@@ -171,6 +303,7 @@ export async function getReferralSummary(userId: string): Promise<ReferralSummar
       grantedAt: r.granted_at,
       grantedPeriodStart: r.granted_period_start,
       grantedPeriodEnd: r.granted_period_end,
+      progress: progressByRewardId.get(r.id) ?? null,
     })),
   };
 }

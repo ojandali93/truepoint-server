@@ -25,6 +25,7 @@ import {
 } from "../repositories/importJobs.repository";
 import { getCurrentTotalValue } from "./inventory.service";
 import { requireFeature } from "./plan.service";
+import { recordReferralInventoryQualificationSafe } from "./referralReward.service";
 import {
   CommitImportRequest,
   CommitImportResult,
@@ -196,6 +197,10 @@ export const commitImport = async (
   for (let i = 0; i < inputs.length; i += COMMIT_CHUNK_SIZE) {
     await insertInventoryBatch(userId, inputs.slice(i, i + COMMIT_CHUNK_SIZE));
   }
+
+  // Referral qualification hook — see inventory.service.ts's addInventoryItem
+  // for the pattern. Once per import job, not once per chunk.
+  await recordReferralInventoryQualificationSafe(userId);
 
   const portfolioValue = await getCurrentTotalValue(userId);
 

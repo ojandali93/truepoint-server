@@ -26,6 +26,7 @@ import { requireFeature } from "./plan.service";
 import { matchVariantPrice } from "../lib/variantMatch";
 import { isFlagEnabled } from "./featureFlag.service";
 import { FLAG_KEYS } from "../constants/featureFlagKeys";
+import { recordReferralInventoryQualificationSafe } from "./referralReward.service";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -332,7 +333,14 @@ export const addInventoryItem = async (
     input.isSealed = true;
   }
 
-  return insertInventoryItem(userId, input);
+  const created = await insertInventoryItem(userId, input);
+
+  // Referral qualification hook (ruled 2026-09-02, one of two conditions —
+  // see referralReward.service.ts's checkAndQualify). Cheap no-op for the
+  // ~100% of adds with no pending referral; never fails the add itself.
+  await recordReferralInventoryQualificationSafe(userId);
+
+  return created;
 };
 
 export const editInventoryItem = async (
@@ -415,6 +423,10 @@ export const openSealedProduct = async (
   }));
 
   await insertInventoryBatch(userId, newItems);
+
+  // Referral qualification hook — see addInventoryItem's identical call
+  // above. Once per batch, not once per pulled card.
+  await recordReferralInventoryQualificationSafe(userId);
 
   // Delete the sealed product from inventory
   await deleteInventoryItem(id, userId);

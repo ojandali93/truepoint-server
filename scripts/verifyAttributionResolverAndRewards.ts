@@ -29,7 +29,9 @@ import { supabaseAdmin } from "../src/lib/supabase";
 import { resolveAttribution } from "../src/services/attribution.service";
 import {
   recordReferralQualification,
+  recordReferralInventoryQualification,
   getReferralSummary,
+  REFERRAL_INVENTORY_THRESHOLD,
 } from "../src/services/referralReward.service";
 import { invalidateFlagCache } from "../src/services/featureFlag.service";
 
@@ -219,7 +221,8 @@ async function main() {
     });
     assertTrue("second attribution attempt is a no-op (already_attributed)", secondAttempt.outcome === "already_attributed", secondAttempt);
 
-    // Qualification: friend's first completed AI grading report.
+    // Qualification (ruled 2026-09-02: BOTH conditions, not grading alone).
+    // Friend's first completed AI grading report:
     const { data: report, error: reportErr } = await supabaseAdmin
       .from("ai_grading_reports")
       .insert({ user_id: referredFriend, status: "completed" })
@@ -227,9 +230,53 @@ async function main() {
       .single();
     if (reportErr || !report) throw reportErr ?? new Error("report insert failed");
 
-    const qualResult = await recordReferralQualification(referredFriend, report.id);
+    const gradingOnlyResult = await recordReferralQualification(referredFriend, report.id);
     assertTrue(
-      "qualification grants the reward immediately (under cap)",
+      "grading alone does NOT qualify — inventory condition still outstanding",
+      gradingOnlyResult.outcome === "not_yet_qualified" &&
+        gradingOnlyResult.graded === true &&
+        gradingOnlyResult.cardsAdded === 0,
+      gradingOnlyResult,
+    );
+
+    const summaryMidway = await getReferralSummary(referrer);
+    const midwayReward = summaryMidway.rewards.find((r) => r.referredUserId === referredFriend);
+    assertTrue(
+      "referrer's summary shows live per-referral progress while pending (graded true, 0 cards)",
+      midwayReward?.status === "pending" &&
+        midwayReward.progress?.graded === true &&
+        midwayReward.progress?.cardsAdded === 0,
+      midwayReward,
+    );
+    assertTrue(
+      "referrer's summary exposes cardsRequired from the same constant the check itself uses",
+      summaryMidway.cardsRequired === REFERRAL_INVENTORY_THRESHOLD,
+      summaryMidway.cardsRequired,
+    );
+
+    // Now the friend adds cards — the second condition, and (per the ruling)
+    // whichever completes second is what actually triggers qualification.
+    const { data: someCard } = await supabaseAdmin
+      .from("cards")
+      .select("id")
+      .limit(1)
+      .maybeSingle();
+    if (!someCard) throw new Error("no card rows exist to build a test inventory add from");
+    const inventoryRows = Array.from({ length: REFERRAL_INVENTORY_THRESHOLD }, () => ({
+      user_id: referredFriend,
+      item_type: "raw_card",
+      card_id: someCard.id,
+      quantity: 1,
+    }));
+    const { data: insertedInventory, error: invErr } = await supabaseAdmin
+      .from("inventory")
+      .insert(inventoryRows)
+      .select("id");
+    if (invErr) throw invErr;
+
+    const qualResult = await recordReferralInventoryQualification(referredFriend);
+    assertTrue(
+      "qualification grants the reward once BOTH conditions are met (under cap)",
       qualResult.outcome === "qualified_and_granted",
       qualResult,
     );
@@ -238,6 +285,11 @@ async function main() {
     assertTrue("referrer's summary shows 1 referred, 1 qualified", summary.referredCount === 1 && summary.qualifiedCount === 1, summary);
     assertTrue("referrer's summary shows 1 granted month this year", summary.grantedMonthsThisYear === 1, summary);
     assertTrue("reward history has exactly 1 entry, status granted", summary.rewards.length === 1 && summary.rewards[0].status === "granted", summary.rewards);
+    assertTrue(
+      "granted reward's progress is null (nothing left to show progress toward)",
+      summary.rewards[0].progress === null,
+      summary.rewards[0],
+    );
 
     const { data: rewardRow } = await supabaseAdmin
       .from("subscriptions")
@@ -251,6 +303,12 @@ async function main() {
 
     // Cleanup order matters: children before parents.
     await supabaseAdmin.from("ai_grading_reports").delete().eq("id", report.id);
+    if (insertedInventory) {
+      await supabaseAdmin
+        .from("inventory")
+        .delete()
+        .in("id", insertedInventory.map((r) => r.id));
+    }
   } finally {
     console.log("\n=== Cleanup ===");
     for (const snap of flagSnapshots) {
@@ -269,6 +327,10 @@ async function main() {
     }
     if (flagSnapshots.length > 0) invalidateFlagCache();
     for (const userId of createdUserIds) {
+      // Safety net for the report/inventory rows too, in case the try block
+      // threw before its own explicit cleanup above ran.
+      await supabaseAdmin.from("ai_grading_reports").delete().eq("user_id", userId);
+      await supabaseAdmin.from("inventory").delete().eq("user_id", userId);
       await supabaseAdmin.from("referral_rewards").delete().eq("referrer_user_id", userId);
       await supabaseAdmin.from("referral_rewards").delete().eq("referred_user_id", userId);
       await supabaseAdmin.from("subscriptions").delete().eq("user_id", userId);

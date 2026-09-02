@@ -428,3 +428,41 @@ export const countCompletedAiGradingReports = async (
   if (error) throw error;
   return count ?? 0;
 };
+
+/** Qualifying report to link on the reward row. Only ever consulted once
+ * both conditions are already known to be met (referralReward.service.ts's
+ * checkAndQualify) — an inventory-triggered call doesn't have a report id
+ * on hand the way the grading call site does, so it looks up their first
+ * completed report here instead. */
+export const findFirstCompletedAiGradingReportId = async (
+  userId: string,
+): Promise<string | null> => {
+  const { data, error } = await supabaseAdmin
+    .from("ai_grading_reports")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("status", "completed")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error && error.code !== "PGRST116") throw error;
+  return data?.id ?? null;
+};
+
+// ─── inventory (second qualification signal, ruled 2026-09-02) ────────────
+
+/** "Cards added to inventory" — raw_card and graded_card rows only, a
+ * sealed pack sitting unopened isn't "a card" in the spirit of the rule
+ * (grading shows them the magic, inventory is what brings them back).
+ * Row count, not summed quantity — a single bulk-quantity add isn't the
+ * same signal as N separate additions. Both are one-line calls to change
+ * if that reading turns out wrong once there's real data to look at. */
+export const countInventoryCards = async (userId: string): Promise<number> => {
+  const { count, error } = await supabaseAdmin
+    .from("inventory")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .in("item_type", ["raw_card", "graded_card"]);
+  if (error) throw error;
+  return count ?? 0;
+};
