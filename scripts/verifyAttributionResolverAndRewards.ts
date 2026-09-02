@@ -444,9 +444,45 @@ async function main() {
       }
     }
     if (flagSnapshots.length > 0) invalidateFlagCache();
+    // Found 2026-09-02 (asked directly: "did you create any users?" —
+    // checked live rather than trusting this log line, and found 3 stray
+    // ones across 3 runs, always the SAME role: referrer). ROOT CAUSE,
+    // confirmed by actually reproducing it repeatedly rather than
+    // guessing — two red herrings tried and ruled out first (a backoff
+    // retry, then a brand-new Supabase client instance; both still failed
+    // the same way, proving it was never about connection reuse or
+    // transient timing):
+    //
+    // This loop used to run ONE PASS per user — delete that user's own
+    // rows, then immediately delete their auth account — in
+    // createdUserIds' creation order: [offUser, referrer, referredFriend,
+    // ..., slotTestUser]. referrer is created before referredFriend and
+    // slotTestUser, both of whom hold their OWN referral_attributions row
+    // with referrer_user_id = referrer's id. The single-pass loop reached
+    // referrer (index 1) and tried to delete their auth account — which
+    // cascades to deleting their profiles row — WHILE referredFriend's
+    // and slotTestUser's attribution rows (indices 2 and 5, not yet
+    // processed) still pointed at that profile via FK. Deterministic
+    // every run, 100% of the time, regardless of any delay — not
+    // transient at all. (referral_attributions.eq("user_id", userId)
+    // below only ever deleted a user's OWN row as the REFERRED party; it
+    // never targeted rows where that user is the referrer_user_id, which
+    // is exactly the reference that blocked them.)
+    //
+    // Fixed with a real two-pass cleanup: pass 1 clears every SQL-level
+    // cross-reference for EVERY test user first (including, now,
+    // referral_attributions/referral_rewards keyed by referrer_user_id —
+    // not just this user's own rows — and notification_settings, a
+    // second real gap found while diagnosing this: every throwaway user
+    // gets one auto-created alongside their profile, and it was never in
+    // this loop's delete list at all). Only once every cross-reference
+    // across the WHOLE batch is gone does pass 2 delete any auth account
+    // — so it no longer matters what order createdUserIds happens to be
+    // in. supabaseAdmin.auth.admin.deleteUser() returns {data, error}
+    // rather than throwing on failure; the old code never read that
+    // return value, so this exact failure was silently swallowed and
+    // "deleted N throwaway users" printed whether or not that was true.
     for (const userId of createdUserIds) {
-      // Safety net for the report/inventory rows too, in case the try block
-      // threw before its own explicit cleanup above ran.
       await supabaseAdmin.from("ai_grading_reports").delete().eq("user_id", userId);
       await supabaseAdmin.from("inventory").delete().eq("user_id", userId);
       // Must run before the vendor_codes delete below (FK: code_id).
@@ -454,11 +490,31 @@ async function main() {
       await supabaseAdmin.from("referral_rewards").delete().eq("referrer_user_id", userId);
       await supabaseAdmin.from("referral_rewards").delete().eq("referred_user_id", userId);
       await supabaseAdmin.from("subscriptions").delete().eq("user_id", userId);
+      // Both directions — user_id (this user as the REFERRED party) AND
+      // referrer_user_id (this user as who someone ELSE named as their
+      // referrer). Missing the second direction is the exact bug above.
       await supabaseAdmin.from("referral_attributions").delete().eq("user_id", userId);
+      await supabaseAdmin.from("referral_attributions").delete().eq("referrer_user_id", userId);
       await supabaseAdmin.from("referral_codes").delete().eq("user_id", userId);
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      await supabaseAdmin.from("notification_settings").delete().eq("user_id", userId);
     }
-    console.log(`  deleted ${createdUserIds.length} throwaway user(s) and their rows`);
+
+    let authDeleteFailures = 0;
+    for (const userId of createdUserIds) {
+      const { error: deleteErr } = await supabaseAdmin.auth.admin.deleteUser(userId);
+      if (deleteErr) {
+        authDeleteFailures++;
+        console.log(`  ✗ FAILED to delete throwaway auth user ${userId}: ${deleteErr.message}`);
+      }
+    }
+    if (authDeleteFailures > 0) {
+      console.log(
+        `  ✗ ${authDeleteFailures} of ${createdUserIds.length} throwaway user(s) FAILED to delete — real stray accounts left behind, not just rows. Re-run cleanup or delete manually.`,
+      );
+      fail += authDeleteFailures; // surfaces in the exit code — a cleanup failure shouldn't report as a clean pass
+    } else {
+      console.log(`  deleted ${createdUserIds.length} throwaway user(s) and their rows`);
+    }
     await supabaseAdmin.from("affiliates").delete().ilike("name", "Resolver Verify%");
     console.log("  deleted the throwaway affiliate row");
     await supabaseAdmin.from("vendor_codes").delete().ilike("code", "VERIFYVENDOR%");
