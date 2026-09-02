@@ -24,6 +24,13 @@ import {
 } from "../repositories/billing.repository";
 import { BillingSubscription } from "../types/billing.types";
 import { deactivateGrandfatherCompIfNoRealSubRemains } from "./adminPlatform.service";
+// Phase 1 of AUDITS/affiliate-system-plan.md — additive only. Every call
+// site below is wrapped in try/catch so a commission-recording bug can
+// never break the actual subscription-status update these cases exist for.
+import {
+  recordStripeEarningFromInvoice,
+  recordStripeClawbackFromRefund,
+} from "./affiliateCommission.service";
 // This was never imported despite being called in two places below
 // (handleWebhookEvent's catch, and its default-case branch) — the
 // missing import threw ReferenceError: logError is not defined at
@@ -291,6 +298,64 @@ export const handleWebhookEvent = async (
         const sub = await stripe.subscriptions.retrieve(subId);
         const periodEndIso = extractPeriodEnd(sub);
         await updateSubscriptionStatus(subId, "active", periodEndIso);
+
+        // Phase 1 (affiliate-system-plan.md) — commission ledger. A no-op
+        // for the ~100% of users with no referral_attributions row.
+        try {
+          const saved = await findSubscriptionByStripeId(subId);
+          if (saved) {
+            await recordStripeEarningFromInvoice(invoice, saved.userId);
+          }
+        } catch (err: any) {
+          await logError({
+            source: "affiliate-commission-stripe",
+            message: err?.message ?? "Failed to record commission earning",
+            error: err,
+            userId: null,
+            requestPath: "",
+            requestMethod: "",
+            metadata: { invoiceId: invoice.id, subId },
+          });
+        }
+      }
+      break;
+    }
+
+    case "charge.refunded": {
+      // Doc §3.2 / your 2026-09-02 instruction: clawback is append-only,
+      // never a mutation of the earning row. Only the affiliate side is
+      // handled here — refund-vs-subscription-status handling (if any is
+      // needed beyond Stripe's own webhooks) is unchanged/out of scope.
+      const charge = event.data.object as Stripe.Charge;
+      try {
+        const invoiceId =
+          typeof (charge as unknown as { invoice?: string | Stripe.Invoice }).invoice === "string"
+            ? (charge as unknown as { invoice: string }).invoice
+            : null;
+        if (!invoiceId) {
+          throw new Error("charge.refunded event carried no invoice id");
+        }
+        const invoice = await stripe.invoices.retrieve(invoiceId);
+        const subId = (invoice as unknown as { subscription?: string }).subscription;
+        const saved = subId ? await findSubscriptionByStripeId(subId) : null;
+        if (!saved) {
+          throw new Error(`No local subscription found for invoice ${invoiceId}`);
+        }
+        const latestRefund = charge.refunds?.data?.[0];
+        if (!latestRefund) {
+          throw new Error(`charge.refunded event for ${charge.id} carried no refund object`);
+        }
+        await recordStripeClawbackFromRefund(latestRefund, saved.userId, invoiceId);
+      } catch (err: any) {
+        await logError({
+          source: "affiliate-commission-stripe",
+          message: err?.message ?? "Failed to record commission clawback",
+          error: err,
+          userId: null,
+          requestPath: "",
+          requestMethod: "",
+          metadata: { chargeId: charge.id },
+        });
       }
       break;
     }

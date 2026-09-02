@@ -22,6 +22,12 @@ import {
 } from "../repositories/billing.repository";
 import { logError } from "../lib/Logger";
 import { deactivateGrandfatherCompIfNoRealSubRemains } from "./adminPlatform.service";
+// Phase 1 of AUDITS/affiliate-system-plan.md — additive only, same
+// try/catch-isolated pattern as billing.service.ts's Stripe wiring.
+import {
+  recordRevenueCatEarning,
+  recordRevenueCatClawback,
+} from "./affiliateCommission.service";
 
 // Map store product identifiers → plan tiers.
 // These must match the product IDs created in App Store Connect / Google
@@ -69,6 +75,12 @@ type RCEventType =
   | "TRANSFER";
 
 interface RCEvent {
+  // The webhook event's own unique id — stable across retries per RC's
+  // docs (verified live 2026-09-02). Used as commission_ledger's
+  // payment_event_id for idempotency; NOT the same as transaction_id,
+  // which changes per renewal, or original_transaction_id, which stays
+  // fixed for the life of the subscription.
+  id: string;
   type: RCEventType;
   app_user_id: string;
   original_app_user_id?: string;
@@ -79,6 +91,17 @@ interface RCEvent {
   original_transaction_id?: string;
   store?: string; // "APP_STORE" | "PLAY_STORE" | ...
   period_type?: string; // "TRIAL" | "NORMAL" | "INTRO"
+  // Phase 1 (affiliate-system-plan.md) commission fields — verified live
+  // against RC's current webhook docs 2026-09-02. commission_percentage/
+  // tax_percentage are fractions 0–1 (RC's own example: 0.3 = 30%), NOT
+  // 0–100. takehome_percentage is deprecated; deliberately not read here.
+  price?: number | null; // USD; null/0 for free trials, negative on some refund shapes
+  currency?: string | null;
+  commission_percentage?: number | null;
+  tax_percentage?: number | null;
+  // Present on CANCELLATION events. 'CUSTOMER_SUPPORT' = a refund (RC has
+  // no dedicated REFUND event type) — see recordRevenueCatClawback.
+  cancel_reason?: string | null;
 }
 
 const planFromProduct = (productId?: string): "collector" | "pro" | null => {
@@ -182,6 +205,26 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
         currentPeriodEnd: periodEnd,
         trialEndsAt: isTrial ? periodEnd : null,
       });
+
+      // Phase 1 (affiliate-system-plan.md) — commission ledger. Only
+      // INITIAL_PURCHASE/RENEWAL represent an actual payment; UNCANCELLATION
+      // and PRODUCT_CHANGE reach this same block for subscription-status
+      // purposes but carry no new revenue to commission.
+      if (event.type === "INITIAL_PURCHASE" || event.type === "RENEWAL") {
+        try {
+          await recordRevenueCatEarning(event, userId, event.type);
+        } catch (err: any) {
+          await logError({
+            source: "affiliate-commission-revenuecat",
+            message: err?.message ?? "Failed to record commission earning",
+            error: err,
+            userId,
+            requestPath: "",
+            requestMethod: "",
+            metadata: { eventId: event.id, type: event.type },
+          });
+        }
+      }
       break;
     }
 
@@ -210,6 +253,28 @@ export const handleRevenueCatEvent = async (body: any): Promise<void> => {
           msToIso(Date.now()) as string,
           isTrial,
         );
+      }
+
+      // Phase 1 (affiliate-system-plan.md) — RC has no dedicated REFUND
+      // event; a refund arrives as CANCELLATION with cancel_reason
+      // 'CUSTOMER_SUPPORT' (verified live against RC's current docs
+      // 2026-09-02). Every other cancel_reason is normal churn, not a
+      // refund — recordRevenueCatClawback re-checks this itself, but gating
+      // here too avoids even attempting a DB lookup on the common case.
+      if (event.cancel_reason === "CUSTOMER_SUPPORT") {
+        try {
+          await recordRevenueCatClawback(event, userId);
+        } catch (err: any) {
+          await logError({
+            source: "affiliate-commission-revenuecat",
+            message: err?.message ?? "Failed to record commission clawback",
+            error: err,
+            userId,
+            requestPath: "",
+            requestMethod: "",
+            metadata: { eventId: event.id },
+          });
+        }
       }
       break;
     }
