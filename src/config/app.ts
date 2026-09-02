@@ -30,6 +30,7 @@ import feedbackRoutes from "../routes/feedback.routes";
 import ebayRoutes from "../routes/ebay.routes";
 import affiliateRoutes from "../routes/affiliate.routes";
 import affiliateAdminRoutes from "../routes/affiliate.admin.routes";
+import attributionRoutes from "../routes/attribution.routes";
 import outreachAdminRoutes from "../routes/outreach.admin.routes";
 import notificationTestRoutes from "../routes/notificationTest.routes";
 import tcgPriceLookupTestRoutes from "../routes/tcgPriceLookupTest.routes";
@@ -89,6 +90,7 @@ app.use("/api/v1/scan", scanRoutes);
 app.use("/api/v1/billing", billingRoutes);
 app.use("/api/v1/ebay", ebayRoutes);
 app.use("/api/v1", affiliateRoutes);
+app.use("/api/v1", attributionRoutes);
 
 app.use("/api/v1", planRoutes);
 app.use("/api/v1", authRoutes);

@@ -38,6 +38,8 @@ export const FLAG_KEYS = {
   PRO_PRICING_V2: "pro_pricing_v2",
   COUNTERFEIT_SCREENING: "counterfeit_screening",
   COMMUNITY_LINKS: "community_links",
+  AFFILIATE_PROGRAM: "affiliate_program",
+  REFERRAL_PROGRAM: "referral_program",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -141,5 +143,40 @@ export const KNOWN_FLAGS: KnownFlag[] = [
       "replaced with the real account URL (a real user hitting a " +
       "placeholder is a dead tap). Off → allowlist → admins → " +
       "percentage → everyone.",
+  },
+  {
+    key: FLAG_KEYS.AFFILIATE_PROGRAM,
+    label: "Affiliate Program",
+    description:
+      "AUDITS/affiliate-system-plan.md — creator apply flow (web /affiliates " +
+      "+ mobile Profile > Affiliate program), the commission ledger's user- " +
+      "facing surfaces, and the shared code resolver's affiliate branch. " +
+      "GATES BEHAVIOR, not just UI: with this off, the shared attribution " +
+      "resolver (attribution.service.ts) never resolves a code as an " +
+      "affiliate slug and never writes a referral_attributions row for it — " +
+      "same discipline as pricecharting_pricing/counterfeit_screening. Web's " +
+      "/affiliates apply form stays reachable by direct URL regardless of " +
+      "this flag (flags are per-user; there's no user to check pre-auth for " +
+      "a guest applicant) — mitigated by staying unlinked from any live nav " +
+      "while this is off, same as it already was before this flag existed. " +
+      "Mobile's existing Profile row/dashboard (pre-dates this flag) is now " +
+      "gated behind it too. Off → allowlist (Omar) → everyone. Placeholder " +
+      "terms copy on both platforms until real terms are written — do not " +
+      "widen past allowlist before that.",
+  },
+  {
+    key: FLAG_KEYS.REFERRAL_PROGRAM,
+    label: "Referral Program",
+    description:
+      "AUDITS/referral-program-plan.md — user-to-user referrals (Profile > " +
+      "Refer a friend on mobile, the personal-code resolver branch, " +
+      "qualification on a referred friend's first completed AI grading, the " +
+      "comp-Pro reward grant). GATES BEHAVIOR: with this off, the shared " +
+      "resolver never resolves a code as a personal referral code and never " +
+      "writes a referral_attributions/referral_rewards row for it, and the " +
+      "?ref= cookie (web) / code-entry field (mobile) never trigger a write " +
+      "for a non-flagged user — a non-allowlisted user's signup flow is " +
+      "unchanged from before this flag existed. Off → allowlist (Omar) → " +
+      "everyone.",
   },
 ];
