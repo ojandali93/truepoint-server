@@ -40,7 +40,13 @@ import {
 // caught this — a plain missing-import error, not a real type puzzle.
 import { logError } from "../lib/Logger";
 
-const TRIAL_DAYS = 14;
+// Exported — 2026-09-02 trial-copy fact-check found web's own onboarding
+// copy contradicting this value in the same flow (PlanStep said 7,
+// BillingStep said 14; this is the number that actually executes). Single
+// source of truth now: GET /billing/config (billing.routes.ts) serves this
+// exact constant so web derives its copy from it instead of hardcoding a
+// number that can silently drift from what Stripe is actually told.
+export const TRIAL_DAYS = 14;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import { Response } from "express";
+import { Request, Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import * as BillingService from "../services/billing.service";
 import { logError } from "../lib/Logger";
@@ -10,6 +10,17 @@ const handleError = (res: Response, err: unknown) => {
   }
   console.error("[BillingController]", err);
   return res.status(500).json({ error: "An unexpected error occurred" });
+};
+
+// GET /billing/config — public, no auth. Single source of truth for
+// trial-length copy (2026-09-02 fact-check: web's own onboarding copy had
+// drifted from what Stripe checkout actually executes). Web derives its
+// "N-day free trial" text from this instead of hardcoding a number.
+export const getBillingConfig = async (
+  _req: Request,
+  res: Response,
+): Promise<void> => {
+  res.json({ data: { trialDays: BillingService.TRIAL_DAYS } });
 };
 
 export const createCheckoutSession = async (

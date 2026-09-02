@@ -29,6 +29,10 @@ router.post(
   RevenueCatController.handleRevenueCatWebhook as any,
 );
 
+// GET /billing/config — public, no auth (reachable pre-signup, from
+// PlanStep on web's onboarding, before an account/session exists).
+router.get("/config", standardLimiter, BillingController.getBillingConfig as any);
+
 // ─── All other billing routes require auth ────────────────────────────────────
 router.use(authenticateUser as any);
 
