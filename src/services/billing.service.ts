@@ -18,6 +18,7 @@ import { stripe, STRIPE_PRICE_IDS, STRIPE_PRO_V2_PRICE_IDS } from "../lib/stripe
 import {
   findSubscriptionByUserId,
   findSubscriptionByStripeId,
+  findSubscriptionByStripeCustomerId,
   upsertSubscription,
   updateSubscriptionStatus,
   setCancelRequestedAt,
@@ -328,24 +329,34 @@ export const handleWebhookEvent = async (
       // needed beyond Stripe's own webhooks) is unchanged/out of scope.
       const charge = event.data.object as Stripe.Charge;
       try {
-        const invoiceId =
-          typeof (charge as unknown as { invoice?: string | Stripe.Invoice }).invoice === "string"
-            ? (charge as unknown as { invoice: string }).invoice
+        // charge.customer, not charge.invoice — this pinned API version's
+        // Charge object carries no back-reference to its originating
+        // Invoice at all (confirmed empirically 2026-09-02 via
+        // scripts/smokeTestStripeCommissionLedger.ts against a real
+        // test-mode refund; the invoice→charge link this codebase's own
+        // webhook data uses elsewhere only runs the other direction:
+        // Invoice.payments.data[].payment). charge.customer is reliably
+        // present and is enough to resolve the local user on its own.
+        const customerId =
+          typeof (charge as unknown as { customer?: string | Stripe.Customer }).customer === "string"
+            ? (charge as unknown as { customer: string }).customer
             : null;
-        if (!invoiceId) {
-          throw new Error("charge.refunded event carried no invoice id");
+        if (!customerId) {
+          throw new Error("charge.refunded event carried no customer id");
         }
-        const invoice = await stripe.invoices.retrieve(invoiceId);
-        const subId = (invoice as unknown as { subscription?: string }).subscription;
-        const saved = subId ? await findSubscriptionByStripeId(subId) : null;
+        const saved = await findSubscriptionByStripeCustomerId(customerId);
         if (!saved) {
-          throw new Error(`No local subscription found for invoice ${invoiceId}`);
+          throw new Error(`No local subscription found for Stripe customer ${customerId}`);
         }
         const latestRefund = charge.refunds?.data?.[0];
         if (!latestRefund) {
           throw new Error(`charge.refunded event for ${charge.id} carried no refund object`);
         }
-        await recordStripeClawbackFromRefund(latestRefund, saved.userId, invoiceId);
+        // No exact invoice-id link (see above) -- recordStripeClawbackFromRefund
+        // falls back to "most recent earning row for this user on Stripe",
+        // the same documented-correct heuristic already used for
+        // RevenueCat's refund case (findMostRecentEarningRowForUser).
+        await recordStripeClawbackFromRefund(latestRefund, saved.userId, null);
       } catch (err: any) {
         await logError({
           source: "affiliate-commission-stripe",

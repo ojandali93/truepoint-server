@@ -96,6 +96,29 @@ export const findSubscriptionByStripeId = async (
   return data ? rowToSubscription(data as SubscriptionRow) : null;
 };
 
+/**
+ * Finds a Stripe subscription by its Stripe CUSTOMER id (not subscription
+ * id). Added for affiliateCommission's charge.refunded handling — this
+ * pinned Stripe API version's Charge/PaymentIntent objects carry no back-
+ * reference to their originating Invoice (confirmed empirically 2026-09-02
+ * via scripts/smokeTestStripeCommissionLedger.ts against a real test-mode
+ * refund), so a refund event can't chase charge → invoice → subscription
+ * the way the rest of this file does. charge.customer IS reliably present
+ * though, and is enough on its own to resolve the local user.
+ */
+export const findSubscriptionByStripeCustomerId = async (
+  stripeCustomerId: string,
+): Promise<BillingSubscription | null> => {
+  const { data, error } = await supabaseAdmin
+    .from("subscriptions")
+    .select("*")
+    .eq("stripe_customer_id", stripeCustomerId)
+    .eq("platform", "stripe")
+    .maybeSingle();
+  if (error && error.code !== "PGRST116") throw error;
+  return data ? rowToSubscription(data as SubscriptionRow) : null;
+};
+
 /** Finds an Apple subscription by RevenueCat's original transaction id. */
 export const findSubscriptionByProviderId = async (
   providerSubscriptionId: string,

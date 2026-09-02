@@ -295,13 +295,56 @@ const btToAmounts = (bt: BalanceTransactionLike): ResolvedAmounts => ({
 export async function resolveStripeInvoiceNet(
   invoice: StripeInvoice,
 ): Promise<ResolvedAmounts> {
+  // PRIMARY path, empirically verified 2026-09-02 against a real Stripe
+  // TEST-mode payment on this exact pinned API version (stripe-node 22.1.0,
+  // "2026-04-22.dahlia" — see src/lib/stripe.ts) via
+  // scripts/smokeTestStripeCommissionLedger.ts: this API version's Invoice
+  // object has NO top-level `charge` or `payment_intent` field at all (both
+  // guessed at defensively before this was run against a real payment, and
+  // both were wrong — the smoke test's first real run silently fell through
+  // to the estimate below on a live, fully-paid invoice, which is exactly
+  // the failure mode running this once for real exists to catch). The real
+  // link is invoice.payments.data[].payment, a polymorphic object with
+  // `type: "charge" | "payment_intent"` and the id on the matching field —
+  // confirmed live shape: `{ payment_intent: "pi_...", type: "payment_intent" }`.
+  try {
+    const payment = (
+      invoice as unknown as {
+        payments?: {
+          data?: Array<{ payment?: { type?: string; charge?: string; payment_intent?: string } }>;
+        };
+      }
+    ).payments?.data?.[0]?.payment;
+
+    if (payment?.type === "charge" && payment.charge) {
+      const charge = await stripe.charges.retrieve(payment.charge, {
+        expand: ["balance_transaction"],
+      });
+      const bt = charge.balance_transaction;
+      if (bt && typeof bt !== "string") return btToAmounts(bt);
+    } else if (payment?.type === "payment_intent" && payment.payment_intent) {
+      const pi = await stripe.paymentIntents.retrieve(payment.payment_intent, {
+        expand: ["latest_charge.balance_transaction"],
+      });
+      const charge = pi.latest_charge;
+      const bt = charge && typeof charge !== "string" ? charge.balance_transaction : null;
+      if (bt && typeof bt !== "string") return btToAmounts(bt);
+    }
+  } catch {
+    // fall through to the legacy paths below
+  }
+
+  // Legacy/defensive fallbacks — the shapes older Stripe API versions (and
+  // this file's original, pre-verification guesses) used. Harmless to keep:
+  // cheap to try, and a real safety net if a future API version reintroduces
+  // a top-level field. Neither matched on this pinned version's real
+  // response (confirmed by the smoke test), which is why the block above,
+  // not these, is now PRIMARY.
   try {
     const chargeId =
       typeof (invoice as unknown as { charge?: string | StripeCharge }).charge === "string"
         ? ((invoice as unknown as { charge: string }).charge)
-        : ((invoice as unknown as { payments?: { data?: Array<{ payment?: { charge?: string } }> } })
-            .payments?.data?.[0]?.payment?.charge ?? null);
-
+        : null;
     if (chargeId) {
       const charge = await stripe.charges.retrieve(chargeId, {
         expand: ["balance_transaction"],
@@ -310,7 +353,7 @@ export async function resolveStripeInvoiceNet(
       if (bt && typeof bt !== "string") return btToAmounts(bt);
     }
   } catch {
-    // fall through to the next path
+    // fall through
   }
 
   try {
