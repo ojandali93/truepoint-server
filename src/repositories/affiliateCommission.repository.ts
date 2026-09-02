@@ -98,9 +98,17 @@ export type CommissionLedgerInsert = {
   status: "pending" | "eligible";
 };
 
-export type CommissionLedgerRow = CommissionLedgerInsert & {
+// Row type is NOT just CommissionLedgerInsert & {id, created_at}: a row can
+// reach 'paid'/'clawed_back' via UPDATE (markLedgerRowsPaid, and a future
+// clawback-status transition), states no INSERT ever writes directly — the
+// insert type stays narrower on purpose (doc §3.1: inserts always start
+// 'eligible' today, 'pending' reserved for a not-yet-cleared-payment case
+// not yet wired). Also carries payout_id, set only once paid.
+export type CommissionLedgerRow = Omit<CommissionLedgerInsert, "status"> & {
   id: string;
   created_at: string;
+  status: "pending" | "eligible" | "paid" | "clawed_back";
+  payout_id: string | null;
 };
 
 /**
@@ -187,4 +195,119 @@ export const findLedgerRowsByAffiliateId = async (
     .order("earned_at", { ascending: true });
   if (error) throw error;
   return (data ?? []) as CommissionLedgerRow[];
+};
+
+// ─── Phase 2: admin surface ─────────────────────────────────────────────────
+
+/** Every referred user for an affiliate — the detail page's "referred
+ * users" table (doc §5). Two-step fetch with profiles (CLAUDE.md §8's own
+ * PostgREST pitfall note — no declared FK between referral_attributions
+ * and profiles to embed on). */
+export const listAttributionsByAffiliateId = async (
+  affiliateId: string,
+): Promise<ReferralAttributionRow[]> => {
+  const { data, error } = await supabaseAdmin
+    .from("referral_attributions")
+    .select("*")
+    .eq("affiliate_id", affiliateId)
+    .order("attributed_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as ReferralAttributionRow[];
+};
+
+export type ProfileSummary = {
+  id: string;
+  username: string | null;
+  full_name: string | null;
+  created_at: string;
+};
+
+/** Same "id, username, full_name, created_at" shape as the existing admin
+ * user-management reads (adminPlatform.service.ts) — matched deliberately,
+ * not reinvented. */
+export const findProfileSummariesByIds = async (
+  userIds: string[],
+): Promise<ProfileSummary[]> => {
+  if (userIds.length === 0) return [];
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id, username, full_name, created_at")
+    .in("id", userIds);
+  if (error) throw error;
+  return (data ?? []) as ProfileSummary[];
+};
+
+export type CommissionPayoutInsert = {
+  affiliate_id: string;
+  amount: number;
+  method: string;
+  paid_at: string;
+  note: string | null;
+  marked_by: string | null;
+};
+
+export type CommissionPayoutRow = CommissionPayoutInsert & {
+  id: string;
+  created_at: string;
+};
+
+export const insertPayout = async (
+  row: CommissionPayoutInsert,
+): Promise<CommissionPayoutRow> => {
+  const { data, error } = await supabaseAdmin
+    .from("commission_payouts")
+    .insert(row)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as CommissionPayoutRow;
+};
+
+export const listPayoutsByAffiliateId = async (
+  affiliateId: string,
+): Promise<CommissionPayoutRow[]> => {
+  const { data, error } = await supabaseAdmin
+    .from("commission_payouts")
+    .select("*")
+    .eq("affiliate_id", affiliateId)
+    .order("paid_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []) as CommissionPayoutRow[];
+};
+
+/** All rows this affiliate currently owes nothing further on — the exact
+ * set the "mark paid" action will flip. Returns full rows (not just ids) so
+ * the caller can compute/display the total being marked paid before
+ * committing to the write below. */
+export const findEligibleLedgerRowsByAffiliateId = async (
+  affiliateId: string,
+): Promise<CommissionLedgerRow[]> => {
+  const { data, error } = await supabaseAdmin
+    .from("commission_ledger")
+    .select("*")
+    .eq("affiliate_id", affiliateId)
+    .eq("status", "eligible")
+    .order("earned_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as CommissionLedgerRow[];
+};
+
+/**
+ * Flips exactly the given ledger rows to status='paid' with a payout_id
+ * back-link. Scoped by an explicit id list (computed by the caller just
+ * before this call, from findEligibleLedgerRowsByAffiliateId) rather than
+ * re-filtering by status here, so what gets marked paid is exactly what the
+ * admin was shown and confirmed — not whatever happens to still match
+ * status='eligible' at write time.
+ */
+export const markLedgerRowsPaid = async (
+  ledgerRowIds: string[],
+  payoutId: string,
+): Promise<void> => {
+  if (ledgerRowIds.length === 0) return;
+  const { error } = await supabaseAdmin
+    .from("commission_ledger")
+    .update({ status: "paid", payout_id: payoutId })
+    .in("id", ledgerRowIds);
+  if (error) throw error;
 };

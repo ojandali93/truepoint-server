@@ -292,7 +292,7 @@ const btToAmounts = (bt: BalanceTransactionLike): ResolvedAmounts => ({
  * operation — if it does, that's a real gap in this resolution logic worth
  * knowing about, which is why it's logError'd rather than silently used.
  */
-async function resolveStripeInvoiceNet(
+export async function resolveStripeInvoiceNet(
   invoice: StripeInvoice,
 ): Promise<ResolvedAmounts> {
   try {
@@ -344,7 +344,7 @@ async function resolveStripeInvoiceNet(
 }
 
 /** Same balance-transaction resolution, for a refund. */
-async function resolveStripeRefundNet(
+export async function resolveStripeRefundNet(
   refund: StripeRefund,
 ): Promise<ResolvedAmounts> {
   try {

@@ -125,6 +125,7 @@ class FakeRepo implements AffiliateCommissionRepo {
         ...row,
         id: `ledger-${this.ledgerIdSeq++}`,
         created_at: new Date().toISOString(),
+        payout_id: null, // Phase 2 field — set only by markLedgerRowsPaid, unused by Phase 1's tests
       };
       this.ledger.push(inserted);
       return inserted;
