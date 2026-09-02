@@ -9,6 +9,14 @@
 -- equivalent profile-creation call in (auth)/register/page.tsx) — no new
 -- round trip.
 --
+-- (Web correction, 2026-09-02: web's signup flow creates the profile row
+-- via the handle_new_user DB trigger on supabase.auth.signUp(), not an
+-- explicit POST — there's no client-side profile-creation call to
+-- piggyback the id onto there. Web instead backfills it with its own
+-- PUT /users/me immediately after signUp() resolves, via
+-- updateProfileSchema rather than createProfileSchema. Mobile's
+-- description above is unchanged and accurate for mobile.)
+--
 -- Written here (not just left inside PostHog) so the pre-signup ->
 -- post-signup join is queryable internally without depending on PostHog's
 -- API/export pipeline — same reasoning the events table's own header

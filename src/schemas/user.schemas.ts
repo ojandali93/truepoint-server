@@ -46,6 +46,15 @@ export const updateProfileSchema = z.object({
   collecting_years: z.string().max(50).optional(),
   collection_type: z.enum(["sealed", "unsealed", "both"]).optional(),
   collector_style: z.enum(["grading", "singles", "both"]).optional(),
+
+  // PostHog integration (2026-09-02) — web's signup flow has no POST
+  // /users/me call to piggyback on (profile creation there happens via the
+  // handle_new_user DB trigger on supabase.auth.signUp(), not an explicit
+  // API call — see createProfileSchema's comment for the mobile side,
+  // which does have that call site). Web instead backfills this via PUT
+  // /me right after signUp() resolves and a session exists. Same
+  // optionality reasoning as createProfileSchema.
+  posthog_anonymous_id: z.string().max(100).optional(),
 });
 
 export const createNotificationSettingsSchema = z.object({
