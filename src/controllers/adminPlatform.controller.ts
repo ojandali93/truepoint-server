@@ -23,6 +23,14 @@ import {
   getAppSettings,
   updateAppSetting,
   getPlatformStats,
+  getUserAIGradingReports,
+  getUserAIGradingReportDetail,
+  getUserCenteringReports,
+  getUserCenteringReportDetail,
+  getUserCollection,
+  flagReport,
+  unflagReport,
+  type FlaggableReportType,
 } from "../services/adminPlatform.service";
 import { logError } from "../lib/Logger";
 import { FLAG_AUDIENCES, FlagAudience } from "../services/featureFlag.service";
@@ -206,6 +214,143 @@ export const getUserErrors = async (
     const limit = Math.min(Number(req.query.limit ?? 20), 100);
     const logs = await getUserErrorLogs(req.params.userId, limit);
     res.json({ data: logs });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// ─── Part B: admin user drill-down ─────────────────────────────────────────────
+
+// GET /admin/users/:userId/ai-grading-reports
+export const listUserAIGradingReports = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const reports = await getUserAIGradingReports(req.params.userId);
+    res.json({ data: reports });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// GET /admin/users/:userId/ai-grading-reports/:reportId
+export const getUserAIGradingReportHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const detail = await getUserAIGradingReportDetail(
+      req.params.userId,
+      req.params.reportId,
+    );
+    if (!detail) {
+      res.status(404).json({ error: "Report not found for this user." });
+      return;
+    }
+    res.json({ data: detail });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// GET /admin/users/:userId/centering-reports
+export const listUserCenteringReports = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const reports = await getUserCenteringReports(req.params.userId);
+    res.json({ data: reports });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// GET /admin/users/:userId/centering-reports/:reportId
+export const getUserCenteringReportHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const detail = await getUserCenteringReportDetail(
+      req.params.userId,
+      req.params.reportId,
+    );
+    if (!detail) {
+      res.status(404).json({ error: "Report not found for this user." });
+      return;
+    }
+    res.json({ data: detail });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// GET /admin/users/:userId/collection
+export const getUserCollectionHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const collection = await getUserCollection(req.params.userId);
+    res.json({ data: collection });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+const FLAGGABLE_TYPES: FlaggableReportType[] = ["ai_grading", "centering"];
+
+// POST /admin/flagged-reports
+// Body: { reportId: uuid, reportType: 'ai_grading' | 'centering', reason: string }
+export const flagReportHandler = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { reportId, reportType, reason } = req.body ?? {};
+    if (typeof reportId !== "string" || !reportId) {
+      res.status(400).json({ error: "reportId is required." });
+      return;
+    }
+    if (!FLAGGABLE_TYPES.includes(reportType)) {
+      res
+        .status(400)
+        .json({ error: "reportType must be 'ai_grading' or 'centering'." });
+      return;
+    }
+    if (typeof reason !== "string" || !reason.trim()) {
+      res.status(400).json({ error: "reason is required." });
+      return;
+    }
+    const flag = await flagReport({
+      reportId,
+      reportType,
+      reason: reason.trim(),
+      flaggedBy: req.user!.id,
+    });
+    res.json({ data: flag });
+  } catch (err) {
+    handle(res, err);
+  }
+};
+
+// DELETE /admin/flagged-reports/:reportType/:reportId
+export const unflagReportHandler = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { reportType, reportId } = req.params;
+    if (!FLAGGABLE_TYPES.includes(reportType as FlaggableReportType)) {
+      res
+        .status(400)
+        .json({ error: "reportType must be 'ai_grading' or 'centering'." });
+      return;
+    }
+    await unflagReport(reportId, reportType as FlaggableReportType);
+    res.json({ data: { ok: true } });
   } catch (err) {
     handle(res, err);
   }

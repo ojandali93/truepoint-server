@@ -46,6 +46,13 @@ import {
   broadcastNotification,
   runPoketraceDiagnostics,
   resendUserVerification,
+  listUserAIGradingReports,
+  getUserAIGradingReportHandler,
+  listUserCenteringReports,
+  getUserCenteringReportHandler,
+  getUserCollectionHandler,
+  flagReportHandler,
+  unflagReportHandler,
 } from "../controllers/adminPlatform.controller";
 
 // ─── Set logo manual-upload controller ───────────────────────────────────────
@@ -87,6 +94,30 @@ router.get("/users/:userId/detail", getUserDetailHandler as any);
 router.get("/users/:userId", getUser as any);
 router.get("/users/:userId/errors", getUserErrors as any);
 router.patch("/users/:userId/plan", overrideUserPlan as any);
+
+// ─── User drill-down (Part B) ──────────────────────────────────────────────────
+router.get(
+  "/users/:userId/ai-grading-reports",
+  listUserAIGradingReports as any,
+);
+router.get(
+  "/users/:userId/ai-grading-reports/:reportId",
+  getUserAIGradingReportHandler as any,
+);
+router.get(
+  "/users/:userId/centering-reports",
+  listUserCenteringReports as any,
+);
+router.get(
+  "/users/:userId/centering-reports/:reportId",
+  getUserCenteringReportHandler as any,
+);
+router.get("/users/:userId/collection", getUserCollectionHandler as any);
+router.post("/flagged-reports", flagReportHandler as any);
+router.delete(
+  "/flagged-reports/:reportType/:reportId",
+  unflagReportHandler as any,
+);
 
 // ─── Feature flags ────────────────────────────────────────────────────────────
 router.get("/flags", listFeatureFlags as any);
