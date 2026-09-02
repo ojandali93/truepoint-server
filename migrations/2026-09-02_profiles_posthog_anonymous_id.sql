@@ -1,0 +1,38 @@
+-- 2026-09-02_profiles_posthog_anonymous_id.sql
+--
+-- PostHog integration, Part A (mobile + web) — the durable-anonymous-id
+-- piece. The client generates a UUID on first app/site open, persists it
+-- locally (AsyncStorage on mobile under @truepoint/posthog-anonymous-id;
+-- localStorage on web), and sends it as `posthog_anonymous_id` on the SAME
+-- profile-creation call both clients already make at signup (mobile:
+-- POST /users/me from registerUser()/oauth-username.tsx; web: the
+-- equivalent profile-creation call in (auth)/register/page.tsx) — no new
+-- round trip.
+--
+-- (Web correction, 2026-09-02: web's signup flow creates the profile row
+-- via the handle_new_user DB trigger on supabase.auth.signUp(), not an
+-- explicit POST — there's no client-side profile-creation call to
+-- piggyback the id onto there. Web instead backfills it with its own
+-- PUT /users/me immediately after signUp() resolves, via
+-- updateProfileSchema rather than createProfileSchema. Mobile's
+-- description above is unchanged and accurate for mobile.)
+--
+-- Written here (not just left inside PostHog) so the pre-signup ->
+-- post-signup join is queryable internally without depending on PostHog's
+-- API/export pipeline — same reasoning the events table's own header
+-- comment gives for never being read by app logic in the other direction:
+-- this is a one-way, additive join key, not a dependency in either tool on
+-- the other.
+--
+-- Nullable and unindexed by design for now: not every signup will carry
+-- one (a client that hasn't shipped this yet, or PostHog env vars unset --
+-- the SDK no-ops but the client still generates and could still send the
+-- local id), and there's no query pattern yet that needs an index on it
+-- (this is a point lookup by a specific known id when cross-referencing a
+-- PostHog person, not a filter/join used at scale). Add one if that
+-- changes.
+--
+-- Run manually in the Supabase SQL editor. Not applied automatically.
+
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS posthog_anonymous_id text;
