@@ -78,10 +78,19 @@ export const redeemVendorCode = async (
     current_period_end: endIso,
   };
 
+  // platform-scoped: reuse only an EXISTING comp row, never a real
+  // stripe/apple/google one. Without this filter, a user with a real active
+  // subscription redeeming a vendor code would have their real row silently
+  // overwritten with comp/trial fields (data loss against a paying
+  // customer) -- fixed 2026-09-02, see scripts/auditCompRowPlatformOverwrite.ts
+  // for the live blast-radius check (this specific path: fired once ever,
+  // zero corruption from it). Matches affiliateClaim.service.ts's
+  // grantCompPro's already-safe pattern.
   const { data: sub } = await supabaseAdmin
     .from("subscriptions")
     .select("id")
     .eq("user_id", userId)
+    .eq("platform", "comp")
     .limit(1);
 
   if (sub && sub.length > 0) {
