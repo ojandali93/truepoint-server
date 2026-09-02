@@ -616,11 +616,21 @@ export const updateUserPlan = async (
     current_period_end: endsAtIso, // mirror so both readers agree
   };
 
-  // Does the user already have a subscription row?
+  // Does the user already have a COMP row? platform-scoped, deliberately --
+  // reusing a real stripe/apple/google row here would silently overwrite it
+  // with comp/trial fields (data loss against a paying customer). Fixed
+  // 2026-09-02: this exact unfiltered lookup fired 4 times against real
+  // Apple subscribers (the 2026-08-29 "Phase 1 §7 grandfather" migration) --
+  // that batch was a deliberate, documented decision to convert those rows,
+  // not accidental corruption, and those 4 users currently have working Pro
+  // access as intended; not touched by this fix. See
+  // scripts/auditCompRowPlatformOverwrite.ts for the full history. Matches
+  // affiliateClaim.service.ts's grantCompPro's already-safe pattern.
   const { data: existing, error: selErr } = await supabaseAdmin
     .from("subscriptions")
     .select("id")
     .eq("user_id", userId)
+    .eq("platform", "comp")
     .limit(1);
   if (selErr) throw selErr;
 
