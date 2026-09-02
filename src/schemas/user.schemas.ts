@@ -18,6 +18,13 @@ export const createProfileSchema = z.object({
   avatar_url: z.string().url("Invalid avatar URL").optional(),
   currency: z.enum(CURRENCIES).default("USD"),
   preferred_grading_company: z.enum(GRADING_COMPANIES).default("PSA"),
+  // PostHog integration (2026-09-02) — the client-generated durable
+  // anonymous id, sent on this same profile-creation call so the
+  // pre-signup -> post-signup PostHog identity stitch is also joinable
+  // internally. Optional: a client that hasn't shipped this yet, or one
+  // whose PostHog env vars are unset (SDK no-ops, but the local id still
+  // exists and can still be sent), shouldn't fail profile creation over it.
+  posthog_anonymous_id: z.string().max(100).optional(),
 });
 
 export const updateProfileSchema = z.object({

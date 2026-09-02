@@ -10,6 +10,11 @@ export interface Profile {
   show_market_values: boolean;
   created_at: string;
   updated_at: string;
+  // PostHog integration (2026-09-02) — client-generated durable anonymous
+  // id, written at signup so the pre/post-signup identity stitch is
+  // internally joinable without depending on PostHog's own API.
+  // migrations/2026-09-02_profiles_posthog_anonymous_id.sql
+  posthog_anonymous_id?: string | null;
 }
 
 export interface NotificationSettings {
