@@ -1,0 +1,31 @@
+-- 2026-09-02_referral_attributions_drop_stale_constraint.sql
+--
+-- Bug found live, running scripts/verifyAttributionResolverAndRewards.ts
+-- against the real DB (exactly what that gate exists to catch): the
+-- affiliate program's Phase 0 migration
+-- (2026-09-02_affiliate_commission_system.sql) added
+-- referral_attributions_resolved_consistency, checking ONLY affiliate_id:
+--
+--   (resolved = true AND affiliate_id IS NOT NULL) OR
+--   (resolved = false AND affiliate_id IS NULL)
+--
+-- The referral program's Phase 0 migration
+-- (2026-09-02_referral_program_phase0.sql) added a second, more complete
+-- constraint, referral_attributions_type_consistency, covering BOTH
+-- affiliate_id and referrer_user_id -- but never dropped the old one. A
+-- resolved referral-type row (resolved=true, affiliate_id=NULL,
+-- referrer_user_id=<real id>) is valid under the new constraint and
+-- rejected by the stale old one, so every real referral resolution fails
+-- outright with a 23505... actually 23514 (check_violation) at the DB
+-- level. Caught immediately by the live gate, not shipped.
+--
+-- Fix: drop the superseded constraint. The new one already enforces
+-- everything the old one did (its affiliate branch is identical) plus the
+-- referral branch the old one never knew about.
+--
+-- Run manually in the Supabase SQL editor. Not applied automatically.
+-- MUST run before scripts/verifyAttributionResolverAndRewards.ts's "flags
+-- ON" part can pass, and before referral_program is allowlisted to anyone.
+
+ALTER TABLE referral_attributions
+  DROP CONSTRAINT IF EXISTS referral_attributions_resolved_consistency;

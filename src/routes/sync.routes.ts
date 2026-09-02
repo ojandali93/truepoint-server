@@ -49,6 +49,7 @@ import { syncAllCatalogGradedPricesSafe } from "../services/poketracePriceSync.s
 import { syncPriceChartingPricesSafe } from "../services/pricechartingPriceSync.service";
 import { sendPendingIntroEmails } from "../services/introEmail.service";
 import { sendRenewalReminders } from "../services/renewalReminder.service";
+import { runReferralGrantSweep } from "../services/referralReward.service";
 
 const router = Router();
 
@@ -223,6 +224,28 @@ router.post("/portfolio", requireSyncKey, async (_req, res) => {
       metadata: {},
     });
     res.status(500).json({ error: "Failed to start portfolio sync" });
+  }
+});
+
+// POST /sync/referral-grant-sweep — AUDITS/referral-program-plan.md §3.3.
+// Small, bounded (200-row cap), awaited directly rather than fire-and-
+// respond like /portfolio above — this finishes in well under a request
+// timeout, no reason to detach it.
+router.post("/referral-grant-sweep", requireSyncKey, async (_req, res) => {
+  try {
+    const result = await runReferralGrantSweep();
+    res.json({ data: result });
+  } catch (err: any) {
+    await logError({
+      source: "sync-referral-grant-sweep",
+      message: err?.message ?? "Referral grant sweep failed",
+      error: err,
+      userId: null,
+      requestPath: "",
+      requestMethod: "",
+      metadata: {},
+    });
+    res.status(500).json({ error: "Referral grant sweep failed" });
   }
 });
 

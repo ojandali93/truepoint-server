@@ -5,6 +5,7 @@ import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
 import { handlePlanError } from "../middleware/plan.middleware";
 import { checkMonthlyLimit, requireFeature } from "../services/plan.service";
+import { recordReferralQualification } from "../services/referralReward.service";
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
 
@@ -264,6 +265,25 @@ export const analyzeCard = async (
             recommendation_reason: reason,
           })
           .eq("id", reportId);
+
+        // Referral qualification hook — AUDITS/referral-program-plan.md
+        // Finding 3: "first completed AI grading" IS this exact write,
+        // no separate instrumentation needed. Cheap no-op for the ~100%
+        // of completions with no pending referral (one lookup, then
+        // done) — never allowed to fail the grading report itself.
+        try {
+          await recordReferralQualification(req.user.id, reportId);
+        } catch (qualErr) {
+          await logError({
+            source: "referral-qualification",
+            message: "Failed to process referral qualification",
+            error: qualErr,
+            userId: req.user.id,
+            requestPath: "",
+            requestMethod: "",
+            metadata: { reportId },
+          });
+        }
       } catch (err: any) {
         console.error(
           `[AIGrading] Background analysis failed for report ${reportId}:`,

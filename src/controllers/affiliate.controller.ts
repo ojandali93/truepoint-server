@@ -599,8 +599,12 @@ export async function getMyAffiliate(
         slug: aff.slug ?? null,
         requested_slug: aff.requested_slug ?? null,
         approved_at: aff.approved_at ?? null,
-        collector_rate: aff.collector_rate ?? null,
-        pro_rate: aff.pro_rate ?? null,
+        // AUDITS/affiliate-system-plan.md §1 — the current flat-rate model.
+        // collector_rate/pro_rate (the superseded tiered model) intentionally
+        // dropped from this response now that mobile/web read the new
+        // fields instead — those columns stay in the DB row, just unused.
+        commission_rate: aff.commission_rate ?? null,
+        commission_window_months: aff.commission_window_months ?? null,
         signup_count,
       },
     });
