@@ -37,6 +37,7 @@ export const FLAG_KEYS = {
   PRICECHARTING_PRICING: "pricecharting_pricing",
   PRO_PRICING_V2: "pro_pricing_v2",
   COUNTERFEIT_SCREENING: "counterfeit_screening",
+  COMMUNITY_LINKS: "community_links",
 } as const;
 
 export type FlagKeyName = (typeof FLAG_KEYS)[keyof typeof FLAG_KEYS];
@@ -126,5 +127,19 @@ export const KNOWN_FLAGS: KnownFlag[] = [
       "allowlist → percentage → everyone — do not widen past allowlist " +
       "until the disclaimer/liability copy has real legal review " +
       "(flagged, unresolved as of this flag's creation).",
+  },
+  {
+    key: FLAG_KEYS.COMMUNITY_LINKS,
+    label: "Community Links",
+    description:
+      "Mobile profile screen: header Discord icon + a COMMUNITY section " +
+      "(Discord, Reddit, Instagram, TikTok) linking out to our real " +
+      "accounts. Off = today's Profile screen unchanged, no reserved " +
+      "space. DEFAULT AUDIENCE OFF — mobile/src/constants/" +
+      "communityLinks.ts ships with placeholder URLs for all four " +
+      "platforms; do not widen past allowlist until every placeholder is " +
+      "replaced with the real account URL (a real user hitting a " +
+      "placeholder is a dead tap). Off → allowlist → admins → " +
+      "percentage → everyone.",
   },
 ];
