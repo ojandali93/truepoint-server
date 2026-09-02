@@ -439,6 +439,159 @@ export const getUserDetail = async (userId: string) => {
   };
 };
 
+// ─── Part B: admin user drill-down (AI grading / centering reports, ───────────
+// ─── read-only collection, golden-set flagging) ────────────────────────────────
+
+/**
+ * AI grading reports for one user, list view — mirrors the shape
+ * getReports() (aiGrading.controller.ts) returns for the user's own
+ * GET /grading/ai-reports, minus the submission_cards join (not needed for
+ * the admin list row: date, card, predicted grades). Capped at 100 —
+ * this is an admin drill-down, not a paginated surface; a user with more
+ * than 100 AI grading reports is not a case this v1 handles.
+ */
+export const getUserAIGradingReports = async (userId: string) => {
+  const { data, error } = await supabaseAdmin
+    .from("ai_grading_reports")
+    .select(
+      "id, card_name, set_name, status, overall_score, tp_score, recommendation, created_at",
+    )
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return data ?? [];
+};
+
+/**
+ * One AI grading report, full detail — every column (photos, subgrades,
+ * predictions, findings text), same as the user's own report view sees,
+ * plus this report's flag state (null if never flagged). Filters on BOTH
+ * reportId and userId — defense in depth, so the admin drill-down can
+ * never cross-link into a different user's report even if a reportId is
+ * guessed/mistyped in the URL.
+ */
+export const getUserAIGradingReportDetail = async (
+  userId: string,
+  reportId: string,
+) => {
+  const { data: report, error } = await supabaseAdmin
+    .from("ai_grading_reports")
+    .select("*")
+    .eq("id", reportId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!report) return null;
+
+  const flag = await getReportFlag(reportId, "ai_grading");
+  return { report, flag };
+};
+
+/** Centering reports for one user, list view. Same 100-row cap reasoning
+ *  as getUserAIGradingReports. */
+export const getUserCenteringReports = async (userId: string) => {
+  const { data, error } = await supabaseAdmin
+    .from("centering_reports")
+    .select(
+      "id, card_id, side, label, truepoint_score, psa_grade, worst_axis, created_at",
+    )
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return data ?? [];
+};
+
+/** One centering report, full detail (image + every measurement/grade
+ *  column) + flag state. Same userId+reportId double-filter as the AI
+ *  grading detail above. */
+export const getUserCenteringReportDetail = async (
+  userId: string,
+  reportId: string,
+) => {
+  const { data: report, error } = await supabaseAdmin
+    .from("centering_reports")
+    .select("*")
+    .eq("id", reportId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!report) return null;
+
+  const flag = await getReportFlag(reportId, "centering");
+  return { report, flag };
+};
+
+/** Read-only inventory list for the admin drill-down's Collection section.
+ *  Reuses inventory.service's getInventory() exactly as getUserDetail
+ *  above already does for the summary-only view -- same live price
+ *  resolution, just also returning the item rows this time. */
+export const getUserCollection = async (userId: string) => {
+  const { getInventory } = await import("./inventory.service");
+  const { items, summary } = await getInventory(userId, null);
+  return { items, summary };
+};
+
+// ─── Golden-set flagging (admin_flagged_reports) ───────────────────────────────
+
+export type FlaggableReportType = "ai_grading" | "centering";
+
+const getReportFlag = async (reportId: string, reportType: FlaggableReportType) => {
+  const { data, error } = await supabaseAdmin
+    .from("admin_flagged_reports")
+    .select("id, report_id, report_type, reason, flagged_by, flagged_at")
+    .eq("report_id", reportId)
+    .eq("report_type", reportType)
+    .maybeSingle();
+  if (error) throw error;
+  return data ?? null;
+};
+
+/** Flag (or re-flag with a new reason) a report as a golden-set candidate.
+ *  Upsert on (report_id, report_type) — see migration's unique index — so
+ *  flagging an already-flagged report updates the reason/flagged_by/
+ *  flagged_at rather than erroring or duplicating. */
+export const flagReport = async (params: {
+  reportId: string;
+  reportType: FlaggableReportType;
+  reason: string;
+  flaggedBy: string;
+}) => {
+  const { data, error } = await supabaseAdmin
+    .from("admin_flagged_reports")
+    .upsert(
+      {
+        report_id: params.reportId,
+        report_type: params.reportType,
+        reason: params.reason,
+        flagged_by: params.flaggedBy,
+        flagged_at: new Date().toISOString(),
+      },
+      { onConflict: "report_id,report_type" },
+    )
+    .select("id, report_id, report_type, reason, flagged_by, flagged_at")
+    .single();
+  if (error) throw error;
+  return data;
+};
+
+/** Unflag — removes the row entirely (not a soft-delete; the calibration
+ *  harness reads live rows in this table directly, per the flag's own
+ *  purpose, so a stale "flagged" row with no way to retract it would be
+ *  actively misleading there). */
+export const unflagReport = async (
+  reportId: string,
+  reportType: FlaggableReportType,
+) => {
+  const { error } = await supabaseAdmin
+    .from("admin_flagged_reports")
+    .delete()
+    .eq("report_id", reportId)
+    .eq("report_type", reportType);
+  if (error) throw error;
+};
+
 export const updateUserPlan = async (
   userId: string,
   plan: "collector" | "pro",
