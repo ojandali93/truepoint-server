@@ -74,6 +74,7 @@ export const redeemVendorCode = async (
     plan: vc.plan,
     status: "trialing",
     platform: "comp",
+    comp_reason: "vendor_trial", // referral-program-plan.md Finding 1 — protects this grant from deactivateGrandfatherCompIfNoRealSubRemains
     trial_ends_at: endIso,
     current_period_end: endIso,
   };

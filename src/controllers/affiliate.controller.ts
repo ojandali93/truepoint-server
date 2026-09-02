@@ -25,6 +25,14 @@ import {
   sendAffiliateInvite,
   sendApprovedEmail,
 } from "../services/affiliateClaim.service";
+import { sendEmail } from "../lib/email";
+
+// referral-program-plan.md Finding 5 — POST /affiliates/apply created a
+// pending row with no notification of any kind; you'd only ever see a new
+// application by remembering to check /admin/affiliates. support@ per
+// CLAUDE.md §1's documented support address — flag if you'd rather this go
+// somewhere else.
+const APPLICATION_NOTIFICATION_EMAIL = "support@reverseholo.io";
 
 // ── Public ───────────────────────────────────────────────────────────────────
 
@@ -393,6 +401,28 @@ export async function submitAffiliateApplication(
       },
       userId,
     );
+
+    // Best-effort — same posture as sendAffiliateInvite below: a send
+    // failure must never fail the application itself. The application is
+    // still visible in /admin/affiliates regardless of whether this lands.
+    try {
+      await sendEmail({
+        to: APPLICATION_NOTIFICATION_EMAIL,
+        subject: `New affiliate application: ${businessName || personName || contactEmail}`,
+        html: `<p>New affiliate application pending review.</p>
+<ul>
+<li><b>Name:</b> ${businessName || personName || "—"}</li>
+<li><b>Contact:</b> ${personName || "—"} · ${contactEmail || "—"} ${phone ? `· ${phone}` : ""}</li>
+<li><b>Requested code:</b> ${requested_slug || "—"}</li>
+<li><b>Source:</b> ${userId ? "app (has account)" : "web (guest)"}</li>
+</ul>
+<p>Review at /admin/affiliates.</p>`,
+        text: `New affiliate application pending review.\nName: ${businessName || personName || "—"}\nContact: ${personName || "—"} · ${contactEmail || "—"}${phone ? ` · ${phone}` : ""}\nRequested code: ${requested_slug || "—"}\nSource: ${userId ? "app (has account)" : "web (guest)"}\nReview at /admin/affiliates.`,
+      });
+    } catch {
+      // Swallow — worst case the application still shows up in the admin
+      // list even if the notification email fails to send.
+    }
 
     res.status(201).json({ data: { status: "pending", id: data.id } });
   } catch (err) {
