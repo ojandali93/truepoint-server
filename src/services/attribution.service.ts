@@ -25,6 +25,7 @@ import {
   insertPendingReward,
   insertCompGrant,
   hasAnyCompGrantForReason,
+  findProfileCreatedAt,
 } from "../repositories/referral.repository";
 import { isFlagEnabled } from "./featureFlag.service";
 import { FLAG_KEYS } from "../constants/featureFlagKeys";
@@ -43,9 +44,19 @@ export type ResolveOutcome =
   | { outcome: "already_attributed" }
   | { outcome: "self_referral_blocked" }
   | { outcome: "no_code" }
-  | { outcome: "flags_off" };
+  | { outcome: "flags_off" }
+  | { outcome: "grace_period_expired"; daysSinceSignup: number };
 
 const WELCOME_BONUS_DAYS = 7;
+// Design doc §2.4 / affiliate doc §2.3: 14 days post-signup, and — per the
+// doc's own reasoning, unchanged here — NOT retroactive to payments already
+// made. That second half doesn't need separate code: window_start is set
+// at first PAYMENT regardless of when attribution happens (recordEarning /
+// referralReward.service.ts), so a grace-period attribution still gets its
+// full window forward from whenever the user actually converts — it just
+// never reaches backward. This constant is the other half: how long the
+// grace endpoint stays callable at all.
+const GRACE_PERIOD_DAYS = 14;
 
 const addDaysIso = (days: number): string => {
   const d = new Date();
@@ -84,6 +95,20 @@ export async function resolveAttribution(
   // does nothing further, regardless of what code is now being offered.
   const existing = await findAttributionByUserId(userId);
   if (existing) return { outcome: "already_attributed" };
+
+  // Grace-period window — only checked for the grace-period source itself.
+  // The at-signup sources (web_cookie/web_manual/mobile_manual) are always
+  // ~0 days post-signup by construction; skipping the lookup for them
+  // avoids a wasted profile read on the common path.
+  if (source === "post_signup_grace") {
+    const createdAt = await findProfileCreatedAt(userId);
+    if (createdAt) {
+      const daysSinceSignup = (Date.now() - new Date(createdAt).getTime()) / (24 * 3600 * 1000);
+      if (daysSinceSignup > GRACE_PERIOD_DAYS) {
+        return { outcome: "grace_period_expired", daysSinceSignup: Math.floor(daysSinceSignup) };
+      }
+    }
+  }
 
   const [affiliateFlagOn, referralFlagOn] = await Promise.all([
     isFlagEnabled(FLAG_KEYS.AFFILIATE_PROGRAM, userId, role),

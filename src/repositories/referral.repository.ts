@@ -107,6 +107,21 @@ export const findAttributionByUserId = async (
   return data ?? null;
 };
 
+/** Signup date, for the grace-period window check (affiliate doc §2.3 /
+ * design doc §2.4: 14 days, not retroactive). Same profiles.created_at
+ * convention introEmail.service.ts already relies on. */
+export const findProfileCreatedAt = async (
+  userId: string,
+): Promise<string | null> => {
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("created_at")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error && error.code !== "PGRST116") throw error;
+  return data?.created_at ?? null;
+};
+
 export type InsertAttributionInput = {
   user_id: string;
   affiliate_id: string | null;
