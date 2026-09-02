@@ -331,6 +331,7 @@ export async function grantCompPro(userId: string): Promise<void> {
     plan: "pro",
     status: "active",
     platform: "comp",
+    comp_reason: "affiliate_claim", // referral-program-plan.md Finding 1 — protects this permanent grant from deactivateGrandfatherCompIfNoRealSubRemains
   });
   if (insErr) throw insErr;
 }

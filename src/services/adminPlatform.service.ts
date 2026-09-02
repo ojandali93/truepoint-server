@@ -612,6 +612,15 @@ export const updateUserPlan = async (
     plan,
     status: isTrial ? "trialing" : "active",
     platform: "comp", // complimentary / admin-granted (not apple/android/web)
+    // referral-program-plan.md Finding 1 — 'admin_grant', always, from this
+    // function going forward. 'grandfather' is reserved for the one 2026-
+    // 08-29 migration batch (identified by exact row id in this migration's
+    // own backfill, never assigned here) — a fresh ad-hoc admin grant isn't
+    // "meant to ride alongside a real sub and disappear when it does," the
+    // way that migration's grants were; it should survive
+    // deactivateGrandfatherCompIfNoRealSubRemains the same way an affiliate-
+    // claim or vendor-trial comp does, unless you revoke it by hand.
+    comp_reason: "admin_grant",
     trial_ends_at: endsAtIso, // null for indefinite
     current_period_end: endsAtIso, // mirror so both readers agree
   };
@@ -717,15 +726,28 @@ export const deactivateGrandfatherCompIfNoRealSubRemains = async (
   if (realErr) throw realErr;
   if (realRows && realRows.length > 0) return; // still has a real sub elsewhere
 
+  // comp_reason='grandfather' only -- referral-program-plan.md Finding 1,
+  // fixed 2026-09-02: this function's whole purpose is "a grandfathered
+  // comp should disappear once the real sub it rode alongside truly ends."
+  // That's never true for an affiliate-claim comp (grantCompPro's grant is
+  // meant to be permanent, unconditional), a vendor-trial comp (its own
+  // fixed-duration end date is what should end it, not an unrelated real
+  // sub's lifecycle), or a referral-reward comp (same — its own grant
+  // window is authoritative). Before this filter, ANY comp row for this
+  // user would be deactivated here, regardless of why it existed —
+  // confirmed via scripts/auditCompRowPlatformOverwrite.ts that this
+  // exposure was real, just not yet triggered for a comp row this
+  // specific deactivation path had reached.
   const { data: compRow, error: compErr } = await supabaseAdmin
     .from("subscriptions")
     .select("id, status")
     .eq("user_id", userId)
     .eq("platform", "comp")
+    .eq("comp_reason", "grandfather")
     .in("status", ["active", "trialing"])
     .maybeSingle();
   if (compErr) throw compErr;
-  if (!compRow) return; // no comp grant to deactivate
+  if (!compRow) return; // no grandfather-comp grant to deactivate
 
   const { error: updateErr } = await supabaseAdmin
     .from("subscriptions")
