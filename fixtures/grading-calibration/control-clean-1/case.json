@@ -1,0 +1,30 @@
+{
+  "id": "control-clean-1",
+  "kind": "control",
+  "card": "unknown (founder's dev account)",
+  "sourceReportId": "8ff73bfb-f49e-4ddd-8826-e5b5a7ad3c04",
+  "sourceNote": "Overcorrection guard \u2014 old prompt's own findings show only a single trivial back edge mention, a single trivial back corner mention, and a faint front surface mark, with front called out as fully sharp/clean. Genuinely deserves a high grade; the recalibrated prompt must NOT drag this down just because it also asks for per-face enumeration.",
+  "expectedGradeRange": [
+    8,
+    10
+  ],
+  "expectedGradeBasis": "PSA-equivalent (overall grade after worst-face cap) \u2014 should stay in the high 8s/9, not fall the way the anchor and pattern cases should",
+  "oldPromptResult": {
+    "predictions": {
+      "psa": 9,
+      "bgs": 9,
+      "cgc": 9,
+      "tag": 9
+    },
+    "issues": [
+      "Slight whitening on the top edge of the back of the card, affecting edges score.",
+      "Minor whitening on the bottom right corner of the back of the card, affecting corners score.",
+      "A very faint, small scratch or print line visible on the front surface, near the bottom right of the artwork, affecting surface score."
+    ],
+    "strengths": [
+      "All four corners on the front are sharp with no visible wear.",
+      "The overall gloss and color saturation on both front and back are excellent.",
+      "Centering on both front and back is very good, close to ideal."
+    ]
+  }
+}

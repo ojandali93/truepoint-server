@@ -1,0 +1,14 @@
+{
+  "id": "pattern-back-whitening-1",
+  "kind": "pattern",
+  "card": "unknown (Reddit-scraper pipeline, same grading endpoint)",
+  "sourceReportId": "f6dcd87b-3905-429e-82a9-e233ae38dc3e",
+  "sourceNote": "No hand verification — flagged by the founder as one of several reports through the Reddit-scraper pipeline showing the same front-clean/back-whitened miscall pattern as the anchor case. No pinned expected range; used as a directional check only.",
+  "expectedGradeRange": null,
+  "expectedDirection": "materially below the old prompt's PSA 8 — old prompt's own notes already say 'slight whitening on all corners and edges' on the back, which the old mechanism didn't act on",
+  "oldPromptResult": {
+    "predictions": { "psa": 8, "bgs": 9, "cgc": 8, "tag": 9 },
+    "issues": ["Back centering", "Minor edge/corner whitening on back"],
+    "notes": "The front of the card exhibits excellent centering and minimal wear on corners and edges. The back shows noticeable off-centering to the right and slight whitening on all corners and edges. Both surfaces appear to have minor scuffing, more prominent on the back, which is typical for handling."
+  }
+}

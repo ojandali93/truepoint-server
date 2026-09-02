@@ -1,0 +1,20 @@
+{
+  "id": "control-clean-2",
+  "kind": "control",
+  "card": "Umbreon 161 - bags 9",
+  "sourceReportId": "3d09ad95-cd6c-41ac-a7ac-7ad80ccaba17",
+  "sourceNote": "Overcorrection guard, from the founder's confirmed dev account (25e63b99-c664-430b-a48d-6ffa548b5818). Old prompt's own findings show only a single trivial back edge mention and a trivial front surface mark, front called out as fully sharp. Genuinely deserves a high grade; the recalibrated prompt must NOT drag this down just because it also asks for per-face enumeration.",
+  "expectedGradeRange": [8, 10],
+  "expectedGradeBasis": "PSA-equivalent (overall grade after worst-face cap) — should stay high, not fall the way the anchor and pattern cases should",
+  "oldPromptResult": {
+    "predictions": { "psa": 9, "bgs": 9, "cgc": 9, "tag": 9 },
+    "issues": [
+      "Slight whitening on the top edge of the back of the card, affecting edges score.",
+      "Minor print line visible on the bottom right of the front surface, affecting surface score."
+    ],
+    "strengths": [
+      "All four corners on the front are sharp.",
+      "Minimal wear on most edges."
+    ]
+  }
+}
