@@ -26,6 +26,7 @@ import {
   insertCompGrant,
   hasAnyCompGrantForReason,
   findProfileCreatedAt,
+  markTrialUsed,
 } from "../repositories/referral.repository";
 import { isFlagEnabled } from "./featureFlag.service";
 import { FLAG_KEYS } from "../constants/featureFlagKeys";
@@ -74,6 +75,11 @@ async function grantWelcomeBonus(userId: string): Promise<void> {
   const already = await hasAnyCompGrantForReason(userId, "referral_welcome");
   if (already) return;
   await insertCompGrant(userId, "referral_welcome", addDaysIso(WELCOME_BONUS_DAYS));
+  // Found during the 2026-09-02 trial-copy fact-check: every other comp-
+  // granting path (vendorCode.service.ts, updateUserPlan) marks trial_used
+  // so the app's own paywall copy doesn't ALSO promise a free trial on top
+  // of a benefit we just gave them. This grant was missing that call.
+  await markTrialUsed(userId);
 }
 
 export interface ResolveAttributionParams {

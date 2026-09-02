@@ -401,6 +401,20 @@ export const hasAnyCompGrantForReason = async (
   return (count ?? 0) > 0;
 };
 
+/** Mirrors vendorCode.service.ts / updateUserPlan's own convention: "we
+ * already gave this user a comp benefit, don't also dangle the app's own
+ * free-trial copy in front of them" (mobile paywall.tsx's only read of
+ * this field — cosmetic, not an entitlement gate; Apple/Google's own
+ * systems are the real authority on trial eligibility). The referral
+ * welcome bonus is exactly this same case and was missing this call. */
+export const markTrialUsed = async (userId: string): Promise<void> => {
+  const { error } = await supabaseAdmin
+    .from("profiles")
+    .update({ trial_used: true })
+    .eq("id", userId);
+  if (error) throw error;
+};
+
 // ─── ai_grading_reports (qualification signal — design doc Finding 3) ─────
 
 export const countCompletedAiGradingReports = async (

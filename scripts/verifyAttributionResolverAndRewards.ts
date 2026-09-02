@@ -2,21 +2,25 @@
 //
 // Live gate for the frontend build (affiliate + referral programs, both
 // flags OFF by default): the CRITICAL requirement was "the flag must gate
-// BEHAVIOR, not just UI." This proves it two ways against the real DB:
+// BEHAVIOR, not just UI." This proves it two ways against the real DB.
 //
-//   Part 1 — flags OFF (the real, current, no-rows-created-yet state,
-//   which fails closed per evaluateFlag()'s own documented behavior):
-//   resolveAttribution writes ZERO rows for a real code against a real
-//   user. This is the literal meaning of "a non-allowlisted user's signup
-//   flow is byte-identical to today's" at the data layer.
+//   Part 1 — a brand-new, never-allowlisted user: resolveAttribution
+//   writes ZERO rows for a real code against a real user. This is the
+//   literal meaning of "a non-allowlisted user's signup flow is
+//   byte-identical to today's" at the data layer, and holds regardless of
+//   whether the flag rows exist yet at all.
 //
-//   Part 2 — flags ON (a TEMPORARY allowlist row, scoped to a throwaway
-//   test user, created and deleted by this script — not a persistent
-//   change; Omar creates the real flags himself, per his own request for
-//   exact admin steps): the resolver's precedence (affiliate slug before
-//   referral code), self-referral block, welcome bonus grant, first-
-//   grading qualification, and reward grant/stacking all work end to end
-//   against the live DB and the real service functions.
+//   Part 2 — flags ON: temporarily adds throwaway test users to whatever
+//   allowlist already exists (robust to the real flags already being
+//   created — first run, no rows existed, so it inserted+deleted temp
+//   rows; once you'd created the real ones, it switched to
+//   update-and-restore automatically) — never touches or removes any
+//   real allowed user already on the list, restored exactly in `finally`
+//   regardless of pass/fail. Exercises the resolver's precedence
+//   (affiliate slug before referral code), self-referral block, welcome
+//   bonus grant + trial_used, first-grading qualification, and reward
+//   grant/stacking end to end against the live DB and the real service
+//   functions.
 //
 // Run: npx ts-node scripts/verifyAttributionResolverAndRewards.ts
 
@@ -53,24 +57,24 @@ async function createThrowawayUser(label: string): Promise<string> {
   return data.user.id;
 }
 
+type FlagSnapshot = { id: string; key: string; existed: boolean; originalAllowedUserIds: string[] };
+
 async function main() {
   const createdUserIds: string[] = [];
-  let tempFlagIds: string[] = [];
+  const flagSnapshots: FlagSnapshot[] = [];
 
   try {
-    // ── Part 1: flags OFF (real current state) ────────────────────────────
-    console.log("=== Part 1: flags OFF — behavior, not just UI ===");
+    // ── Part 1: a brand-new, never-allowlisted user ────────────────────────
+    console.log("=== Part 1: flags OFF for a fresh user — behavior, not just UI ===");
     const offUser = await createThrowawayUser("flags-off");
     createdUserIds.push(offUser);
 
     const { data: existingFlags } = await supabaseAdmin
       .from("feature_flags")
-      .select("key")
+      .select("key, audience, allowed_user_ids")
       .in("key", ["affiliate_program", "referral_program"]);
-    assertTrue(
-      "neither flag has a row yet (fails closed per evaluateFlag's own documented behavior)",
-      (existingFlags ?? []).length === 0,
-      existingFlags,
+    console.log(
+      `  current flag state: ${(existingFlags ?? []).map((f) => `${f.key}=${f.audience}(${(f.allowed_user_ids ?? []).length} allowed)`).join(", ") || "no rows yet"}`,
     );
 
     const offResult = await resolveAttribution({
@@ -111,28 +115,46 @@ async function main() {
     createdUserIds.push(affiliateSignup);
     const selfReferralUser = referrer; // reuses their own code on themselves
 
-    const allowlist = [referrer, referredFriend, affiliateSignup, offUser];
-    const { data: flagRows, error: flagErr } = await supabaseAdmin
-      .from("feature_flags")
-      .insert([
-        {
-          key: "affiliate_program",
-          enabled: true,
-          audience: "allowlist",
-          allowed_user_ids: allowlist,
-          description: "[TEMP TEST ROW — verifyAttributionResolverAndRewards.ts, deleted at end of run]",
-        },
-        {
-          key: "referral_program",
-          enabled: true,
-          audience: "allowlist",
-          allowed_user_ids: allowlist,
-          description: "[TEMP TEST ROW — verifyAttributionResolverAndRewards.ts, deleted at end of run]",
-        },
-      ])
-      .select("id");
-    if (flagErr || !flagRows) throw flagErr ?? new Error("temp flag insert failed");
-    tempFlagIds = flagRows.map((r) => r.id);
+    const testUsers = [referrer, referredFriend, affiliateSignup, offUser];
+
+    for (const key of ["affiliate_program", "referral_program"] as const) {
+      const existing = (existingFlags ?? []).find((f) => f.key === key);
+      if (existing) {
+        // Real row already exists (e.g. you've created it via the admin
+        // panel) — add the test users to whatever's already allowed,
+        // remember the original list, restore it in `finally`. Never
+        // deletes or otherwise touches the real row.
+        const { data: row } = await supabaseAdmin
+          .from("feature_flags")
+          .select("id, allowed_user_ids")
+          .eq("key", key)
+          .single();
+        if (!row) throw new Error(`flag ${key} vanished between reads`);
+        flagSnapshots.push({ id: row.id, key, existed: true, originalAllowedUserIds: row.allowed_user_ids ?? [] });
+        const merged = Array.from(new Set([...(row.allowed_user_ids ?? []), ...testUsers]));
+        const { error } = await supabaseAdmin
+          .from("feature_flags")
+          .update({ enabled: true, audience: "allowlist", allowed_user_ids: merged })
+          .eq("id", row.id);
+        if (error) throw error;
+      } else {
+        // No row yet — insert a real allowlist row scoped to just the test
+        // users, delete it entirely afterward.
+        const { data: inserted, error } = await supabaseAdmin
+          .from("feature_flags")
+          .insert({
+            key,
+            enabled: true,
+            audience: "allowlist",
+            allowed_user_ids: testUsers,
+            description: "[TEMP TEST ROW — verifyAttributionResolverAndRewards.ts, deleted at end of run]",
+          })
+          .select("id")
+          .single();
+        if (error || !inserted) throw error ?? new Error(`temp flag insert failed for ${key}`);
+        flagSnapshots.push({ id: inserted.id, key, existed: false, originalAllowedUserIds: [] });
+      }
+    }
     invalidateFlagCache();
 
     // Affiliate code resolves as affiliate, not referral (precedence).
@@ -177,6 +199,17 @@ async function main() {
       .maybeSingle();
     assertTrue("referred friend got a 7-day Pro welcome bonus", !!welcomeRow && welcomeRow.plan === "pro", welcomeRow);
 
+    const { data: friendProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("trial_used")
+      .eq("id", referredFriend)
+      .maybeSingle();
+    assertTrue(
+      "welcome bonus marks trial_used (matches vendorCode/updateUserPlan's own convention)",
+      friendProfile?.trial_used === true,
+      friendProfile,
+    );
+
     // "First one wins" — a second code attempt for the same user is a no-op.
     const secondAttempt = await resolveAttribution({
       userId: referredFriend,
@@ -220,11 +253,21 @@ async function main() {
     await supabaseAdmin.from("ai_grading_reports").delete().eq("id", report.id);
   } finally {
     console.log("\n=== Cleanup ===");
-    if (tempFlagIds.length > 0) {
-      await supabaseAdmin.from("feature_flags").delete().in("id", tempFlagIds);
-      invalidateFlagCache();
-      console.log(`  deleted ${tempFlagIds.length} temporary flag row(s)`);
+    for (const snap of flagSnapshots) {
+      if (snap.existed) {
+        // Restore exactly what was there before — never leaves a test
+        // user on a real flag's allowlist.
+        await supabaseAdmin
+          .from("feature_flags")
+          .update({ allowed_user_ids: snap.originalAllowedUserIds })
+          .eq("id", snap.id);
+        console.log(`  restored ${snap.key}'s original allowlist (${snap.originalAllowedUserIds.length} user(s))`);
+      } else {
+        await supabaseAdmin.from("feature_flags").delete().eq("id", snap.id);
+        console.log(`  deleted temporary ${snap.key} row`);
+      }
     }
+    if (flagSnapshots.length > 0) invalidateFlagCache();
     for (const userId of createdUserIds) {
       await supabaseAdmin.from("referral_rewards").delete().eq("referrer_user_id", userId);
       await supabaseAdmin.from("referral_rewards").delete().eq("referred_user_id", userId);
