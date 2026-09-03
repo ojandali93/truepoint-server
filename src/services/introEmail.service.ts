@@ -43,15 +43,15 @@ function buildIntroEmail(firstName: string | null): {
 
   const text = `${greeting}
 
-Most welcome emails come from a no-reply address. This one doesn't — if you hit reply, it lands in my inbox.
+Most welcome emails come from a no-reply address. This one doesn't. If you hit reply, it lands in my inbox.
 
-I'm Omar, founder of Reverse Holo. We're a small team of collectors and engineers who got tired of watching this hobby grow while the tools stood still. So we're building the ones it deserves — honest grading calls, real market data, a portfolio you can actually trust — to give every collector a genuine edge.
+I'm Omar, founder of Reverse Holo. We're a small team of collectors and engineers who got tired of watching this hobby grow while the tools stood still. So we're building the ones it deserves. Honest grading calls, real market data, a portfolio you can actually trust to give every collector a genuine edge.
 
 We're building this with collectors, not just for them. You're early, and the people here now are the ones who shape what Reverse Holo becomes. Which is why I want to ask you one thing:
 
 What's the one feature you wish Reverse Holo had?
 
-Just reply to this email and tell me — or reach us in the app, on reverseholo.io, or at ${SUPPORT_EMAIL}. A real person on our team gets back to you within 48 hours, and every message gets read.
+Just reply to this email and tell me, or reach us in the app, on reverseholo.io, or at ${SUPPORT_EMAIL}. A real person on our team gets back to you within 48 hours, and every message gets read.
 
 Welcome to the community. Let's push this hobby forward together.
 
@@ -62,8 +62,8 @@ Founder, Reverse Holo`;
   // typed, not a designed marketing template. No logo bar, no buttons.
   const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:560px;">
   <p>${greeting}</p>
-  <p>Most welcome emails come from a no-reply address. This one doesn't — if you hit reply, it lands in my inbox.</p>
-  <p>I'm Omar, founder of Reverse Holo. We're a small team of collectors and engineers who got tired of watching this hobby grow while the tools stood still. So we're building the ones it deserves — honest grading calls, real market data, a portfolio you can actually trust — to give every collector a genuine edge.</p>
+  <p>Most welcome emails come from a no-reply address. This one doesn't. If you hit reply, it lands in my inbox.</p>
+  <p>I'm Omar, founder of Reverse Holo. We're a small team of collectors and engineers who got tired of watching this hobby grow while the tools stood still. So we're building the ones it deserves. Honest grading calls, real market data, a portfolio you can actually trust to give every collector a genuine edge.</p>
   <p>We're building this <em>with</em> collectors, not just for them. You're early, and the people here now are the ones who shape what Reverse Holo becomes. Which is why I want to ask you one thing:</p>
   <p style="font-weight:600;">What's the one feature you wish Reverse Holo had?</p>
   <p>Just reply to this email and tell me — or reach us in the app, on reverseholo.io, or at <a href="mailto:${SUPPORT_EMAIL}" style="color:#1a1a1a;">${SUPPORT_EMAIL}</a>. A real person on our team gets back to you within 48 hours, and every message gets read.</p>
