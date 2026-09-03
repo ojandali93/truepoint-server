@@ -33,6 +33,12 @@ interface CaseFile {
   expectedGradeBasis?: string;
   expectedDirection?: string;
   handVerifiedFindings?: string[];
+  // GATED as of 2026-09-03 (perception-fix pass): a case with no pinned
+  // numeric grade range can still fail the gate if the model returns an
+  // empty issues array — used for the two pattern cases, where even the
+  // OLD prompt's own stored notes mention real whitening this recalibrated
+  // prompt run is expected to at least SEE, whatever grade it lands on.
+  requireNonEmptyIssues?: boolean;
   oldPromptResult: {
     predictions: Record<string, number>;
     issues?: string[];
@@ -98,16 +104,18 @@ async function runCase(caseDir: string) {
       );
     }
   } else if (c.expectedDirection) {
-    // Informational only — no hand-verification exists for these (they're
-    // from the Reddit-scraper pipeline, not a card anyone has confirmed
-    // against the physical original), so a clean read here isn't a gate
-    // failure the way it would be for a control case. Printed for a
-    // directional read against the old prompt, not asserted.
     console.log(`  (pattern case, no pinned range) expected: ${c.expectedDirection}`);
     const movedDown = psa < c.oldPromptResult.predictions.psa;
     console.log(
-      `  ${movedDown ? "↓" : "•"} PSA-equivalent grade ${psa} vs. old prompt's ${c.oldPromptResult.predictions.psa} (informational, not gated)`,
+      `  ${movedDown ? "↓" : "•"} PSA-equivalent grade ${psa} vs. old prompt's ${c.oldPromptResult.predictions.psa} (directional only, not gated — no hand-verified range)`,
     );
+    if (c.requireNonEmptyIssues) {
+      check(
+        "issues array is non-empty (old prompt's own notes for this exact report described real whitening)",
+        result.issues.length > 0,
+        result.issues.length === 0 ? "got zero issues — this is a regression, not an improvement" : undefined,
+      );
+    }
   }
 }
 

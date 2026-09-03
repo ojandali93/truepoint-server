@@ -3,8 +3,9 @@
   "kind": "pattern",
   "card": "unknown (Reddit-scraper pipeline, same grading endpoint)",
   "sourceReportId": "f6dcd87b-3905-429e-82a9-e233ae38dc3e",
-  "sourceNote": "No hand verification — flagged by the founder as one of several reports through the Reddit-scraper pipeline showing the same front-clean/back-whitened miscall pattern as the anchor case. No pinned expected range; used as a directional check only.",
+  "sourceNote": "No hand verification against the physical card, so no pinned numeric grade range — but GATED as of 2026-09-03: a re-run under the recalibrated prompt returned an EMPTY issues array and 'no discernible defects on either face,' when even the OLD prompt's own stored notes for this exact report said 'slight whitening on all corners and edges' on the back. Whatever the true grade is, an empty issues list on THIS report is a regression, not an improvement — the old prompt at least saw something.",
   "expectedGradeRange": null,
+  "requireNonEmptyIssues": true,
   "expectedDirection": "materially below the old prompt's PSA 8 — old prompt's own notes already say 'slight whitening on all corners and edges' on the back, which the old mechanism didn't act on",
   "oldPromptResult": {
     "predictions": { "psa": 8, "bgs": 9, "cgc": 8, "tag": 9 },

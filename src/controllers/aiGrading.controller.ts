@@ -1,6 +1,8 @@
 import { Response } from "express";
 import { AuthenticatedRequest } from "../types/user.types";
 import { analyzeCardForGrading, GradingAnalysis } from "../lib/geminiClient";
+import { CenteringGeometry } from "../lib/deterministicCentering";
+import { readImageDimensions } from "../lib/imageDimensions";
 import { supabaseAdmin } from "../lib/supabase";
 import { logError } from "../lib/Logger";
 import { handlePlanError } from "../middleware/plan.middleware";
@@ -88,7 +90,42 @@ export const analyzeCard = async (
       setName,
       submissionCardId, // optional — when provided, link the report to a submission card
       inventoryId, // optional — when provided, link the report to an inventory item
+      frontCentering, // optional — on-device OpenCV border geometry, see deterministicCentering.ts
+      backCentering,
+    }: {
+      frontBase64: string;
+      frontMime?: "image/jpeg" | "image/png" | "image/webp";
+      backBase64: string;
+      backMime?: "image/jpeg" | "image/png" | "image/webp";
+      cardName?: string;
+      setName?: string;
+      submissionCardId?: string;
+      inventoryId?: string;
+      frontCentering?: CenteringGeometry | null;
+      backCentering?: CenteringGeometry | null;
     } = req.body;
+
+    // Input floor (2026-09 perception fix) — two real production reports
+    // turned up submitted at 360x483 / 502x663 (source unidentified, but
+    // neither mobile nor web's capture code produces anything close to
+    // that) and both scored a confident PSA 10 with an empty issues array.
+    // No prompt fix can see edge whitening or corner fraying that's below
+    // a few pixels wide at that resolution — reject before spending a
+    // Gemini call on it, rather than trying to grade it and hoping for the
+    // best. Only rejects when a dimension is actually readable and
+    // confirmed too small; an unrecognized format (e.g. webp, which this
+    // parser doesn't handle) is let through rather than blocked on a guess.
+    const MIN_SHORTER_SIDE_PX = 1000;
+    const tooSmall = (b64: string | undefined): boolean => {
+      const dims = b64 ? readImageDimensions(b64) : null;
+      return dims != null && Math.min(dims.width, dims.height) < MIN_SHORTER_SIDE_PX;
+    };
+    if (tooSmall(frontBase64) || tooSmall(backBase64)) {
+      res.status(400).json({
+        error: `Photo resolution is too low to grade reliably (need at least ${MIN_SHORTER_SIDE_PX}px on the shorter side). Please retake with the camera rather than a saved or shared image.`,
+      });
+      return;
+    }
 
     // Upload images to Supabase Storage bucket "Ai Grading Images"
     const uploadImage = async (
@@ -239,6 +276,8 @@ export const analyzeCard = async (
           backMime ?? "image/jpeg",
           cardName,
           setName,
+          frontCentering ?? null,
+          backCentering ?? null,
         );
 
         const { recommendation, reason } = computeRecommendation(analysis);

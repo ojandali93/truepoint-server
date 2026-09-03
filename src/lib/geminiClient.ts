@@ -5,6 +5,12 @@ import {
   HarmBlockThreshold,
 } from "@google/generative-ai";
 import { logError } from "./Logger";
+import {
+  measureCentering,
+  centeringPctToScore,
+  CenteringGeometry,
+  MeasuredCentering,
+} from "./deterministicCentering";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
 
@@ -448,49 +454,72 @@ export function mapTpScore(
 
 // ─── Prompt ────────────────────────────────────────────────────────────────────
 
+// Centering instruction block, built per face. When deterministicCentering
+// has a real measurement (mobile's OpenCV border detector ran and reported
+// "high" confidence), the model is handed that number as INPUT and told
+// not to re-derive it — this is the 2026-09 perception fix: centering was
+// entirely the model's own visual guess with nothing to catch it when
+// wrong (a real production report claimed a literal "50/50" on a visibly
+// asymmetric back). When there's no measurement, the model still has to
+// estimate — but analyzeCardForGrading applies a conservative cap to
+// whatever it reports (see UNVERIFIED_CENTERING_FLOOR_PCT below), so an
+// unmeasured face can never itself produce a confident top-tier grade.
+const centeringInstruction = (
+  face: "front" | "back",
+  measured: MeasuredCentering | null,
+): string =>
+  measured
+    ? `- centering (${face}): ALREADY MEASURED from the card's actual geometry — this is not your estimate to make. The measured ratio is "${measured.ratio}" (worst axis, larger side first). Copy this EXACT string into ${face}.centering_ratio. Derive ${face}.centering from it on the same scale as always (50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse scales down further) — do not substitute your own visual read of the borders for this number.`
+    : `- centering (${face}): No independent measurement is available for this face — you must estimate it, and be honest rather than defaulting to 50/50 out of uncertainty. MEASURE IT, don't guess: compare the two opposite borders on each axis, ratio = (wider border ÷ combined width) × 100, LEFT-TO-RIGHT and TOP-TO-BOTTOM, report the WORST axis as ${face}.centering_ratio (e.g. left border 3mm, right 2mm → 3/(3+2) = 60 → "60/40"). Report 50/50 only if it truly is. Score on the same scale: 50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse scales down further. This estimate will be treated as UNVERIFIED downstream and capped conservatively regardless of what you report — that's not a reason to hedge toward the middle, it's a reason to report exactly what you see.`;
+
 const GRADING_PROMPT = (
   cardContext: string,
+  frontMeasured: MeasuredCentering | null,
+  backMeasured: MeasuredCentering | null,
 ) => `You are a professional trading-card condition grader, held to the same standard as a PSA, BGS, or CGC human grader. You are given the FRONT image and the BACK image of a single Pokémon TCG card.${cardContext ? " " + cardContext : ""}
 
 Score the card's intrinsic physical quality on a 0–100 scale. This is NOT a PSA/BGS/CGC/TAG grade — DO NOT output any company grade. Score raw quality so it can be mapped to grades afterward.
 
-CALIBRATION: most collectors overestimate their own cards' condition — published data shows most raw cards submitted for grading come back lower than the submitter expected. Look closely at each of the four areas below before deciding there's nothing there. But this cuts both ways: a card with only a tiny, genuinely trivial imperfection is still a mint-tier card — don't manufacture significance out of something real grading would treat as negligible. The goal is accuracy in both directions, not a thumb on the scale toward either high or low.
+CALIBRATION: most collectors overestimate their own cards' condition — published data shows most raw cards submitted for grading come back lower than the submitter expected. Look closely at every region below before deciding there's nothing there. But this cuts both ways: a card with only a tiny, genuinely trivial imperfection is still a mint-tier card — don't manufacture significance out of something real grading would treat as negligible. The goal is accuracy in both directions, not a thumb on the scale toward either high or low.
 
 ANTI-ANCHOR — read this before you score anything: a score in the 70–89 range (roughly a 7–8 grade-equivalent) is NOT a safe default or a "reasonable middle" to land on when you're unsure. It is a specific, strong claim — that BOTH faces show near-mint edges and corners with at most trivial wear. That claim needs to be justified by what you actually enumerate below, the same way a 96+ does. If your enumerated findings show whitening on multiple edges or a soft/fuzzed corner, the score must reflect that — do not round back up toward 7–8 out of caution. Under-grading a genuinely clean card is also wrong; the anti-anchor cuts against defaulting in EITHER direction, but a 7–8 in particular is the laziest wrong answer because it "sounds about right" for a used card — it must be earned, not assumed.
 
-This also applies at the individual-finding level, not just the overall score: describing four separate findings as "very minor" or "~10%" each and then still landing near 90 is the SAME anchoring mistake in miniature — you've let each finding's individual mildness talk you out of the compounding effect of there being four of them. The corners/edges count-based ceilings below exist specifically to stop this: once you've enumerated whitening on 3+ edges or wear on 2+ corners, the ceiling applies even if every single instance you wrote down was mild. Mild-times-many is not the same defect as mild-times-one, and the ceiling — not your overall gut impression — is what decides the score at that point.
+An EMPTY "issues" array is the same anchoring failure at the report level, and it's the one this prompt has actually been getting wrong: a real audit of recent production reports found the model concluding "no discernible defects" on cards it had never actually examined region-by-region. A perfect 100/clean-everywhere face is a real, possible outcome — but it is exactly as strong a claim as a 40, and needs the exact same region-by-region evidence to back it up. You are not allowed to arrive at "clean" as a fast overall impression; you can only arrive at it by having gone through every region below and having a real, specific reason for each one. If you notice yourself about to write "clean" or "no defects" without having actually inspected each individual region against what it would look like damaged, stop and go back through them one at a time.
 
-GRADE FRONT AND BACK INDEPENDENTLY. Do the full four-dimension assessment (centering, corners, edges, surface) once for the FRONT, then again for the BACK, as two separate passes. Do not let a strong front pull up a weak back, or vice versa — a card is only as good as its worse side, which is exactly why the two faces are scored separately below rather than blended into one impression. For EACH of the four sub-dimensions, on EACH face, write out your specific findings FIRST, then assign the 0–100 number for that face+dimension based on what you just wrote — never pick a number first and rationalize it afterward. The JSON schema below lists a "_findings" field immediately before its matching number for this reason; fill them in that order.
+This also applies at the individual-finding level: describing four separate findings as "very minor" or "~10%" each and then still landing near 90 is the SAME anchoring mistake in miniature — you've let each finding's individual mildness talk you out of the compounding effect of there being four of them. The count-based ceilings below exist specifically to stop this: once you've enumerated whitening on enough regions, the ceiling applies even if every single instance you wrote down was mild. Mild-times-many is not the same defect as mild-times-one, and the ceiling — not your overall gut impression — is what decides the score at that point.
 
-- centering (per face): MEASURE IT, don't guess. Compare the two opposite borders on each axis: ratio = (wider border ÷ combined width) × 100. Do this LEFT-TO-RIGHT and TOP-TO-BOTTOM and report the WORST axis as this face's centering_ratio (e.g. left border 3mm, right 2mm → 3/(3+2) = 60 → "60/40"). Report 50/50 only if it truly is. For the 0-100 score: 50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse scales down further.
+GRADE FRONT AND BACK INDEPENDENTLY. Do the full four-dimension assessment (centering, corners, edges, surface) once for the FRONT, then again for the BACK, as two separate passes. Do not let a strong front pull up a weak back, or vice versa — a card is only as good as its worse side, which is exactly why the two faces are scored separately below rather than blended into one impression. For EACH of the four sub-dimensions, on EACH face, write out your specific findings FIRST, then assign the 0–100 number for that face+dimension based on what you just wrote — never pick a number first and rationalize it afterward. The JSON schema below lists a "_findings" field immediately before its matching number for this reason; fill them in that order, and every array in that schema must be filled at its FULL specified length — you may not shorten, merge, or skip a region.
+
+${centeringInstruction("front", frontMeasured)}
+${centeringInstruction("back", backMeasured)}
 
 - corners (per face): Examine all 4 corners of THIS face individually — a per-corner check, not a general impression. Write one finding per corner (e.g. "top-left: sharp", "bottom-right: soft/fuzzed, visible fraying"). These anchors are a HARD CEILING, not a suggestion — apply them by counting affected corners, even if each one individually looks minor: 0 corners with any fraying/softness/whitening → 90+; exactly 1 → at most 70; 2–3 → at most 50; ALL 4 corners showing any fraying/softness/whitening, even lightly → at most 35; heavy fraying/rounding on any single corner → at most 30, regardless of the others. Do not let "each one is only slight" talk you out of the count-based ceiling — affecting every corner, even lightly, is worse than affecting some of them, which is worse than affecting one; grade the count, not the average severity.
 
-- edges (per face): Examine all 4 edges of THIS face individually. Write one finding per edge naming what you see and roughly how much of the edge's length is affected (e.g. "left edge: whitening along ~60% of length", "top edge: clean"). Whitening on a BACK edge along a dark/colored border is DAMAGE (worn ink/coating exposing the white card stock underneath), not glare or a lighting artifact — treat it as damage unless it is clearly a reflection (a soft, angled highlight that moves with the light source, not a hard-edged line following the border itself). When you genuinely can't tell which it is, grade the damage interpretation — a false "clean" reads worse to a collector than a false "worn" does. These anchors are a HARD CEILING, not a suggestion — apply them by counting affected edges, even if each one individually looks faint or minor: no whitening anywhere → 90+; whitening visible on exactly 1–2 edges, light → 60–80; visible whitening on exactly 3 edges, no matter how faint any single one is → at most 50; whitening on ALL 4 edges, even lightly → at most 35; heavy or continuous whitening on any edge → at most 30, regardless of how the other edges look. Do not let "each one is only ~10%" or "very minor" reasoning talk you out of the count-based ceiling — a card with light whitening touching every edge is worse than one with the same light whitening on just a few, because it means the whole card was handled roughly, not just bumped once; grade the count, not the average severity.
+- edges (per face): Examine each of the 4 edges of THIS face in THIRDS — near each of its two corners, and the middle — 12 segments total per face (e.g. top-left-third, top-center-third, top-right-third, then the same for bottom/left/right). A single "top edge: clean" impression is not enough; write one finding per third, naming what you see there specifically. Whitening on a BACK edge along a dark/colored border is DAMAGE (worn ink/coating exposing the white card stock underneath), not glare or a lighting artifact — treat it as damage unless it is clearly a reflection (a soft, angled highlight that moves with the light source, not a hard-edged line following the border itself). When you genuinely can't tell which it is, grade the damage interpretation — a false "clean" reads worse to a collector than a false "worn" does. These anchors are a HARD CEILING, not a suggestion — apply them by counting affected segments (out of 12), even if each one individually looks faint or minor: 0 segments affected → 90+; 1–3 segments affected (up to about one edge's worth), light → 60–80; 4–8 segments affected, no matter how faint any single one is → at most 50; 9–12 segments affected, even lightly → at most 35; heavy or continuous whitening on any single segment → at most 30, regardless of how the rest look. Do not let "each one is only faint" reasoning talk you out of the count-based ceiling — a card with light whitening touching most of its perimeter is worse than one with the same light whitening on just a few segments, because it means the whole card was handled roughly, not just bumped once; grade the count, not the average severity.
 
-BEFORE you apply either count-based ceiling above: the count is only as honest as the individual findings that feed it. Most real corners and edges, on most real cards, are genuinely clean — "clean" is the ordinary, expected finding for a corner or edge, not a suspicious gap in your enumeration, and it is completely normal for a card to have ZERO real defects on a face. Only mark a corner or edge as affected if you can point to something actually visible there — a real change in the corner's silhouette, a real light-colored line or patch along the edge — that you'd stand behind under closer inspection. Do NOT round out the tally to 3 or 4 out of a sense that the other corners/edges must match once you've found one or two real ones, and do not treat routine photo artifacts (glare, a slightly soft-focus corner, JPEG compression noise, the card's own lighter cardstock edge that's the same on every card of its kind) as whitening. A face with 1 genuine defect and 3 genuinely clean corners/edges must be scored as 1-affected, not padded toward a rounder-sounding count. Fabricating a matching set of findings to "complete the pattern" is exactly the anchoring error the rest of this prompt is trying to eliminate, just running in the opposite direction.
-
-It is completely fine — and often the correct answer — to write "clean" for all 4 corners or all 4 edges of a face, using that exact same word four times. That is not a lazy or suspicious answer; it is what a genuinely undamaged face looks like, and it should be your default unless something specific stops you. Do not manufacture variety across the 4 findings for its own sake (e.g. calling one corner "sharp," another "a faint speck," another "very slightly soft") when what you're actually looking at is four equally clean corners. If you notice yourself about to write near-identical hedged language at all four locations with no other distinguishing detail, look again before finalizing: real whitening or fraying, even when faint, usually has SOME describable specific — a patch, a line tracking the border, concentration near one point rather than another. If a second look still shows that same real, describable mark at all four locations, report it and let the all-4 ceiling apply — genuine cards do sometimes show uniform light wear on every corner or edge from consistent handling (always picked up the same way, long-term sleeve wear), and that real pattern is exactly what the ceiling exists to catch. But if what's actually driving the finding is uncertainty rather than something you can point to and describe, the honest findings are "clean" ×4, not a hedge repeated four times.
-
-- surface (per face): Examine for scratches, creases, indentations, stains, print defects, and gloss loss on THIS face.
+- surface (per face): Examine THIS face as 4 quadrants — top-left, top-right, bottom-left, bottom-right — one finding per quadrant, for scratches, creases, indentations, stains, print defects, and gloss loss specific to that quadrant. A single face-wide impression is not enough; a scratch in one quadrant does not tell you anything about the other three until you've actually looked at them.
   CREASES ARE SEVERE AND STRUCTURAL, NOT COSMETIC. A crease is a physical bend in the card stock, not a surface mark — treat it accordingly. If you see ANY crease, even a faint or short one, this face is not gem-mint or near-mint: score surface 40 or below, scaled by severity (a faint, short crease scores near the top of that range; a deep, long, or multiple creases score much lower, down to 1–15). Do not let good centering or sharp corners pull this score up when a crease is present. Heavy staining gets the same severity treatment as a crease.
+
+BEFORE you apply any count-based ceiling above: the count is only as honest as the individual findings that feed it. Most real corners, edge segments, and surface quadrants, on most real cards, are genuinely clean — "clean" is the ordinary, expected finding for any one region, not a suspicious gap in your enumeration, and it is completely normal for a card to have ZERO real defects on a face. But "ordinary and expected" is a statement about how the world usually is, not a license to assert it about THIS card without having checked — the burden of evidence for writing "clean" at a region is the same as the burden for writing a defect there: you must be able to point to what you actually looked at and what you didn't find, not just default to it because nothing jumped out at a glance. Only mark a region as affected if you can point to something actually visible there — a real change in a corner's silhouette, a real light-colored line or patch along an edge segment, a real mark in a surface quadrant — that you'd stand behind under closer inspection. Do NOT round out the tally toward a rounder-sounding count out of a sense that the other regions must match once you've found one or two real ones, and do not treat routine photo artifacts (glare, a slightly soft-focus area, JPEG compression noise, the card's own lighter cardstock edge that's the same on every card of its kind) as damage. A face with 1 genuine defect and everything else genuinely clean must be scored as 1-affected, not padded toward a rounder-sounding count — and, symmetrically, a face that is actually flawless everywhere must be scored as flawless, not nudged down for fear of "not finding enough." Fabricating findings in either direction — inventing damage to seem thorough, or waving regions through as clean without really having checked them — is the same failure this prompt exists to eliminate.
+
+It is completely fine — and often the correct answer — to write "clean" for every corner, edge segment, or surface quadrant of a face, using that exact word repeatedly. That is not a lazy or suspicious answer PROVIDED each one reflects an actual look at that specific region; it is what a genuinely undamaged face looks like. Do not manufacture variety across findings for its own sake (e.g. calling one corner "sharp," another "a faint speck," another "very slightly soft") when what you're actually looking at is uniformly clean regions. If you notice yourself about to write near-identical hedged language across many regions with no distinguishing detail, look again before finalizing: real whitening or fraying, even when faint, usually has SOME describable specific — a patch, a line tracking the border, concentration near one point rather than another. If a second look still shows that same real, describable mark repeated across regions, report it and let the count-based ceiling apply — genuine cards do sometimes show uniform light wear from consistent handling, and that real pattern is exactly what the ceiling exists to catch.
 
 Use the FULL range honestly on each face — do not compress toward the middle. A genuinely flawless face belongs at 96-100. A face with only light, minor wear belongs at 84-89. Judge only what you actually see — do not default toward either extreme.
 
-DAMAGE BREAKDOWN — this is what the report is for. In "issues", list every distinct defect you actually see across both faces, and for each one, name (a) exactly which face it's on and where, and (b) which sub-dimension it drags down and roughly how much. Be specific about location every time — "whitening along ~70% of the left edge, back, edges capped at 25" is useful; "edge damage" is not. An empty issues list should be rare, reserved for cards that are genuinely flawless under close inspection on both faces. In "strengths", note anything genuinely strong (e.g. "all 4 corners sharp on the front, no whitening on any front edge") — this is what lets a real 96+ face actually read as one.
+DAMAGE BREAKDOWN — this is what the report is for. In "issues", list every distinct defect you actually see across both faces, and for each one, name (a) exactly which face it's on and where, and (b) which sub-dimension it drags down and roughly how much. Be specific about location every time — "whitening along the top-left-third and top-center-third of the left edge, back, edges capped at 50" is useful; "edge damage" is not. An empty issues list should be rare, reserved for cards that are genuinely flawless under close inspection on both faces AND where every region above was actually enumerated, not skipped. In "strengths", note anything genuinely strong (e.g. "all 4 corners sharp on the front, no whitening on any front edge segment") — this is what lets a real 96+ face actually read as one.
 
 confidence reflects how certain you are given IMAGE QUALITY, not how certain you are about the score itself. A clear, well-lit photo of a card with an obvious crease should get HIGH confidence in a LOW score — do not hedge confidence just because the score itself is low. Only lower confidence when the images are blurry, poorly lit, low-resolution, or fail to show an angle you'd need.
 
-Return ONLY valid JSON — no markdown, no code blocks. Fill each "_findings" array before its matching number, in the order shown:
+Return ONLY valid JSON — no markdown, no code blocks. Fill each "_findings" array before its matching number, in the order shown, and at its FULL length — 4 corners, 12 edge segments, 4 surface quadrants, every time:
 {
   "front": {
     "centering_ratio": "<e.g. '55/45'>",
     "centering": <0-100>,
     "corners_findings": ["top-left: ...", "top-right: ...", "bottom-left: ...", "bottom-right: ..."],
     "corners": <0-100>,
-    "edges_findings": ["top: ...", "bottom: ...", "left: ...", "right: ..."],
+    "edges_findings": ["top-left-third: ...", "top-center-third: ...", "top-right-third: ...", "bottom-left-third: ...", "bottom-center-third: ...", "bottom-right-third: ...", "left-top-third: ...", "left-center-third: ...", "left-bottom-third: ...", "right-top-third: ...", "right-center-third: ...", "right-bottom-third: ..."],
     "edges": <0-100>,
-    "surface_findings": ["<specific defects with location, or 'clean'>"],
+    "surface_findings": ["top-left quadrant: ...", "top-right quadrant: ...", "bottom-left quadrant: ...", "bottom-right quadrant: ..."],
     "surface": <0-100>
   },
   "back": {
@@ -498,9 +527,9 @@ Return ONLY valid JSON — no markdown, no code blocks. Fill each "_findings" ar
     "centering": <0-100>,
     "corners_findings": ["top-left: ...", "top-right: ...", "bottom-left: ...", "bottom-right: ..."],
     "corners": <0-100>,
-    "edges_findings": ["top: ...", "bottom: ...", "left: ...", "right: ..."],
+    "edges_findings": ["top-left-third: ...", "top-center-third: ...", "top-right-third: ...", "bottom-left-third: ...", "bottom-center-third: ...", "bottom-right-third: ...", "left-top-third: ...", "left-center-third: ...", "left-bottom-third: ...", "right-top-third: ...", "right-center-third: ...", "right-bottom-third: ..."],
     "edges": <0-100>,
-    "surface_findings": ["<specific defects with location, or 'clean'>"],
+    "surface_findings": ["top-left quadrant: ...", "top-right quadrant: ...", "bottom-left quadrant: ...", "bottom-right quadrant: ..."],
     "surface": <0-100>
   },
   "issues": ["<specific defect, exact face + location, which sub-dimension it caps>"],
@@ -509,6 +538,22 @@ Return ONLY valid JSON — no markdown, no code blocks. Fill each "_findings" ar
   "notes": "<2-3 sentence overall assessment, naming the single most grade-limiting defect and which face it's on, if any>"
 }`;
 
+// Just past PSA/CGC's own "<=60 -> 10" threshold (the most lenient of the
+// per-company top-tier centering thresholds) — floors an UNVERIFIED face's
+// effective centering pct just past it, so no per-company ceiling function
+// can certify a top-tier centering call from a face we couldn't measure.
+// Only ever makes a report MORE conservative: a model self-report already
+// worse than this is left alone, never improved toward it.
+const UNVERIFIED_CENTERING_FLOOR_PCT = 61;
+
+function applyUnverifiedFloor(ratio: string): string {
+  const pct = worstAxisPct(ratio, ratio);
+  if (pct < UNVERIFIED_CENTERING_FLOOR_PCT) {
+    return `${UNVERIFIED_CENTERING_FLOOR_PCT}/${100 - UNVERIFIED_CENTERING_FLOOR_PCT}`;
+  }
+  return ratio;
+}
+
 export const analyzeCardForGrading = async (
   frontBase64: string,
   frontMime: "image/jpeg" | "image/png" | "image/webp",
@@ -516,6 +561,8 @@ export const analyzeCardForGrading = async (
   backMime: "image/jpeg" | "image/png" | "image/webp",
   cardName?: string,
   setName?: string,
+  frontCentering?: CenteringGeometry | null,
+  backCentering?: CenteringGeometry | null,
 ): Promise<GradingAnalysis> => {
   if (!process.env.GEMINI_API_KEY) {
     throw { status: 503, message: "Gemini Vision API not configured" };
@@ -524,6 +571,11 @@ export const analyzeCardForGrading = async (
   const cardContext = cardName
     ? `The card is: ${cardName}${setName ? ` from ${setName}` : ""}.`
     : "";
+
+  // Deterministic centering fusion — measured BEFORE the Gemini call so it
+  // can be handed to the model as input, not asked for as an estimate.
+  const frontMeasured: MeasuredCentering | null = measureCentering(frontCentering);
+  const backMeasured: MeasuredCentering | null = measureCentering(backCentering);
 
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash",
@@ -550,7 +602,7 @@ export const analyzeCardForGrading = async (
           frontPart,
           { text: "BACK OF CARD:" },
           backPart,
-          { text: GRADING_PROMPT(cardContext) },
+          { text: GRADING_PROMPT(cardContext, frontMeasured, backMeasured) },
         ],
       },
     ],
@@ -614,6 +666,14 @@ export const analyzeCardForGrading = async (
   const front: FaceScores = parseFace(parsed.front);
   const back: FaceScores = parseFace(parsed.back);
 
+  // Deterministic override — the model was instructed not to eyeball
+  // centering on a measured face, but this is the actual enforcement:
+  // whatever it output for centering on that face is replaced here,
+  // unconditionally, with the real measurement. Never trust-but-verify;
+  // just never trust it for a face we can measure.
+  if (frontMeasured) front.centering = clamp100(centeringPctToScore(frontMeasured.worstAxisPct));
+  if (backMeasured) back.centering = clamp100(centeringPctToScore(backMeasured.worstAxisPct));
+
   // Blended sub-scores feed the TP display score and computeTpScore/
   // mapTpScore's condition blend. Take the WORSE of front/back per category
   // — by construction, a clean face can never dilute a damaged one, which
@@ -632,10 +692,42 @@ export const analyzeCardForGrading = async (
     ? parsed.strengths.slice(0, 5)
     : [];
   const confidence = Math.max(0, Math.min(100, parsed.confidence ?? 70));
+
+  // Centering ratio strings — the input every per-company ceiling function
+  // (psaCenteringCeiling, bgsCenteringSubgrade, tagCenteringTcg) reads.
+  // Measured faces use the real measurement, full stop, never the model's
+  // own string even if it echoed something different. Unmeasured faces
+  // keep the model's self-report but floored so they can never certify a
+  // top-tier centering call — "never a confident 10" for a face we
+  // couldn't independently check.
+  const frontRatioRaw: string = parsed.front?.centering_ratio ?? parsed.centering_ratio_front ?? "Unknown";
+  const backRatioRaw: string | null = parsed.back?.centering_ratio ?? parsed.centering_ratio_back ?? null;
+
+  const frontFloored = !frontMeasured && applyUnverifiedFloor(frontRatioRaw) !== frontRatioRaw;
+  const backFloored = !backMeasured && backRatioRaw != null && applyUnverifiedFloor(backRatioRaw) !== backRatioRaw;
+
   const centeringRatio = {
-    front: parsed.front?.centering_ratio ?? parsed.centering_ratio_front ?? "Unknown",
-    back: parsed.back?.centering_ratio ?? parsed.centering_ratio_back ?? null,
+    front: frontMeasured ? frontMeasured.ratio : applyUnverifiedFloor(frontRatioRaw),
+    back: backMeasured
+      ? backMeasured.ratio
+      : backRatioRaw
+        ? applyUnverifiedFloor(backRatioRaw)
+        : null,
   };
+
+  // Visible, not silent — an abstention that changed the outcome shows up
+  // in the report itself, not just in a code comment nobody reading the
+  // report will ever see.
+  if (frontFloored) {
+    issues.unshift(
+      "front centering could not be independently measured — capped conservatively rather than trusting an unverified estimate",
+    );
+  }
+  if (backFloored) {
+    issues.unshift(
+      "back centering could not be independently measured — capped conservatively rather than trusting an unverified estimate",
+    );
+  }
 
   return {
     tpScore,
