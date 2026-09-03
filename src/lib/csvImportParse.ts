@@ -165,6 +165,70 @@ const GAME_BY_CATEGORY: Record<string, ImportGame> = {
 
 const JP_SUFFIX_RE = /\s*\(JP\)\s*$/;
 
+// ─── Duplicate-row merge ─────────────────────────────────────────────────────
+//
+// Collectr exports one row PER PHYSICAL COPY for raw/graded cards — owning 2
+// of the same card produces two otherwise-identical rows, quantity=1 each,
+// rather than one row with quantity=2. Left alone, that meant a card the
+// user owned multiples of needed the review screen's needs-review confirm
+// tapped once per duplicate row instead of once total, and committed as N
+// separate inventory rows instead of one row with quantity N (Omar,
+// 2026-09-03 — observed on a real test import).
+//
+// A "duplicate" here is conservative and literal: every field that
+// determines what gets matched/written must be identical — portfolio, set,
+// exact product name (JP suffix included, so an EN and a JP printing of the
+// same card never merge), card number, rarity, variance, grade, and
+// condition. Rows differing in any of those are genuinely different items
+// (different grade, different condition, etc.) and are never merged, even
+// if they're "the same card" in a looser sense. Only quantity (summed) and
+// average cost paid (quantity-weighted average across the merged rows,
+// nulls excluded — an unknown cost on one copy shouldn't drag the known
+// cost on another toward zero) change; every other field keeps the first
+// occurrence's value, and that first occurrence's rowIndex is what survives
+// — later duplicates' line numbers aren't individually reachable after
+// this, which is the point of merging them.
+const dedupeKey = (row: ParsedImportRow): string =>
+  [
+    row.portfolioName,
+    row.category,
+    row.set,
+    row.productName,
+    row.cardNumber,
+    row.rarity,
+    row.variance,
+    row.grade,
+    row.cardCondition,
+  ].join("");
+
+const mergeDuplicateRows = (rows: ParsedImportRow[]): ParsedImportRow[] => {
+  const order: string[] = [];
+  const grouped = new Map<string, ParsedImportRow[]>();
+  for (const row of rows) {
+    const key = dedupeKey(row);
+    if (!grouped.has(key)) {
+      order.push(key);
+      grouped.set(key, []);
+    }
+    grouped.get(key)!.push(row);
+  }
+
+  return order.map((key) => {
+    const group = grouped.get(key)!;
+    if (group.length === 1) return group[0];
+
+    const totalQuantity = group.reduce((sum, r) => sum + r.quantity, 0);
+    const pricedGroup = group.filter((r) => r.averageCostPaid != null);
+    const pricedQuantity = pricedGroup.reduce((sum, r) => sum + r.quantity, 0);
+    const averageCostPaid =
+      pricedGroup.length === 0
+        ? null
+        : pricedGroup.reduce((sum, r) => sum + r.averageCostPaid! * r.quantity, 0) / pricedQuantity;
+
+    return { ...group[0], quantity: totalQuantity, averageCostPaid };
+  });
+};
+
 // ─── Public entry point ─────────────────────────────────────────────────────
 
 export const parseCollectrCsv = (text: string): ParseCsvResult => {
@@ -302,7 +366,13 @@ export const parseCollectrCsv = (text: string): ParseCsvResult => {
       ? `${unsupportedCategoryRows.length} item${unsupportedCategoryRows.length === 1 ? "" : "s"} in unsupported categories — ReverseHolo tracks Pokémon and One Piece today`
       : null;
 
-  return { rows, errors, unsupportedCategoryRows, categoryCounts, unsupportedCategorySummary };
+  return {
+    rows: mergeDuplicateRows(rows),
+    errors,
+    unsupportedCategoryRows,
+    categoryCounts,
+    unsupportedCategorySummary,
+  };
 };
 
 const validateHeader = (header: string[]): string[] => {
