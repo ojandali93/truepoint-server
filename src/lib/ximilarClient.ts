@@ -49,6 +49,175 @@ const EMPTY: XimilarIdentification = {
 const cleanBase64 = (b64: string): string =>
   b64.replace(/^data:[^;]+;base64,/, "");
 
+// ─── Card Grading (dual-engine comparison, admin-only — AUDITS/dual-engine-grading-plan.md) ─
+//
+// Ximilar's card-grader is asynchronous ONLY — there is no synchronous grading
+// endpoint. Submit once (records = both sides in one request), then poll the
+// returned id until status: "DONE". Confirmed live 2026-09-04 (see plan doc §3):
+// submitting front+back together returns TWO per-side records (not one combined
+// record), each self-identifying via card[0]._tags.Side ("Front"/"Back") — read
+// that tag, never assume array order. There is no combined/weighted `final` in
+// the response despite the docs mentioning a 70/30 front/back default elsewhere;
+// gradeCardOverall() below computes it the same way ourselves.
+//
+// No credits/cost field appears anywhere in this response (confirmed via docs
+// and the live probe) — callers log a flat constant instead, see
+// XIMILAR_GRADE_CREDIT_COST in aiGrading.controller.ts.
+
+const XIMILAR_REQUEST_URL = "https://api.ximilar.com/account/v2/request/";
+
+export interface XimilarCenteringDetail {
+  grade: number;
+  leftRight: string; // e.g. "41/59"
+  topBottom: string; // e.g. "52/48"
+  pixels: number[];
+  offsets: number[];
+}
+
+export interface XimilarSideGrades {
+  side: "Front" | "Back" | "Unknown";
+  grades: {
+    centering: number;
+    corners: number;
+    edges: number;
+    surface: number;
+    final: number;
+    condition: string | null;
+  };
+  centering: XimilarCenteringDetail | null;
+}
+
+export interface XimilarGradeResult {
+  requestId: string;
+  front: XimilarSideGrades | null;
+  back: XimilarSideGrades | null;
+  overall: number | null; // 0.7*front.final + 0.3*back.final — Ximilar never returns this itself
+  raw: unknown; // full DONE response, unshaped — see grading_engine_comparisons.ximilar_raw
+}
+
+/** Submit a front+back pair. Returns Ximilar's own request id — the caller owns polling/timeout. */
+export async function submitCardGrade(
+  frontBase64: string,
+  backBase64: string,
+): Promise<string> {
+  const token = (process.env.XIMILAR_API_TOKEN ?? "").trim();
+  if (!token) throw new Error("XIMILAR_API_TOKEN is not configured");
+
+  let res;
+  try {
+    res = await axios.post(
+      XIMILAR_REQUEST_URL,
+      {
+        type: "card-grader",
+        endpoint: "grade",
+        records: [
+          { _base64: cleanBase64(frontBase64) },
+          { _base64: cleanBase64(backBase64) },
+        ],
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Token ${token}`,
+        },
+        timeout: 30000,
+        maxBodyLength: Infinity,
+        validateStatus: () => true,
+      },
+    );
+  } catch (err) {
+    const ae = err as AxiosError;
+    throw new Error(
+      `Ximilar submit failed (no response): ${ae.code ?? ""} ${ae.message}`.trim(),
+    );
+  }
+
+  if (res.status < 200 || res.status >= 300) {
+    const body =
+      typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
+    throw new Error(`Ximilar submit error (HTTP ${res.status}): ${body.slice(0, 500)}`);
+  }
+
+  const id = res.data?.id;
+  if (!id) throw new Error("Ximilar submit response had no request id");
+  return id;
+}
+
+/** One poll attempt. Returns null while still processing; the caller owns the retry loop + timeout. */
+export async function pollCardGrade(
+  requestId: string,
+): Promise<XimilarGradeResult | null> {
+  const token = (process.env.XIMILAR_API_TOKEN ?? "").trim();
+  if (!token) throw new Error("XIMILAR_API_TOKEN is not configured");
+
+  let res;
+  try {
+    res = await axios.get(`${XIMILAR_REQUEST_URL}${requestId}`, {
+      headers: { Authorization: `Token ${token}` },
+      timeout: 15000,
+      validateStatus: () => true,
+    });
+  } catch (err) {
+    const ae = err as AxiosError;
+    throw new Error(
+      `Ximilar poll failed (no response): ${ae.code ?? ""} ${ae.message}`.trim(),
+    );
+  }
+
+  if (res.status < 200 || res.status >= 300) {
+    const body =
+      typeof res.data === "string" ? res.data : JSON.stringify(res.data ?? {});
+    throw new Error(`Ximilar poll error (HTTP ${res.status}): ${body.slice(0, 500)}`);
+  }
+
+  const status = res.data?.status;
+  if (status === "FAILED" || status === "ERROR") {
+    throw new Error(`Ximilar processing failed: ${JSON.stringify(res.data).slice(0, 500)}`);
+  }
+  if (status !== "DONE") return null; // still CREATED/PROCESSING — caller polls again
+
+  const records: any[] = res.data?.response?.records ?? [];
+
+  const toSideGrades = (record: any): XimilarSideGrades | null => {
+    const card = record?.card?.[0];
+    if (!card || !record?.grades) return null;
+    const sideTag = card?._tags?.Side?.[0]?.name;
+    const side: XimilarSideGrades["side"] =
+      sideTag === "Front" ? "Front" : sideTag === "Back" ? "Back" : "Unknown";
+    const c = card.centering;
+    const centering: XimilarCenteringDetail | null = c
+      ? {
+          grade: c.grade,
+          leftRight: c["left/right"],
+          topBottom: c["top/bottom"],
+          pixels: c.pixels ?? [],
+          offsets: c.offsets ?? [],
+        }
+      : null;
+    return {
+      side,
+      grades: {
+        centering: record.grades.centering,
+        corners: record.grades.corners,
+        edges: record.grades.edges,
+        surface: record.grades.surface,
+        final: record.grades.final,
+        condition: record.grades.condition ?? null,
+      },
+      centering,
+    };
+  };
+
+  const parsed = records.map(toSideGrades).filter((r): r is XimilarSideGrades => r !== null);
+  const front = parsed.find((r) => r.side === "Front") ?? null;
+  const back = parsed.find((r) => r.side === "Back") ?? null;
+
+  const overall =
+    front && back ? 0.7 * front.grades.final + 0.3 * back.grades.final : null;
+
+  return { requestId, front, back, overall, raw: res.data };
+}
+
 export async function identifyCard(
   base64: string,
 ): Promise<XimilarIdentification> {

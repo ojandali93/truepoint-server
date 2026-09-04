@@ -17,5 +17,10 @@ router.patch(
   writeLimiter,
   AIG.recordActualGrade as any,
 );
+router.get(
+  "/ai-reports/:id/comparison",
+  standardLimiter,
+  AIG.getComparison as any,
+);
 
 export default router;

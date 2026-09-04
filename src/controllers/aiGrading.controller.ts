@@ -8,6 +8,8 @@ import { logError } from "../lib/Logger";
 import { handlePlanError } from "../middleware/plan.middleware";
 import { checkMonthlyLimit, requireFeature } from "../services/plan.service";
 import { recordReferralQualification } from "../services/referralReward.service";
+import { isFlagEnabled } from "../services/featureFlag.service";
+import { runGradingComparison, getComparisonForReport } from "../services/gradingComparison.service";
 
 // ─── Recommendation logic ─────────────────────────────────────────────────────
 
@@ -266,6 +268,28 @@ export const analyzeCard = async (
       },
     });
 
+    // Dual-engine comparison (AUDITS/dual-engine-grading-plan.md, Part A) —
+    // admin-only, behind dual_engine_grading. Checked once, here, before
+    // anything else runs: flag off means runGradingComparison is never
+    // called, so submitCardGrade never fires — zero extra API calls, zero
+    // extra cost, no code path exists to accidentally trigger otherwise.
+    // Deliberately its own setImmediate, NOT awaited alongside the Gemini
+    // analysis below — Ximilar's card-grader is asynchronous with real
+    // measured latency in the tens of seconds (live-probed 2026-09-04), and
+    // our own report must never wait on theirs, in either direction.
+    isFlagEnabled("dual_engine_grading", req.user.id, req.user.role)
+      .then((flagOn) => {
+        if (!flagOn) return;
+        setImmediate(() => {
+          void runGradingComparison(reportId, req.user.id, frontBase64, backBase64);
+        });
+      })
+      .catch(() => {
+        // isFlagEnabled already fails closed + logs internally; nothing
+        // else to do here except make sure a flag-check failure can never
+        // throw into the main response path.
+      });
+
     // Process in background — no await, runs after response is sent
     setImmediate(async () => {
       try {
@@ -466,5 +490,48 @@ export const recordActualGrade = async (
     res
       .status(500)
       .json({ error: err?.message ?? "Failed to record actual grade" });
+  }
+};
+
+// GET /grading/ai-reports/:id/comparison
+//
+// Dual-engine comparison row for one report (AUDITS/dual-engine-grading-plan.md,
+// Part A) — admin-only, behind dual_engine_grading. Separate endpoint rather
+// than joined onto the ai-reports list route: only ever called by a client
+// that already knows the flag is on for it, so the common (flag-off) case
+// never pays for this query at all. Returns null (not 404) when no
+// comparison row exists yet — same "not-yet-present is a normal state, not
+// an error" posture the report itself uses while status='processing'.
+export const getComparison = async (
+  req: AuthenticatedRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const flagOn = await isFlagEnabled(
+      "dual_engine_grading",
+      req.user.id,
+      req.user.role,
+    );
+    if (!flagOn) {
+      // Same "look like it doesn't exist" posture requireFlag() uses for
+      // dark features — a 404 here, not 403, tells a non-allowlisted
+      // caller nothing about whether this endpoint exists at all.
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+
+    const comparison = await getComparisonForReport(req.params.id, req.user.id);
+    res.json({ data: comparison });
+  } catch (err: any) {
+    await logError({
+      source: "grading-comparison-fetch",
+      message: err?.message ?? "Unknown error",
+      error: err,
+      userId: (req as any)?.userId ?? null,
+      requestPath: req.path,
+      requestMethod: req.method,
+      metadata: { params: req.params },
+    });
+    res.status(500).json({ error: err?.message });
   }
 };
