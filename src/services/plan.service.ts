@@ -175,12 +175,28 @@ const STATIC_LIMITS: Record<StaticLimitKey, Record<PlanKey, number | null>> = {
 
 const MONTHLY_SOURCES: Record<
   MonthlyLimitKey,
-  { table: string; userColumn: string; dateColumn: string } | null
+  {
+    table: string;
+    userColumn: string;
+    dateColumn: string;
+    // Rows whose status lands here don't count toward the monthly cap —
+    // for a table with a processing/completed/failed lifecycle, the row is
+    // inserted BEFORE the async work that can fail even runs (so there's
+    // an id to return immediately), so a bare row-count charges the user
+    // for outcomes they never got. Found 2026-09-04: a Gemini JSON-parse
+    // failure consumed one of a user's 5 monthly ai_grading_reports even
+    // though no usable report was ever produced — same bug shape exists
+    // for counterfeit_screening_reports (identical insert-pending lifecycle,
+    // migrations/2026-09-01_counterfeit_screening_reports.sql), fixed here
+    // too rather than special-cased to just the one table that got reported.
+    excludeStatuses?: string[];
+  } | null
 > = {
   ai_grading_reports: {
     table: "ai_grading_reports",
     userColumn: "user_id",
     dateColumn: "created_at",
+    excludeStatuses: ["failed"],
   },
   // Real source as of Phase 1 gate 4 (migrations/2026-08-29_regrade_arbitrage_checks.sql)
   // — was null ("cap is informational") before this; the cap is now
@@ -201,6 +217,7 @@ const MONTHLY_SOURCES: Record<
     table: "counterfeit_screening_reports",
     userColumn: "user_id",
     dateColumn: "created_at",
+    excludeStatuses: ["failed"],
   },
 };
 
@@ -337,11 +354,17 @@ export const getMonthlyUsage = async (
   const source = MONTHLY_SOURCES[key];
   if (!source) return 0;
 
-  const { count } = await supabaseAdmin
+  let query = supabaseAdmin
     .from(source.table)
     .select("id", { count: "exact", head: true })
     .eq(source.userColumn, userId)
     .gte(source.dateColumn, monthStart());
+
+  for (const status of source.excludeStatuses ?? []) {
+    query = query.neq("status", status);
+  }
+
+  const { count } = await query;
 
   return count ?? 0;
 };

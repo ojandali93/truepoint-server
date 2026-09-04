@@ -3,6 +3,8 @@ import {
   Part,
   HarmCategory,
   HarmBlockThreshold,
+  SchemaType,
+  type Schema,
 } from "@google/generative-ai";
 import { logError } from "./Logger";
 import {
@@ -472,6 +474,83 @@ const centeringInstruction = (
     ? `- centering (${face}): ALREADY MEASURED from the card's actual geometry — this is not your estimate to make. The measured ratio is "${measured.ratio}" (worst axis, larger side first). Copy this EXACT string into ${face}.centering_ratio. Derive ${face}.centering from it on the same scale as always (50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse scales down further) — do not substitute your own visual read of the borders for this number.`
     : `- centering (${face}): No independent measurement is available for this face — you must estimate it, and be honest rather than defaulting to 50/50 out of uncertainty. MEASURE IT, don't guess: compare the two opposite borders on each axis, ratio = (wider border ÷ combined width) × 100, LEFT-TO-RIGHT and TOP-TO-BOTTOM, report the WORST axis as ${face}.centering_ratio (e.g. left border 3mm, right 2mm → 3/(3+2) = 60 → "60/40"). Report 50/50 only if it truly is. Score on the same scale: 50/50 ≈ 100; 55/45 ≈ 92; 60/40 ≈ 84; 65/35 ≈ 74; 70/30 ≈ 64; worse scales down further. This estimate will be treated as UNVERIFIED downstream and capped conservatively regardless of what you report — that's not a reason to hedge toward the middle, it's a reason to report exactly what you see.`;
 
+// Structured output schema — BUILT, TESTED, AND DELIBERATELY NOT WIRED IN.
+// (2026-09-04 parse-resilience investigation.) The theory was sound: force
+// Gemini's own decoding to stay grammatically valid JSON matching this
+// exact shape, closing the "Expected ',' or ']' after array element" class
+// of bug structurally instead of relying on prose alone.
+//
+// Tested head-to-head against control-clean-2 (a real card with a known-
+// clean back, previously scoring PSA 9 consistently) with everything else
+// held constant (maxOutputTokens=8192 both sides): WITH responseSchema
+// attached, 2/2 runs fabricated "very slight whitening" uniformly across
+// all 4 back corners and all 12 back edge segments, dropping it to PSA 5 —
+// exactly the uniform-hedged-language anchoring failure GRADING_PROMPT's
+// own text warns against. WITHOUT it (schema removed, nothing else
+// changed), 2/2 runs came back clean, matching this fixture's established
+// history. Small n, but a clean 4/4 contrast with no other variable moved.
+// Root cause not confirmed (plausibly constrained decoding interacting
+// differently with the "write findings before number" instruction than
+// free-form generation does) — flagging the effect, not the mechanism.
+//
+// Exported so it isn't dead code and stays available for a future attempt,
+// but NOT referenced in generationConfig below. Do not wire this back in
+// without re-running the golden set to confirm this specific regression is
+// actually gone — the failure mode is a false POSITIVE (invented defects on
+// a clean card), which is worse for user trust than the syntax error it
+// would have fixed.
+const gradingFaceSchema: Schema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    centering_ratio: { type: SchemaType.STRING },
+    centering: { type: SchemaType.NUMBER },
+    corners_findings: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+      minItems: 4,
+      maxItems: 4,
+    },
+    corners: { type: SchemaType.NUMBER },
+    edges_findings: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+      minItems: 12,
+      maxItems: 12,
+    },
+    edges: { type: SchemaType.NUMBER },
+    surface_findings: {
+      type: SchemaType.ARRAY,
+      items: { type: SchemaType.STRING },
+      minItems: 4,
+      maxItems: 4,
+    },
+    surface: { type: SchemaType.NUMBER },
+  },
+  required: [
+    "centering_ratio",
+    "centering",
+    "corners_findings",
+    "corners",
+    "edges_findings",
+    "edges",
+    "surface_findings",
+    "surface",
+  ],
+};
+
+export const GRADING_RESPONSE_SCHEMA: Schema = {
+  type: SchemaType.OBJECT,
+  properties: {
+    front: gradingFaceSchema,
+    back: gradingFaceSchema,
+    issues: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+    strengths: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+    confidence: { type: SchemaType.NUMBER },
+    notes: { type: SchemaType.STRING },
+  },
+  required: ["front", "back", "issues", "strengths", "confidence", "notes"],
+};
+
 const GRADING_PROMPT = (
   cardContext: string,
   frontMeasured: MeasuredCentering | null,
@@ -593,62 +672,139 @@ export const analyzeCardForGrading = async (
 
   const frontPart = fileToGenerativePart(frontBase64, frontMime);
   const backPart = fileToGenerativePart(backBase64, backMime);
-  const result = await model.generateContent({
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: "FRONT OF CARD:" },
-          frontPart,
-          { text: "BACK OF CARD:" },
-          backPart,
-          { text: GRADING_PROMPT(cardContext, frontMeasured, backMeasured) },
-        ],
+
+  // maxOutputTokens (2026-09 parse-resilience fix, raised 4096 -> 8192):
+  // thinking tokens count against this SAME budget for gemini-2.5-flash
+  // (confirmed via a real usageMetadata capture during this fix's own
+  // investigation — thoughtsTokenCount and candidatesTokenCount are
+  // reported separately but both draw from maxOutputTokens; a normal
+  // successful call measured thoughtsTokenCount=815 +
+  // candidatesTokenCount=940 = 1755 of the prior 4096 budget, meaning a
+  // harder image driving the model into a longer reasoning trace (thinking
+  // is a CAP of 1024, not a fixed cost — it varies per request) plus the
+  // now much-longer per-region enumeration output has real room to exceed
+  // 4096 and truncate mid-JSON. 8192 gives generous headroom over both
+  // measured components without being unbounded.
+  const attemptGrading = async (): Promise<{
+    parsed: any;
+    raw: string;
+    finishReason: string | undefined;
+    usage: unknown;
+  }> => {
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: "FRONT OF CARD:" },
+            frontPart,
+            { text: "BACK OF CARD:" },
+            backPart,
+            { text: GRADING_PROMPT(cardContext, frontMeasured, backMeasured) },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 8192,
+        responseMimeType: "application/json",
+        // responseSchema: GRADING_RESPONSE_SCHEMA — deliberately NOT set.
+        // Tested 2026-09-04: caused fabricated findings on a known-clean
+        // control. See GRADING_RESPONSE_SCHEMA's own comment above for the
+        // full A/B result before re-enabling this.
+        // Recalibration (2026-08-30): thinkingBudget was 0. Golden-set testing
+        // showed the model enumerating findings correctly (e.g. whitening on
+        // all 4 back edges) but then not deriving the count-based ceiling
+        // from its own findings — it jumped straight to a "feels about right"
+        // number instead of reconciling the count against the stated rule.
+        // A small thinking budget gives it room to do that reconciliation
+        // before committing to the JSON. Worth the added latency/cost for a
+        // grading report; revisit if COGS become a concern.
+        // @ts-ignore — thinkingConfig is valid for gemini-2.5-flash
+        thinkingConfig: { thinkingBudget: 1024 },
       },
-    ],
-    generationConfig: {
-      temperature: 0,
-      // Independent front/back findings-then-number output (worst-face-cap
-      // recalibration) is roughly 3x the old single-blend schema — bumped
-      // from 1024 to avoid truncating the JSON mid-object on a heavily
-      // damaged card with a long findings list.
-      maxOutputTokens: 4096,
-      responseMimeType: "application/json",
-      // Recalibration (2026-08-30): thinkingBudget was 0. Golden-set testing
-      // showed the model enumerating findings correctly (e.g. whitening on
-      // all 4 back edges) but then not deriving the count-based ceiling
-      // from its own findings — it jumped straight to a "feels about right"
-      // number instead of reconciling the count against the stated rule.
-      // A small thinking budget gives it room to do that reconciliation
-      // before committing to the JSON. Worth the added latency/cost for a
-      // grading report; revisit if COGS become a concern.
-      // @ts-ignore — thinkingConfig is valid for gemini-2.5-flash
-      thinkingConfig: { thinkingBudget: 1024 },
-    },
-  });
+    });
 
-  const raw = result.response.text().trim();
+    const raw = result.response.text().trim();
+    const finishReason = result.response.candidates?.[0]?.finishReason as
+      | string
+      | undefined;
+    const usage = result.response.usageMetadata;
 
-  let parsed: any;
-  try {
     const stripped = raw.replace(/```json\n?|```\n?/g, "").trim();
     const start = stripped.indexOf("{");
     const end = stripped.lastIndexOf("}");
     if (start === -1 || end === -1) {
-      throw new Error(
-        `No JSON object found in response. Raw: ${raw.substring(0, 200)}`,
+      throw Object.assign(
+        new Error(`No JSON object found in response. Raw: ${raw.substring(0, 200)}`),
+        { raw, finishReason, usage },
       );
     }
-    parsed = JSON.parse(stripped.substring(start, end + 1));
+    try {
+      const parsed = JSON.parse(stripped.substring(start, end + 1));
+      return { parsed, raw, finishReason, usage };
+    } catch (err: any) {
+      // Attach diagnostics to the thrown error so the caller can log the
+      // FULL raw response — not just the parse error's own message, which
+      // only ever told us the failure position, never what the model
+      // actually sent. Without this, every past failure was undiagnosable
+      // after the fact (see AUDITS/dual-engine-grading-plan.md's 2026-09-04
+      // bug report — this exact gap).
+      throw Object.assign(err, { raw, finishReason, usage });
+    }
+  };
+
+  let parsed: any;
+  try {
+    // One retry on parse failure, not more — bounded cost, but real: a
+    // second call with IDENTICAL inputs was observed to succeed during this
+    // fix's own investigation (temperature=0 does not guarantee identical
+    // output when thinking is involved — the reasoning trace itself
+    // introduces variance). A single bad-JSON response is not rare enough
+    // to ignore but not consistent enough to mean the prompt itself is
+    // broken, so don't burn the user's whole grading (and their monthly
+    // quota — see aiGrading.controller.ts's quota-exclusion fix, same bug
+    // report) on one stochastic slip.
+    try {
+      ({ parsed } = await attemptGrading());
+    } catch (firstErr: any) {
+      await logError({
+        source: "ai-grading-parse",
+        message: `First attempt failed, retrying once: ${firstErr?.message ?? "Unknown error"}`,
+        error: firstErr,
+        userId: null,
+        requestPath: "",
+        requestMethod: "",
+        severity: "warning",
+        metadata: {
+          raw: firstErr?.raw?.slice(0, 20000) ?? null,
+          finishReason: firstErr?.finishReason ?? null,
+          usage: firstErr?.usage ?? null,
+        },
+      });
+      ({ parsed } = await attemptGrading());
+    }
   } catch (err: any) {
+    // Both attempts failed — log everything needed to diagnose this after
+    // the fact (item 1 of the 2026-09-04 bug report: the raw text itself,
+    // not just the parse error's position, plus finishReason — MAX_TOKENS
+    // means truncation, anything else means a genuine grammar slip despite
+    // the schema — and the real token usage against the configured budget).
     await logError({
-      source: "inventory",
+      source: "ai-grading-parse",
       message: err?.message ?? "Unknown error",
       error: err,
       userId: null,
       requestPath: "",
       requestMethod: "",
-      metadata: {},
+      metadata: {
+        raw: err?.raw?.slice(0, 20000) ?? null,
+        finishReason: err?.finishReason ?? null,
+        usage: err?.usage ?? null,
+        maxOutputTokens: 8192,
+        thinkingBudget: 1024,
+        retriedOnce: true,
+      },
     });
     throw new Error(`Failed to parse Gemini grading response: ${err?.message}`);
   }
